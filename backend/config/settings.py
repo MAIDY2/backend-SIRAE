@@ -42,6 +42,10 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'corsheaders',
     'apps_sirae.usuarios',
+    'apps_sirae.asistencia_diaria',
+    'apps_sirae.entregas',
+    'apps_sirae.movimientos_inventario',
+    'apps_sirae.notificaciones',
     'apps_sirae.inventario',
 ]
 
@@ -81,7 +85,7 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 DATABASES = {
     'default': dj_database_url.config(
-        default=os.getenv('DATABASE_URL'),
+        default=os.getenv('DATABASE_URL', f'sqlite:///{BASE_DIR / "db.sqlite3"}'),
         conn_max_age=600
     )
 }
