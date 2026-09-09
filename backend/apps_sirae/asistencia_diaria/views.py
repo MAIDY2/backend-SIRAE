@@ -1,0 +1,1 @@
+"""Vistas web de la app de asistencia diaria."""

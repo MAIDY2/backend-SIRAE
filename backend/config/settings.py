@@ -44,6 +44,10 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'corsheaders',
+    'apps_sirae.asistencia_diaria',
+    'apps_sirae.entregas',
+    'apps_sirae.movimientos_inventario',
+    'apps_sirae.notificaciones',
 ]
 
 MIDDLEWARE = [
