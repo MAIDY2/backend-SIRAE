@@ -1,19 +1,17 @@
 from django.contrib import admin
-from django.urls import path, include
-from apps_sirae.usuarios.api.router import router
-from apps_sirae.usuarios.api.serializers import CustomTokenObtainPairSerializer
+from django.urls import include, path
+
+from apps_sirae.inventario.api.router import router_inventario
 from apps_sirae.usuarios.api.password_reset import (
+    CambiarPasswordView,
+    ConfirmarRecuperacionPasswordView,
+    PerfilUsuarioView,
     SolicitarRecuperacionPasswordView,
     ValidarTokenPasswordView,
-    ConfirmarRecuperacionPasswordView,
-    CambiarPasswordView,
-    PerfilUsuarioView
 )
-
-from rest_framework_simplejwt.views import (
-    TokenObtainPairView,
-    TokenRefreshView,
-)
+from apps_sirae.usuarios.api.router import router
+from apps_sirae.usuarios.api.serializers import CustomTokenObtainPairSerializer
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -33,6 +31,7 @@ urlpatterns = [
     path('api/auth/password-reset/validar-token/', ValidarTokenPasswordView.as_view(), name='password_reset_validar_token'),
     path('api/auth/password-reset/confirmar/', ConfirmarRecuperacionPasswordView.as_view(), name='password_reset_confirmar'),
 
-    # Enrutador de Usuarios y Roles
+    # Enrutadores
     path('api/', include(router.urls)),
+    path('api/', include(router_inventario.urls)),
 ]

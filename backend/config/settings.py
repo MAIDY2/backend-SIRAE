@@ -39,9 +39,10 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
-    'rest_framework_simplejwt',  # <-- Agregado para SimpleJWT
+    'rest_framework_simplejwt',
     'corsheaders',
     'apps_sirae.usuarios',
+    'apps_sirae.inventario',
 ]
 
 MIDDLEWARE = [
