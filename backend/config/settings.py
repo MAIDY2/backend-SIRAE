@@ -46,7 +46,6 @@ INSTALLED_APPS = [
     'apps_sirae.entregas',
     'apps_sirae.movimientos_inventario',
     'apps_sirae.notificaciones',
-    'apps_sirae.inventario',
 ]
 
 MIDDLEWARE = [
