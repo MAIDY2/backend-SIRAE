@@ -19,11 +19,15 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / ".env")
+<<<<<<< Updated upstream
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = 'django-insecure-pmt1w^!r9=)mza56h*qmjv(31z#l*2ldc71@(ti+5=tc59)l89'
+=======
+SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-pmt1w^!r9=)mza56h*qmjv(31z#l*2ldc71@(ti+5=tc59)l89')
+>>>>>>> Stashed changes
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
@@ -44,7 +48,20 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'corsheaders',
+<<<<<<< Updated upstream
+=======
+    'apps_sirae.asistencia_diaria',
+    'apps_sirae.entregas',
+    'apps_sirae.movimientos_inventario',
+    'apps_sirae.notificaciones',
+    'apps_sirae.usuarios',
+    'apps_sirae.roles',
+    'apps_sirae.autenticacion', 
+>>>>>>> Stashed changes
 ]
+
+AUTH_USER_MODEL = 'usuarios.Usuario'
+
 
 MIDDLEWARE = [
      'django.middleware.security.SecurityMiddleware',
