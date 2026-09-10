@@ -17,6 +17,7 @@ class NotificacionSerializer(serializers.ModelSerializer):
         read_only_fields = ['id_notificacion']
         extra_kwargs = {
             'id_usuario': {'required': False},
+            'fecha_hora': {'required': False},
         }
 
     def validate_titulo(self, value):

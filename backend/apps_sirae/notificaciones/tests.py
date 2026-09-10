@@ -59,3 +59,18 @@ class NotificacionApiTestCase(APITestCase):
         self.assertTrue(response.data['leida'])
         self.notificacion.refresh_from_db()
         self.assertTrue(self.notificacion.leida)
+
+    def test_crear_notificacion_sin_fecha_usa_la_fecha_actual(self):
+        response = self.request(
+            'post',
+            '/api/notificaciones/',
+            data={
+                'titulo': 'Nueva notificación',
+                'mensaje': 'Creada desde el frontend',
+            },
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data['id_usuario'], 10)
+        self.assertFalse(response.data['leida'])
+        self.assertIsNotNone(response.data['fecha_hora'])
