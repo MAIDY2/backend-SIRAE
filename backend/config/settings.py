@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'corsheaders',
+    'apps_sirae.roles',
     'apps_sirae.usuarios',
     'apps_sirae.asistencia_diaria',
     'apps_sirae.entregas',
@@ -82,12 +83,26 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
-DATABASES = {
-    'default': dj_database_url.config(
-        default=os.getenv('DATABASE_URL', f'sqlite:///{BASE_DIR / "db.sqlite3"}'),
-        conn_max_age=600
-    )
-}
+# Database
+# https://docs.djangoproject.com/en/6.1/ref/settings/#databases
+
+DATABASE_URL = os.getenv('DATABASE_URL')
+
+if DATABASE_URL:
+    DATABASES = {
+        'default': dj_database_url.config(
+            default=DATABASE_URL,
+            conn_max_age=600,
+            ssl_require=True
+        )
+    }
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 
 # Password validation
@@ -160,7 +175,6 @@ DEFAULT_FROM_EMAIL = os.getenv(
 )
 EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', '10'))
 
-# URL base del frontend para enlaces de recuperación de contraseña
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 
 sys.path.insert(0, str(BASE_DIR / "apps_sirae"))

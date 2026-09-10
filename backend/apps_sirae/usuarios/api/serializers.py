@@ -2,7 +2,9 @@ from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth.hashers import check_password, make_password
 from rest_framework.exceptions import AuthenticationFailed
-from ..models import Usuario, Rol
+
+from ..models import Usuario
+from apps_sirae.roles.models import Rol
 
 
 class RolSerializer(serializers.ModelSerializer):
@@ -10,7 +12,7 @@ class RolSerializer(serializers.ModelSerializer):
         model = Rol
         fields = [
             'id_rol',
-            'nombre_rol',
+            'nombre',
             'descripcion'
         ]
 
@@ -21,6 +23,9 @@ class UsuarioSerializer(serializers.ModelSerializer):
         queryset=Rol.objects.all(),
         required=True
     )
+    # Definimos nombre y apellido para poder recibirlos en el JSON
+    nombre = serializers.CharField(write_only=True, required=False)
+    apellido = serializers.CharField(write_only=True, required=False)
 
     class Meta:
         model = Usuario
@@ -28,16 +33,21 @@ class UsuarioSerializer(serializers.ModelSerializer):
             'id_usuario',
             'id_rol',
             'rol',
+            'nombre',
+            'apellido',
             'nombre_completo',
             'documento_identidad',
             'email',
             'password',
-            'estado'
+            'is_active'
         ]
         extra_kwargs = {
             'password': {
                 'write_only': True,
                 'required': False
+            },
+            'nombre_completo': {
+                'read_only': True
             }
         }
 
@@ -66,8 +76,8 @@ class UsuarioSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         validated_data['password'] = make_password(validated_data['password'])
-        if 'estado' not in validated_data or not validated_data['estado']:
-            validated_data['estado'] = 'Activo'
+        if 'is_active' not in validated_data:
+            validated_data['is_active'] = True
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
@@ -94,7 +104,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         token['email'] = user.email
         token['nombre_completo'] = user.nombre_completo
         token['id_rol'] = user.id_rol.id_rol if user.id_rol else None
-        token['nombre_rol'] = user.rol_nombre
+        token['nombre_rol'] = user.id_rol.nombre if user.id_rol else None
         return token
 
     def validate(self, attrs):
@@ -122,10 +132,10 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 'nombre_completo': usuario.nombre_completo,
                 'email': usuario.email,
                 'documento_identidad': usuario.documento_identidad,
-                'estado': usuario.estado,
+                'estado': 'Activo' if usuario.is_active else 'Inactivo',
                 'rol': {
                     'id_rol': usuario.id_rol.id_rol if usuario.id_rol else None,
-                    'nombre_rol': usuario.rol_nombre,
+                    'nombre_rol': usuario.id_rol.nombre if usuario.id_rol else None,
                     'descripcion': usuario.id_rol.descripcion if usuario.id_rol else None
                 }
             }
