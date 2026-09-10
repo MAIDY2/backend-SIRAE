@@ -4,7 +4,7 @@ from apps_sirae.detalle_plato.api.views import DetallePlatoApiViewSet
 
 router_detalle_plato = DefaultRouter()
 router_detalle_plato.register(
-    prefix='detalle-plato',
+    prefix='detalle_plato',
     viewset=DetallePlatoApiViewSet,
-    basename='detalle-plato'
+    basename='detalle_plato'
 )

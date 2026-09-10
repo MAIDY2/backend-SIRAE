@@ -4,7 +4,7 @@ from apps_sirae.secciones_menu.api.views import SeccionMenuApiViewSet
 
 router_secciones_menu = DefaultRouter()
 router_secciones_menu.register(
-    prefix='secciones-menu',
+    prefix='secciones_menu',
     viewset=SeccionMenuApiViewSet,
-    basename='secciones-menu'
+    basename='secciones_menu'
 )
