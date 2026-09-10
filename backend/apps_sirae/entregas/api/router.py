@@ -4,7 +4,7 @@ from .views import entregasApiViewset
 
 router_entregas = DefaultRouter()
 router_entregas.register(
-	prefix='',
+	prefix='entregas',
 	viewset=entregasApiViewset,
 	basename='entrega',
 )
