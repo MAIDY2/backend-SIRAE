@@ -29,7 +29,6 @@ ALLOWED_HOSTS = os.getenv(
     'localhost,127.0.0.1,testserver,*'
 ).split(',')
 
-# Application definition
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -41,12 +40,18 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'corsheaders',
+
     'apps_sirae.roles',
     'apps_sirae.usuarios',
     'apps_sirae.asistencia_diaria',
     'apps_sirae.entregas',
     'apps_sirae.movimientos_inventario',
     'apps_sirae.notificaciones',
+    'apps_sirae.inventario',
+    'apps_sirae.unidades_medida',
+    'apps_sirae.secciones_menu',
+    'apps_sirae.platos',
+    'apps_sirae.detalle_plato',
 ]
 
 MIDDLEWARE = [
