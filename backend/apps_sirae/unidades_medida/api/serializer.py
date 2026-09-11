@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from apps_sirae.unidades_medida.models import UnidadMedida
+from ..models import UnidadMedida
 
 
 class UnidadMedidaSerializer(serializers.ModelSerializer):
@@ -9,5 +9,4 @@ class UnidadMedidaSerializer(serializers.ModelSerializer):
             'id_unidad_medida',
             'nombre',
             'abreviatura',
-            'descripcion',
         ]

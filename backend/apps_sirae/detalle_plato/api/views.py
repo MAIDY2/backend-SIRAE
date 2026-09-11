@@ -1,8 +1,8 @@
-from rest_framework.viewsets import ModelViewSet
-from apps_sirae.detalle_plato.api.serializer import DetallePlatoSerializer
-from apps_sirae.detalle_plato.models import DetallePlato
+from rest_framework.viewsets import ReadOnlyModelViewSet
+from .serializer import DetallePlatoSerializer
+from ..models import DetallePlato
 
 
-class DetallePlatoApiViewSet(ModelViewSet):
+class DetallePlatoApiViewSet(ReadOnlyModelViewSet):
     serializer_class = DetallePlatoSerializer
-    queryset = DetallePlato.objects.all().select_related('id_plato', 'id_unidad_medida')
+    queryset = DetallePlato.objects.all()

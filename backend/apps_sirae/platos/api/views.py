@@ -1,8 +1,8 @@
-from rest_framework.viewsets import ModelViewSet
-from apps_sirae.platos.api.serializer import PlatoSerializer
-from apps_sirae.platos.models import Plato
+from rest_framework.viewsets import ReadOnlyModelViewSet
+from .serializer import PlatoSerializer
+from ..models import Plato
 
 
-class PlatoApiViewSet(ModelViewSet):
+class PlatoApiViewSet(ReadOnlyModelViewSet):
     serializer_class = PlatoSerializer
-    queryset = Plato.objects.all().select_related('id_seccion_menu').order_by('nombre')
+    queryset = Plato.objects.all()

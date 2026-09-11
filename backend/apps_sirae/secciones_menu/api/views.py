@@ -1,8 +1,8 @@
-from rest_framework.viewsets import ModelViewSet
-from apps_sirae.secciones_menu.api.serializer import SeccionMenuSerializer
-from apps_sirae.secciones_menu.models import SeccionMenu
+from rest_framework.viewsets import ReadOnlyModelViewSet
+from .serializer import SeccionMenuSerializer
+from ..models import SeccionMenu
 
 
-class SeccionMenuApiViewSet(ModelViewSet):
+class SeccionMenuApiViewSet(ReadOnlyModelViewSet):
     serializer_class = SeccionMenuSerializer
-    queryset = SeccionMenu.objects.all().order_by('nombre')
+    queryset = SeccionMenu.objects.all()
