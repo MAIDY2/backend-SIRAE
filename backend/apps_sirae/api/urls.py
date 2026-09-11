@@ -19,6 +19,7 @@ from apps_sirae.usuario_turno.api.router import router_usuario_turno
 
 
 urlpatterns = [
+    path('', include('apps_sirae.roles.api.urls')),
     path('', include('apps_sirae.usuarios.api.urls')),
 
 
