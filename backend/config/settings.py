@@ -60,6 +60,13 @@ INSTALLED_APPS = [
     'apps_sirae.usuario_turno',
 ]
 
+AUTH_USER_MODEL = 'usuarios.Usuario'
+
+SIMPLE_JWT = {
+    'USER_ID_FIELD': 'id_usuario',
+    'USER_ID_CLAIM': 'user_id',
+}
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
