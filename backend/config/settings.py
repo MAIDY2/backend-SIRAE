@@ -46,7 +46,9 @@ INSTALLED_APPS = [
     'apps_sirae.entregas',
     'apps_sirae.movimientos_inventario',
     'apps_sirae.notificaciones',
-    'apps_sirae.inventario',
+    'apps_sirae.contratos_pae',
+    'apps_sirae.preparacion_asignada',
+    'apps_sirae.pasospreparacion',
 ]
 
 MIDDLEWARE = [
@@ -144,9 +146,6 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
-
-# Configuración de Correo Electrónico para Recuperación de Contraseñas y Notificaciones
-# En desarrollo muestra los correos en consola. En producción se configuran por variables de entorno.
 EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
 EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
 EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
