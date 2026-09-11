@@ -48,7 +48,10 @@ INSTALLED_APPS = [
     'apps_sirae.movimientos_inventario',
     'apps_sirae.notificaciones',
 
-    'inventario',
+    'apps_sirae.inventario',
+    'apps_sirae.jornadas',
+    'apps_sirae.categorias_inventario',
+    'apps_sirae.menus',
     
     'apps_sirae.unidades_medida',
     'apps_sirae.secciones_menu',
