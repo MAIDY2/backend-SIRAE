@@ -41,7 +41,6 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'corsheaders',
-    'apps_sirae.usuarios',
     'apps_sirae.asistencia_diaria',
     'apps_sirae.entregas',
     'apps_sirae.movimientos_inventario',
@@ -113,9 +112,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 
 REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': (
-        'apps_sirae.usuarios.authentication.CustomJWTAuthentication',
-    )
+    'DEFAULT_AUTHENTICATION_CLASSES': (),
 }
 
 # Configuración del tiempo de expiración para los Tokens JWT
