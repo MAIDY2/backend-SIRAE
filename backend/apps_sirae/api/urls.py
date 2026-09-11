@@ -13,6 +13,11 @@ from apps_sirae.movimientos_inventario.api.router import router_movimientos_inve
 from apps_sirae.notificaciones.api.router import router_notificaciones
 
 
+from apps_sirae.ingredientes.api.router import router_ingredientes
+from apps_sirae.turnos.api.router import router_turnos
+from apps_sirae.usuario_turno.api.router import router_usuario_turno
+
+
 urlpatterns = [
     path('', include('apps_sirae.usuarios.api.urls')),
 
@@ -27,4 +32,9 @@ urlpatterns = [
     path('', include(router_entregas.urls)),
     path('', include(router_movimientos_inventario.urls)),
     path('', include(router_notificaciones.urls)),
+
+
+    path('', include(router_ingredientes.urls)),
+    path('', include(router_turnos.urls)),
+    path('', include(router_usuario_turno.urls)),
 ]

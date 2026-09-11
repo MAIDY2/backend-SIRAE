@@ -47,11 +47,13 @@ INSTALLED_APPS = [
     'apps_sirae.entregas',
     'apps_sirae.movimientos_inventario',
     'apps_sirae.notificaciones',
-    'apps_sirae.inventario',
     'apps_sirae.unidades_medida',
     'apps_sirae.secciones_menu',
     'apps_sirae.platos',
     'apps_sirae.detalle_plato',
+    'apps_sirae.ingredientes',
+    'apps_sirae.turnos',
+    'apps_sirae.usuario_turno',
 ]
 
 MIDDLEWARE = [
