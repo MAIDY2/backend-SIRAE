@@ -1,6 +1,8 @@
-from django.urls import include, path
-from .router import router
+from django.urls import path, include
+
+from apps_sirae.roles.api.router import router_roles
+
 
 urlpatterns = [
-    path('', include(router.urls)),
+    path('', include(router_roles.urls)),
 ]

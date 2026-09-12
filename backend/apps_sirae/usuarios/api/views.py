@@ -1,77 +1,79 @@
-from django.db.models import Q
 from rest_framework import viewsets, status
-from rest_framework.decorators import action
+from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny
+from django.contrib.auth import authenticate
 
-from ..models import Usuario
-from apps_sirae.roles.models import Rol
-from .serializers import UsuarioSerializer, RolSerializer
-from ..permissions import IsAdminRole, IsAdminOrReadOnly
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from apps_sirae.usuarios.models import Usuario
+from apps_sirae.usuarios.api.serializers import UsuarioSerializer
 
 
 class UsuarioViewSet(viewsets.ModelViewSet):
-    """
-    CRUD completo de Usuarios en SIRAE.
-    Exclusivo para el rol Administrador.
-    Permite filtrar por id_rol, estado y buscar por nombre, apellido, correo o documento.
-    """
-    queryset = Usuario.objects.select_related('id_rol').all().order_by('id_usuario')
+    queryset = Usuario.objects.all()
     serializer_class = UsuarioSerializer
-    permission_classes = [IsAuthenticated, IsAdminRole]
-    lookup_field = 'id_usuario'
 
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        rol_id = self.request.query_params.get('id_rol')
-        is_active = self.request.query_params.get('is_active')
-        search = self.request.query_params.get('search')
 
-        if rol_id:
-            queryset = queryset.filter(id_rol_id=rol_id)
-        if is_active is not None:
-            is_active_bool = is_active.lower() in ['true', '1']
-            queryset = queryset.filter(is_active=is_active_bool)
-        if search:
-            search = search.strip()
-            queryset = queryset.filter(
-                Q(nombre__icontains=search) |
-                Q(apellido__icontains=search) |
-                Q(email__icontains=search) |
-                Q(documento_identidad__icontains=search)
+class RegistroView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+
+        serializer = UsuarioSerializer(data=request.data)
+
+        if serializer.is_valid():
+            usuario = serializer.save()
+
+            return Response(
+                {
+                    'mensaje': 'Usuario registrado exitosamente',
+                    'data': UsuarioSerializer(usuario).data
+                },
+                status=status.HTTP_201_CREATED
             )
-        return queryset
 
-    @action(detail=True, methods=['post'], url_path='cambiar-estado')
-    def cambiar_estado(self, request, id_usuario=None):
-        """
-        Alterna o asigna el estado activo/inactivo de un usuario.
-        """
-        usuario = self.get_object()
-        nuevo_estado = request.data.get('is_active')
-
-        if nuevo_estado is None:
-            usuario.is_active = not usuario.is_active
-        else:
-            usuario.is_active = str(nuevo_estado).lower() in ['true', '1']
-
-        usuario.save()
-
-        estado_txt = "Activo" if usuario.is_active else "Inactivo"
-        return Response({
-            "status": "success",
-            "mensaje": f"El estado del usuario {usuario.nombre_completo} ha sido cambiado a '{estado_txt}'.",
-            "id_usuario": usuario.id_usuario,
-            "is_active": usuario.is_active
-        }, status=status.HTTP_200_OK)
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
 
 
-class RolViewSet(viewsets.ModelViewSet):
-    """
-    Gestión y consulta de Roles en SIRAE.
-    Lectura permitida para cualquier usuario autenticado;
-    modificación reservada exclusivamente al Administrador.
-    """
-    queryset = Rol.objects.all().order_by('id_rol')
-    serializer_class = RolSerializer
-    permission_classes = [IsAuthenticated, IsAdminOrReadOnly]
+class LoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+
+        correo = request.data.get('correo')
+        password = request.data.get('password')
+
+        user = authenticate(
+            username=correo,
+            password=password
+        )
+
+        if user is not None:
+
+            refresh = RefreshToken.for_user(user)
+
+            return Response(
+                {
+                    'token': str(refresh.access_token),
+                    'refresh': str(refresh),
+                    'usuario': {
+                        'id_usuario': user.id_usuario,
+                        'nombre': user.nombre,
+                        'apellido': user.apellido,
+                        'correo': user.correo,
+                        'rol': user.rol.nombre if user.rol else None
+                    }
+                },
+                status=status.HTTP_200_OK
+            )
+
+        return Response(
+            {
+                'error': 'Credenciales inválidas'
+            },
+            status=status.HTTP_401_UNAUTHORIZED
+        )
