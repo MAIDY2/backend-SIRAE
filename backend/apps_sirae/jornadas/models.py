@@ -3,6 +3,7 @@ from django.db import models
 
 class Jornada(models.Model):
     id_jornada = models.AutoField(primary_key=True)
+    nombre_jornada = models.CharField(max_length=100)
     nombre_jornada = models.CharField(
         max_length=50,
         null=True,
