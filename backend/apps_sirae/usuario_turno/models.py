@@ -19,3 +19,9 @@ class UsuarioTurno(models.Model):
     )
 
     fecha = models.DateField()
+
+    class Meta:
+        db_table = 'usuario_turno'
+
+    def __str__(self):
+        return f"UsuarioTurno {self.id_usuario_turno}"

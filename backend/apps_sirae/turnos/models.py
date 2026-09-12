@@ -24,5 +24,8 @@ class Turno(models.Model):
         db_table = 'turnos'
 
 
+    class Meta:
+        db_table = 'turnos'
+
     def __str__(self):
-        return self.nombre_turno
+        return self.nombre_turno or ''

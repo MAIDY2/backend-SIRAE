@@ -9,5 +9,4 @@ class UnidadMedidaSerializer(serializers.ModelSerializer):
             'id_unidad_medida',
             'nombre',
             'abreviatura',
-            'descripcion',
         ]

@@ -18,5 +18,8 @@ class Menu(models.Model):
     informacion_nutricional = models.TextField()
     id_contrato = models.IntegerField()
 
+    class Meta:
+        db_table = 'menus'
+
     def __str__(self):
         return f"Menu {self.id_menu}"

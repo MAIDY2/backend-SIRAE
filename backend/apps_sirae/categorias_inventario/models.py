@@ -12,5 +12,8 @@ class CategoriaInventario(models.Model):
     class Meta:
         db_table = 'categorias_inventario'
 
+    class Meta:
+        db_table = 'categorias_inventario'
+
     def __str__(self):
         return f"Categoria {self.id_categoria_inventario}: {self.nombre_categoria}"

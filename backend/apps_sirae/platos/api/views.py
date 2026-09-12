@@ -5,4 +5,4 @@ from apps_sirae.platos.models import Plato
 
 class PlatoApiViewSet(ModelViewSet):
     serializer_class = PlatoSerializer
-    queryset = Plato.objects.all().select_related('id_seccion_menu').order_by('nombre_plato')
+    queryset = Plato.objects.all().select_related('id_seccion_menu').order_by('nombre')

@@ -1,12 +1,11 @@
 from django.db import models
-from apps_sirae.secciones_menu.models import SeccionMenu
 
 
 class Plato(models.Model):
     id_plato = models.AutoField(primary_key=True)
 
     id_seccion = models.ForeignKey(
-        SeccionMenu,
+        'secciones_menu.SeccionMenu',
         on_delete=models.DO_NOTHING,
         db_column='id_seccion',
         null=True,
@@ -27,8 +26,7 @@ class Plato(models.Model):
 
     class Meta:
         db_table = 'platos'
-        verbose_name = 'Plato'
-        verbose_name_plural = 'Platos'
+        managed = False
 
     def __str__(self):
         return self.nombre_plato or ''
