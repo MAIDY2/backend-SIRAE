@@ -1,7 +1,12 @@
 from rest_framework.routers import DefaultRouter
-from .views import UsuarioViewSet, RolViewSet
 
-router = DefaultRouter()
+from apps_sirae.usuarios.api.views import UsuarioViewSet
 
-router.register(r'usuarios', UsuarioViewSet, basename='usuarios')
-router.register(r'roles', RolViewSet, basename='roles')
+
+router_usuarios = DefaultRouter()
+
+router_usuarios.register(
+    r'usuarios',
+    UsuarioViewSet,
+    basename='usuarios'
+)
