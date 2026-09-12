@@ -62,6 +62,10 @@ INSTALLED_APPS = [
     'apps_sirae.detalle_plato',
     'apps_sirae.usuario_turno',
 
+    'apps_sirae.contratos_pae',
+    'apps_sirae.pasospreparacion',
+    'apps_sirae.preparacion_asignada',
+
 ]
 
 AUTH_USER_MODEL = 'usuarios.Usuario'
