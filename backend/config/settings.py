@@ -42,22 +42,26 @@ INSTALLED_APPS = [
     'corsheaders',
 
     'apps_sirae.roles',
-    'apps_sirae.categorias_inventario',
+    'apps_sirae.usuarios',
+
+    'apps_sirae.asistencia_diaria',
+    'apps_sirae.entregas',
+    'apps_sirae.movimientos_inventario',
+    'apps_sirae.notificaciones',
+
+    'apps_sirae.inventario',
     'apps_sirae.jornadas',
+    'apps_sirae.categorias_inventario',
+    'apps_sirae.menus',
     'apps_sirae.turnos',
+
     'apps_sirae.unidades_medida',
     'apps_sirae.secciones_menu',
     'apps_sirae.ingredientes',
     'apps_sirae.platos',
-    'apps_sirae.usuarios',
-
     'apps_sirae.detalle_plato',
-    'apps_sirae.asistencia_diaria',
-    'apps_sirae.entregas',
-    'apps_sirae.menus',
-    'apps_sirae.movimientos_inventario',
-    'apps_sirae.notificaciones',
     'apps_sirae.usuario_turno',
+
 ]
 
 AUTH_USER_MODEL = 'usuarios.Usuario'
