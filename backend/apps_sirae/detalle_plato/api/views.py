@@ -1,8 +1,9 @@
-from rest_framework.viewsets import ReadOnlyModelViewSet
-from .serializer import DetallePlatoSerializer
+from rest_framework.viewsets import ModelViewSet
+
 from ..models import DetallePlato
+from .serializer import DetallePlatoSerializer
 
 
-class DetallePlatoApiViewSet(ReadOnlyModelViewSet):
+class DetallePlatoApiViewSet(ModelViewSet):
     serializer_class = DetallePlatoSerializer
     queryset = DetallePlato.objects.all()
