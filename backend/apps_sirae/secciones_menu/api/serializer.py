@@ -6,8 +6,7 @@ class SeccionMenuSerializer(serializers.ModelSerializer):
     class Meta:
         model = SeccionMenu
         fields = [
-            'id_seccion_menu',
-            'nombre',
-            'descripcion',
-            'activo',
+            'id_seccion',
+            'id_jornada',
+            'nombre_seccion',
         ]

@@ -38,7 +38,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
-    'rest_framework_simplejwt',
+    'drf_yasg',
     'corsheaders',
 
     'apps_sirae.roles',
@@ -61,12 +61,13 @@ INSTALLED_APPS = [
     'apps_sirae.platos',
     'apps_sirae.detalle_plato',
     'apps_sirae.usuario_turno',
-
     'apps_sirae.contratos_pae',
     'apps_sirae.pasospreparacion',
     'apps_sirae.preparacion_asignada',
-
+    'apps_sirae.gramage',
+    'apps_sirae.grados',
 ]
+
 
 AUTH_USER_MODEL = 'usuarios.Usuario'
 
@@ -150,22 +151,6 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 
-REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': (
-        'apps_sirae.usuarios.authentication.CustomJWTAuthentication',
-    )
-}
-
-# Configuración del tiempo de expiración para los Tokens JWT
-SIMPLE_JWT = {
-    'USER_ID_FIELD': 'id_usuario',
-    'USER_ID_CLAIM': 'user_id',
-    'ACCESS_TOKEN_LIFETIME': timedelta(days=1),   # Duración del access token
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),  # Duración del refresh token
-    'ROTATE_REFRESH_TOKENS': False,
-    'BLACKLIST_AFTER_ROTATION': False,
-    'AUTH_HEADER_TYPES': ('Bearer',),
-}
 
 # Internationalization
 # https://docs.djangoproject.com/en/6.1/topics/i18n/

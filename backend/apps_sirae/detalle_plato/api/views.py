@@ -5,4 +5,4 @@ from apps_sirae.detalle_plato.models import DetallePlato
 
 class DetallePlatoApiViewSet(ModelViewSet):
     serializer_class = DetallePlatoSerializer
-    queryset = DetallePlato.objects.all().select_related('id_plato', 'id_unidad_medida')
+    queryset = DetallePlato.objects.all()
