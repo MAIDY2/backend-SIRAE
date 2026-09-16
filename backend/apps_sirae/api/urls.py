@@ -1,11 +1,9 @@
 from django.urls import include, path
 
-
 from apps_sirae.unidades_medida.api.router import router_unidades_medida
 from apps_sirae.secciones_menu.api.router import router_secciones_menu
 from apps_sirae.platos.api.router import router_platos
 from apps_sirae.detalle_plato.api.router import router_detalle_plato
-
 
 from apps_sirae.asistencia_diaria.api.router import router_asistencia_diaria
 from apps_sirae.entregas.api.router import router_entregas
@@ -18,6 +16,7 @@ from apps_sirae.inventario.api.router import router_inventario
 from apps_sirae.ingredientes.api.router import router_ingredientes
 from apps_sirae.turnos.api.router import router_turnos
 from apps_sirae.usuario_turno.api.router import router_usuario_turno
+from apps_sirae.contratos_pae.api.router import router_contratos
 
 
 urlpatterns = [
@@ -40,4 +39,5 @@ urlpatterns = [
     path('', include(router_grados.urls)),
     path('', include(router_gramage.urls)),
     path('', include(router_inventario.urls)),
+    path('', include(router_contratos.urls))
 ]
