@@ -1,21 +1,24 @@
 from django.db import models
 
-from apps_sirae.jornadas.models import Jornada
-
 
 class SeccionMenu(models.Model):
     id_seccion = models.AutoField(primary_key=True)
     id_jornada = models.ForeignKey(
-        Jornada,
+        'jornadas.Jornada',
         on_delete=models.DO_NOTHING,
         db_column='id_jornada',
         null=True,
         blank=True
     )
-    nombre_seccion = models.CharField(max_length=100, null=True, blank=True)
+    nombre_seccion = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True
+    )
 
     class Meta:
         db_table = 'secciones_menu'
+        managed = True  # <--- AQUÍ SE AGREGA
         verbose_name = 'Sección de menú'
         verbose_name_plural = 'Secciones de menú'
 
