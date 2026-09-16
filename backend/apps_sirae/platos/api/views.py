@@ -1,6 +1,7 @@
 from rest_framework.viewsets import ModelViewSet
-from apps_sirae.platos.models import Plato
-from apps_sirae.platos.api.serializer import PlatoSerializer
+
+from ..models import Plato
+from .serializer import PlatoSerializer
 
 
 class PlatoApiViewSet(ModelViewSet):

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from apps_sirae.secciones_menu.models import SeccionMenu
+from ..models import SeccionMenu
 
 
 class SeccionMenuSerializer(serializers.ModelSerializer):

@@ -1,6 +1,7 @@
 from rest_framework.viewsets import ModelViewSet
-from apps_sirae.secciones_menu.api.serializer import SeccionMenuSerializer
-from apps_sirae.secciones_menu.models import SeccionMenu
+
+from ..models import SeccionMenu
+from .serializer import SeccionMenuSerializer
 
 
 class SeccionMenuApiViewSet(ModelViewSet):

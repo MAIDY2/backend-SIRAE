@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from apps_sirae.detalle_plato.models import DetallePlato
+from ..models import DetallePlato
 
 
 class DetallePlatoSerializer(serializers.ModelSerializer):

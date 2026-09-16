@@ -3,7 +3,6 @@ from django.db import models
 
 class Plato(models.Model):
     id_plato = models.AutoField(primary_key=True)
-
     id_seccion = models.ForeignKey(
         'secciones_menu.SeccionMenu',
         on_delete=models.DO_NOTHING,
@@ -11,13 +10,11 @@ class Plato(models.Model):
         null=True,
         blank=True
     )
-
     nombre_plato = models.CharField(
         max_length=100,
         null=True,
         blank=True
     )
-
     componente = models.CharField(
         max_length=50,
         null=True,
@@ -26,7 +23,9 @@ class Plato(models.Model):
 
     class Meta:
         db_table = 'platos'
-        managed = False
+        managed = True
+        verbose_name = 'Plato'
+        verbose_name_plural = 'Platos'
 
     def __str__(self):
-        return self.nombre_plato or ''
+        return self.nombre_plato or f"Plato {self.id_plato}"
