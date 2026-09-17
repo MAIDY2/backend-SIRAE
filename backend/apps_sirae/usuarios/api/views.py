@@ -41,6 +41,7 @@ class RegistroView(APIView):
 
 
 class LoginView(APIView):
+    
     permission_classes = [AllowAny]
 
     # Define los campos que Swagger mostrará en la interfaz
