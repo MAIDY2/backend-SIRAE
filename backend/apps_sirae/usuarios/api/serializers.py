@@ -1,6 +1,26 @@
 from rest_framework import serializers
-
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from apps_sirae.usuarios.models import Usuario
+
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    """
+    Serializer personalizado para el Login JWT.
+    Guarda 'id_usuario' en el payload para que CustomJWTAuthentication lo reconozca.
+    """
+    @classmethod
+    def get_token(cls, user):
+        token = super().get_token(user)
+
+        # Inyecta el ID personalizado de tu modelo Usuario
+        token['user_id'] = user.id_usuario
+        token['correo'] = user.correo
+        
+        # Opcional: incluir el rol si lo necesitas en el frontend
+        if hasattr(user, 'rol') and user.rol:
+            token['rol'] = getattr(user.rol, 'nombre', str(user.rol))
+
+        return token
 
 
 class UsuarioSerializer(serializers.ModelSerializer):

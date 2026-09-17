@@ -17,7 +17,7 @@ class CustomJWTAuthentication(JWTAuthentication):
             raise InvalidToken("El token no contiene un identificador de usuario válido.")
 
         try:
-            usuario = Usuario.objects.select_related('id_rol').get(id_usuario=user_id)
+            usuario = Usuario.objects.select_related('rol').get(id_usuario=user_id)
         except Usuario.DoesNotExist:
             raise AuthenticationFailed("El usuario asociado a este token no existe.")
 
