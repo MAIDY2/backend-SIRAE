@@ -5,7 +5,13 @@ from ..models import AsistenciaDiaria
 from .serializer import AsistenciaDiariaSerializer
 
 
-class asistencia_diariaApiViewset(viewsets.ModelViewSet):
-    queryset = AsistenciaDiaria.objects.all().order_by('-fecha', '-id_asistencia')
+class AsistenciaDiariaViewSet(viewsets.ModelViewSet):
+
+    queryset = AsistenciaDiaria.objects.all().order_by(
+        '-fecha',
+        '-id_asistencia'
+    )
+
     serializer_class = AsistenciaDiariaSerializer
+
     permission_classes = [IsAuthenticated]

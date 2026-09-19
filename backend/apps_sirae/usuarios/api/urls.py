@@ -13,9 +13,5 @@ urlpatterns = [
         name='login'
     ),
 
-    path(
-        'auth/registro/',
-        RegistroView.as_view(),
-        name='registro'
-    ),
+    
 ]

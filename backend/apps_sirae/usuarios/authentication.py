@@ -1,27 +1,25 @@
+# -*- coding: utf-8 -*-
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from rest_framework_simplejwt.exceptions import InvalidToken, AuthenticationFailed
-from rest_framework_simplejwt.settings import api_settings
-from .models import Usuario
+from rest_framework_simplejwt.exceptions import InvalidToken
+from rest_framework.exceptions import AuthenticationFailed
 
 
 class CustomJWTAuthentication(JWTAuthentication):
-    """
-    Autenticación JWT personalizada para SIRAE.
-    Busca al usuario autenticado directamente en la tabla 'usuarios'
-    utilizando 'id_usuario' en lugar del modelo estándar de Django.
-    """
+
+    
 
     def get_user(self, validated_token):
-        user_id = validated_token.get(api_settings.USER_ID_CLAIM, None)
-        if user_id is None:
-            raise InvalidToken("El token no contiene un identificador de usuario válido.")
+        try:
+            user_id = validated_token['user_id']
+        except KeyError:
+            raise InvalidToken('El token no contiene un ID de usuario válido.')
 
         try:
-            usuario = Usuario.objects.select_related('id_rol').get(id_usuario=user_id)
-        except Usuario.DoesNotExist:
-            raise AuthenticationFailed("El usuario asociado a este token no existe.")
+            user = self.user_model.objects.get(id_usuario=user_id)
+        except self.user_model.DoesNotExist:
+            raise AuthenticationFailed('Usuario no encontrado.', code='user_not_found')
 
-        if not usuario.is_active:
-            raise AuthenticationFailed("La cuenta del usuario está inactiva.")
+        if not user.is_active:
+            raise AuthenticationFailed('Usuario inactivo.', code='user_inactive')
 
-        return usuario
+        return user
