@@ -11,7 +11,7 @@ class Contrato(models.Model):
     estado = models.CharField(max_length=50, default='Activo')
 
     class Meta:
-        db_table = 'contrato_pae'  # Le indica a Django el nombre real de la tabla en Render
+        db_table = 'contratos_pae_contrato'
 
     def __str__(self):
         return f"Contrato {self.numero_cor} - {self.institucion} ({self.estado})"
