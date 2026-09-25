@@ -9,6 +9,9 @@ class Contrato(models.Model):
     fecha_inicio = models.DateField()
     fecha_fin = models.DateField()
     estado = models.CharField(max_length=50, default='Activo')
-    
+
+    class Meta:
+        db_table = 'contrato_pae'  # Le indica a Django el nombre real de la tabla en Render
+
     def __str__(self):
         return f"Contrato {self.numero_cor} - {self.institucion} ({self.estado})"

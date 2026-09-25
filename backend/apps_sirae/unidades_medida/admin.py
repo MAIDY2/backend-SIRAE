@@ -4,5 +4,8 @@ from .models import UnidadMedida
 
 @admin.register(UnidadMedida)
 class UnidadMedidaAdmin(admin.ModelAdmin):
-    list_display = ('id_unidad_medida', 'nombre_unidad', 'abreviatura')
-    search_fields = ('nombre_unidad', 'abreviatura')
+    list_display = (
+        'id_unidad_medida',
+        'nombre',        # Reemplaza 'nombre_unidad' por 'nombre'
+        'abreviatura'
+    )
