@@ -11,11 +11,8 @@ class Contrato(models.Model):
     estado = models.CharField(max_length=50, null=True, blank=True)
 
     class Meta:
-        HEAD
         db_table = 'contrato_pae'
         managed = False
-        db_table = 'contratos_pae_contrato'
-        jhon
 
     def __str__(self):
         return f"Contrato {self.numero_cor} - {self.institucion} ({self.estado})"
