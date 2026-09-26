@@ -1,5 +1,6 @@
 from rest_framework import serializers
-from apps_sirae.platos.models import Plato
+from ..models import Plato
+
 
 class PlatoSerializer(serializers.ModelSerializer):
     class Meta:

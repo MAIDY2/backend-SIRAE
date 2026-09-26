@@ -3,7 +3,6 @@ from django.db import models
 
 class SeccionMenu(models.Model):
     id_seccion = models.AutoField(primary_key=True)
-
     id_jornada = models.ForeignKey(
         'jornadas.Jornada',
         on_delete=models.DO_NOTHING,
@@ -11,7 +10,6 @@ class SeccionMenu(models.Model):
         null=True,
         blank=True
     )
-
     nombre_seccion = models.CharField(
         max_length=100,
         null=True,
@@ -20,8 +18,11 @@ class SeccionMenu(models.Model):
 
     class Meta:
         db_table = 'secciones_menu'
+        managed = True  # <--- AQUÍ SE AGREGA
         verbose_name = 'Sección de menú'
         verbose_name_plural = 'Secciones de menú'
 
     def __str__(self):
-        return self.nombre_seccion or ''
+        return self.nombre_seccion or f"Sección {self.id_seccion}"
+
+    
