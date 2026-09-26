@@ -18,6 +18,8 @@ from apps_sirae.turnos.api.router import router_turnos
 from apps_sirae.usuario_turno.api.router import router_usuario_turno
 from apps_sirae.contratos_pae.api.router import router_contratos
 from apps_sirae.contratos_seccion_menu.api.router import router_contrato_seccion_menu
+from apps_sirae.jornadas.api.router import router_jornadas
+
 
 
 urlpatterns = [
@@ -41,5 +43,6 @@ urlpatterns = [
     path('', include(router_gramage.urls)),
     path('', include(router_inventario.urls)),
     path('', include(router_contratos.urls)),
-    path('', include(router_contrato_seccion_menu.urls))
+    path('', include(router_contrato_seccion_menu.urls)),
+     path('', include(router_jornadas.urls))
 ]
