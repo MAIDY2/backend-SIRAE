@@ -28,9 +28,9 @@ urlpatterns = [
     path('', include('apps_sirae.roles.api.urls')),
     path('', include('apps_sirae.usuarios.api.urls')),
     
-    # Rutas directas y seguras para autenticación y recuperación
-    path('api/auth/recuperar-password/', RecuperarPasswordView.as_view(), name='recuperar-password'),
-    path('api/auth/google/', google_login_view, name='google-login'),
+    # Rutas directas y corregidas (sin duplicar 'api/')
+    path('auth/recuperar-password/', RecuperarPasswordView.as_view(), name='recuperar-password'),
+    path('auth/google/', google_login_view, name='google-login'),
 
     path('', include(router_unidades_medida.urls)),
     path('', include(router_secciones_menu.urls)),
