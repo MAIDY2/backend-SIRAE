@@ -1,4 +1,5 @@
 from django.db import models
+
 from apps_sirae.usuarios.models import Usuario
 from apps_sirae.turnos.models import Turno
 
@@ -22,6 +23,7 @@ class UsuarioTurno(models.Model):
 
     class Meta:
         db_table = 'usuario_turno'
+        managed = False
 
     def __str__(self):
         return f"UsuarioTurno {self.id_usuario_turno}"

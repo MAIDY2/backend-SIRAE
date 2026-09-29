@@ -24,3 +24,5 @@ class SeccionMenu(models.Model):
 
     def __str__(self):
         return self.nombre_seccion or f"Sección {self.id_seccion}"
+
+    

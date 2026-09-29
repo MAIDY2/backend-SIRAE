@@ -1,11 +1,9 @@
 from django.urls import include, path
 
-
 from apps_sirae.unidades_medida.api.router import router_unidades_medida
 from apps_sirae.secciones_menu.api.router import router_secciones_menu
 from apps_sirae.platos.api.router import router_platos
 from apps_sirae.detalle_plato.api.router import router_detalle_plato
-
 
 from apps_sirae.asistencia_diaria.api.router import router_asistencia_diaria
 from apps_sirae.entregas.api.router import router_entregas
@@ -18,11 +16,22 @@ from apps_sirae.inventario.api.router import router_inventario
 from apps_sirae.ingredientes.api.router import router_ingredientes
 from apps_sirae.turnos.api.router import router_turnos
 from apps_sirae.usuario_turno.api.router import router_usuario_turno
+from apps_sirae.contratos_pae.api.router import router_contratos
+from apps_sirae.contratos_seccion_menu.api.router import router_contrato_seccion_menu
+from apps_sirae.jornadas.api.router import router_jornadas
+
+# Importamos las vistas de autenticación avanzadas desde la app de usuarios
+from apps_sirae.usuarios.api.views import RecuperarPasswordView, google_login_view
 
 
 urlpatterns = [
     path('', include('apps_sirae.roles.api.urls')),
     path('', include('apps_sirae.usuarios.api.urls')),
+    
+    # Rutas directas y seguras para autenticación y recuperación
+    path('api/auth/recuperar-password/', RecuperarPasswordView.as_view(), name='recuperar-password'),
+    path('api/auth/google/', google_login_view, name='google-login'),
+
     path('', include(router_unidades_medida.urls)),
     path('', include(router_secciones_menu.urls)),
     path('', include(router_platos.urls)),
@@ -40,4 +49,7 @@ urlpatterns = [
     path('', include(router_grados.urls)),
     path('', include(router_gramage.urls)),
     path('', include(router_inventario.urls)),
+    path('', include(router_contratos.urls)),
+    path('', include(router_contrato_seccion_menu.urls)),
+    path('', include(router_jornadas.urls))
 ]
