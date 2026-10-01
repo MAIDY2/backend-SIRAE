@@ -8,7 +8,8 @@ class Plato(models.Model):
         on_delete=models.DO_NOTHING,
         db_column='id_seccion',
         null=True,
-        blank=True
+        blank=True,
+        db_constraint=False
     )
     nombre_plato = models.CharField(
         max_length=100,
@@ -20,6 +21,15 @@ class Plato(models.Model):
         null=True,
         blank=True
     )
+
+    def __init__(self, *args, **kwargs):
+        if 'id_seccion' in kwargs and 'id_seccion_id' not in kwargs:
+            value = kwargs.pop('id_seccion')
+            if value is None or isinstance(value, (int, str)):
+                kwargs['id_seccion_id'] = value
+            else:
+                kwargs['id_seccion'] = value
+        super().__init__(*args, **kwargs)
 
     class Meta:
         db_table = 'platos'

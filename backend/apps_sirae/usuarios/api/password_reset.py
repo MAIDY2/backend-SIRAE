@@ -25,10 +25,8 @@ class PasswordResetService:
     @classmethod
     def generar_token(cls, usuario: Usuario) -> str:
         signer = TimestampSigner(salt=cls.SALT)
-        # Se incluye un fragmento del hash de la contraseña actual.
-        # Si la contraseña cambia, el token se invalida automáticamente.
         pwd_snippet = str(usuario.password)[-12:] if usuario.password else 'nopwd'
-        data_str = f"{usuario.id_usuario}:{usuario.email}:{pwd_snippet}"
+        data_str = f"{usuario.id_usuario}:{usuario.correo}:{pwd_snippet}"
         return signer.sign(data_str)
 
     @classmethod
@@ -40,8 +38,8 @@ class PasswordResetService:
             if len(partes) != 3:
                 return None, "Estructura del token no válida."
 
-            id_usuario, email, pwd_snippet = partes
-            usuario = Usuario.objects.select_related('id_rol').get(id_usuario=id_usuario, email=email)
+            id_usuario, correo, pwd_snippet = partes
+            usuario = Usuario.objects.select_related('rol').get(id_usuario=id_usuario, correo__iexact=correo)
 
             actual_snippet = str(usuario.password)[-12:] if usuario.password else 'nopwd'
             if actual_snippet != pwd_snippet:
@@ -74,7 +72,7 @@ class SolicitarRecuperacionPasswordView(APIView):
             )
 
         try:
-            usuario = Usuario.objects.select_related('id_rol').get(email__iexact=email)
+            usuario = Usuario.objects.select_related('rol').get(correo__iexact=email)
         except Usuario.DoesNotExist:
             # Respuesta amigable para evitar enumeración de correos
             return Response(
@@ -147,14 +145,14 @@ class SolicitarRecuperacionPasswordView(APIView):
                 subject=asunto,
                 message=mensaje_texto,
                 from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'no-reply@sirae.edu.co'),
-                recipient_list=[usuario.email],
+                recipient_list=[usuario.correo],
                 html_message=mensaje_html,
                 fail_silently=False,
             )
-            print(f"[SIRAE EMAIL] Correo de recuperacion enviado con exito a: {usuario.email}")
+            print(f"[SIRAE EMAIL] Correo de recuperacion enviado con exito a: {usuario.correo}")
         except Exception as e:
-            logger.error(f"[SIRAE EMAIL ERROR] No se pudo enviar el correo a {usuario.email}: {e}", exc_info=True)
-            print(f"[SIRAE EMAIL ERROR] Fallo el envio de correo a {usuario.email}: {e}")
+            logger.error(f"[SIRAE EMAIL ERROR] No se pudo enviar el correo a {usuario.correo}: {e}", exc_info=True)
+            print(f"[SIRAE EMAIL ERROR] Fallo el envio de correo a {usuario.correo}: {e}")
             return Response(
                 {
                     "error": "No fue posible enviar el correo de recuperación en este momento. Por favor verifica la configuración de correo del servidor o contacta al administrador.",
@@ -166,7 +164,7 @@ class SolicitarRecuperacionPasswordView(APIView):
         respuesta = {
             "status": "success",
             "mensaje": "Se han enviado las instrucciones de recuperación al correo electrónico registrado.",
-            "email": usuario.email,
+            "email": usuario.correo,
         }
 
         # En modo DEBUG facilitamos el token en la respuesta para agilizar pruebas de desarrollo
@@ -197,7 +195,7 @@ class ValidarTokenPasswordView(APIView):
             {
                 "valido": True,
                 "mensaje": "Token verificado exitosamente.",
-                "email": usuario.email,
+                "email": usuario.correo,
                 "nombre_completo": usuario.nombre_completo
             },
             status=status.HTTP_200_OK

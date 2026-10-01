@@ -14,7 +14,8 @@ class PreparacionAsignada(models.Model):
         on_delete=models.CASCADE,
         db_column='id_menu',
         null=True,
-        blank=True
+        blank=True,
+        db_constraint=False
     )
 
     id_plato = models.ForeignKey(
@@ -22,7 +23,8 @@ class PreparacionAsignada(models.Model):
         on_delete=models.CASCADE,
         db_column='id_plato',
         null=True,
-        blank=True
+        blank=True,
+        db_constraint=False
     )
 
     id_usuario_manipuladora = models.ForeignKey(
@@ -30,7 +32,8 @@ class PreparacionAsignada(models.Model):
         on_delete=models.CASCADE,
         db_column='id_usuario_manipuladora',
         null=True,
-        blank=True
+        blank=True,
+        db_constraint=False
     )
 
     id_turno = models.ForeignKey(
@@ -38,7 +41,8 @@ class PreparacionAsignada(models.Model):
         on_delete=models.CASCADE,
         db_column='id_turno',
         null=True,
-        blank=True
+        blank=True,
+        db_constraint=False
     )
 
     fecha = models.DateField(
@@ -62,9 +66,25 @@ class PreparacionAsignada(models.Model):
         blank=True
     )
 
+    def __init__(self, *args, **kwargs):
+        legacy_fields = {
+            'id_menu': 'id_menu_id',
+            'id_plato': 'id_plato_id',
+            'id_usuario_manipuladora': 'id_usuario_manipuladora_id',
+            'id_turno': 'id_turno_id',
+        }
+        for legacy_name, actual_name in legacy_fields.items():
+            if legacy_name in kwargs and actual_name not in kwargs:
+                value = kwargs.pop(legacy_name)
+                if value is None or isinstance(value, (int, str)):
+                    kwargs[actual_name] = value
+                else:
+                    kwargs[legacy_name] = value
+        super().__init__(*args, **kwargs)
+
     class Meta:
-        db_table = 'preparaciones_asignadas'
-        managed = False
+        db_table = 'preparacion_asignada'
+        managed = True
 
     def __str__(self):
         return (
