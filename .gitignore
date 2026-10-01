@@ -1,12 +1,16 @@
 
 
 #Ignore vscode AI rules
-.github\instructions\codacy.instructions.md
+.github/instructions/codacy.instructions.md
 
-
+node_modules/
+.env
+.env.*
 __pycache__/
 *.py[cod]
 *.sqlite3
 db.sqlite3
 .venv/
 .vscode/
+.DS_Store
+npm-debug.log*

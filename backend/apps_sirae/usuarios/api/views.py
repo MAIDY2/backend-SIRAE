@@ -4,11 +4,14 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.contrib.auth.forms import PasswordResetForm
+from django.conf import settings
+from django.db import IntegrityError
 
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
+from google.auth.exceptions import GoogleAuthError
 
 from apps_sirae.usuarios.models import Usuario
 from apps_sirae.usuarios.api.serializers import UsuarioSerializer, CustomTokenObtainPairSerializer
@@ -74,39 +77,90 @@ class RecuperarPasswordView(APIView):
 @permission_classes([AllowAny])
 def google_login_view(request):
     token_google = request.data.get('token')
-    
-    if not token_google:
+
+    if not isinstance(token_google, str) or not token_google.strip():
         return Response({"detail": "Token de Google no proporcionado."}, status=status.HTTP_400_BAD_REQUEST)
-    
-    try:
-        # Reemplaza 'TU_GOOGLE_CLIENT_ID' con tu Client ID real de Google Cloud Console cuando lo tengas
-        CLIENT_ID = "TU_GOOGLE_CLIENT_ID.apps.googleusercontent.com"
-        
-        # Verificamos el token con los servidores de Google
-        idinfo = id_token.verify_oauth2_token(token_google, google_requests.Request(), CLIENT_ID)
 
-        email = idinfo['email']
-        nombre = idinfo.get('given_name', '')
-        apellido = idinfo.get('family_name', '')
-
-        # Buscamos o creamos el usuario en tu base de datos local usando tu campo 'correo'
-        usuario, creado = Usuario.objects.get_or_create(
-            correo=email,
-            defaults={
-                'nombre': nombre,
-                'apellido': apellido,
-                'password': Usuario.objects.make_random_password() 
-            }
+    client_id = settings.GOOGLE_OAUTH2_CLIENT_ID
+    if not client_id:
+        return Response(
+            {"detail": "La autenticación con Google no está configurada."},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
         )
 
-        # Generamos los tokens JWT de SimpleJWT para tu sistema
-        refresh = RefreshToken.for_user(usuario)
-
-        return Response({
-            'access': str(refresh.access_token),
-            'refresh': str(refresh),
-            'usuario': UsuarioSerializer(usuario).data
-        }, status=status.HTTP_200_OK)
-
+    try:
+        idinfo = id_token.verify_oauth2_token(
+            token_google,
+            google_requests.Request(),
+            client_id
+        )
     except ValueError:
-        return Response({"detail": "Token de Google inválido."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"detail": "Token de Google inválido."}, status=status.HTTP_401_UNAUTHORIZED)
+    except GoogleAuthError:
+        return Response(
+            {"detail": "No se pudo verificar el token con Google."},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+
+    email = idinfo.get('email')
+    if not isinstance(email, str) or not email.strip() or idinfo.get('email_verified') is not True:
+        return Response(
+            {"detail": "El token no contiene un correo verificado."},
+            status=status.HTTP_401_UNAUTHORIZED
+        )
+
+    email = email.strip().lower()
+    try:
+        usuario = Usuario.objects.get(correo__iexact=email)
+    except Usuario.DoesNotExist:
+        tipo_documento = request.data.get('tipo_documento')
+        numero_documento = request.data.get('numero_documento')
+        if not isinstance(tipo_documento, str) or not tipo_documento.strip():
+            return Response(
+                {"tipo_documento": "Este campo es obligatorio para crear la cuenta."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if not isinstance(numero_documento, str) or not numero_documento.strip():
+            return Response(
+                {"numero_documento": "Este campo es obligatorio para crear la cuenta."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        tipo_documento = tipo_documento.strip()
+        numero_documento = numero_documento.strip()
+        if len(tipo_documento) > 20 or len(numero_documento) > 20:
+            return Response(
+                {"detail": "El tipo y número de documento no pueden superar 20 caracteres."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if Usuario.objects.filter(numero_documento=numero_documento).exists():
+            return Response(
+                {"numero_documento": "Este número de documento ya está registrado."},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        try:
+            usuario = Usuario.objects.create_user(
+                correo=email,
+                nombre=idinfo.get('given_name') or '',
+                apellido=idinfo.get('family_name') or '',
+                tipo_documento=tipo_documento,
+                numero_documento=numero_documento
+            )
+        except IntegrityError:
+            usuario = Usuario.objects.filter(correo__iexact=email).first()
+            if usuario is None:
+                return Response(
+                    {"detail": "El número de documento ya está registrado."},
+                    status=status.HTTP_409_CONFLICT
+                )
+
+    if not usuario.is_active:
+        return Response({"detail": "La cuenta del usuario está inactiva."}, status=status.HTTP_403_FORBIDDEN)
+
+    refresh = RefreshToken.for_user(usuario)
+    return Response({
+        'access': str(refresh.access_token),
+        'refresh': str(refresh),
+        'usuario': UsuarioSerializer(usuario).data
+    }, status=status.HTTP_200_OK)

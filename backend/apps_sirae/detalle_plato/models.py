@@ -15,7 +15,8 @@ class DetallePlato(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        db_column='id_plato'
+        db_column='id_plato',
+        db_constraint=False
     )
 
     porcion_por_nino = models.DecimalField(

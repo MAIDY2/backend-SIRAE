@@ -14,17 +14,27 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / ".env")
 
+
+def parse_env_list(value, default):
+    raw = value or default
+    if isinstance(raw, str):
+        return [item.strip() for item in raw.split(",") if item.strip()]
+    return [str(item).strip() for item in raw if str(item).strip()]
+
+
 SECRET_KEY = os.getenv(
     "SECRET_KEY",
     "django-insecure-pmt1w^!r9=)mza56h*qmjv(31z#l*2ldc71@(ti+5=tc59)l89"
 )
 
-DEBUG = os.getenv("DEBUG", "True") == "True"
+DEBUG = os.getenv("DEBUG", "False").strip().lower() in {"1", "true", "yes", "on"}
 
-ALLOWED_HOSTS = os.getenv(
-    "ALLOWED_HOSTS",
-    "localhost,127.0.0.1,testserver,*"
-).split(",")
+ALLOWED_HOSTS = parse_env_list(
+    os.getenv("ALLOWED_HOSTS"),
+    "localhost,127.0.0.1,0.0.0.0,testserver,.onrender.com"
+)
+
+APPEND_SLASH = False
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -66,6 +76,8 @@ INSTALLED_APPS = [
 ]
 
 AUTH_USER_MODEL = "usuarios.Usuario"
+GOOGLE_OAUTH2_CLIENT_ID = os.getenv("GOOGLE_OAUTH2_CLIENT_ID", "").strip()
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173").strip()
 
 # Configuración global de Rest Framework
 REST_FRAMEWORK = {
@@ -74,13 +86,20 @@ REST_FRAMEWORK = {
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
-        'rest_framework.permissions.IsAuthenticated', 
+        'rest_framework.permissions.IsAuthenticated',
     ),
 }
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:4200",
-]
+CORS_ALLOWED_ORIGINS = parse_env_list(
+    os.getenv("CORS_ALLOWED_ORIGINS"),
+    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4200,http://127.0.0.1:4200"
+)
+CORS_ALLOW_CREDENTIALS = True
+
+CSRF_TRUSTED_ORIGINS = parse_env_list(
+    os.getenv("CSRF_TRUSTED_ORIGINS"),
+    "http://localhost:5173,http://127.0.0.1:5173,https://*.onrender.com"
+)
 
 # Configuración JWT
 SIMPLE_JWT = {
@@ -170,13 +189,25 @@ USE_I18N = True
 USE_TZ = True
 
 # Static files
-STATIC_URL = "static/"
+STATIC_URL = "/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "False").strip().lower() in {"1", "true", "yes", "on"}
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    if SECURE_SSL_REDIRECT:
+        SESSION_COOKIE_SECURE = True
+        CSRF_COOKIE_SECURE = True
+else:
+    SECURE_SSL_REDIRECT = False
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SECURE = False
 
 # Correo
 EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
 EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
-EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True") == "True"
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").strip().lower() in {"1", "true", "yes", "on"}
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 
@@ -188,7 +219,6 @@ DEFAULT_FROM_EMAIL = os.getenv(
 )
 
 EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 sys.path.insert(0, str(BASE_DIR / "apps_sirae"))
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS = False
