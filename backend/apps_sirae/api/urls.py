@@ -5,6 +5,7 @@ from apps_sirae.secciones_menu.api.router import router_secciones_menu
 from apps_sirae.platos.api.router import router_platos
 from apps_sirae.detalle_plato.api.router import router_detalle_plato
 from apps_sirae.preparacion_asignada.api.router import router as router_preparacion_asignada
+from apps_sirae.preparacion_asignada.api.views import PreparacionAsignadaApiViewSet
 
 from apps_sirae.asistencia_diaria.api.router import router_asistencia_diaria
 from apps_sirae.entregas.api.router import router_entregas
@@ -37,6 +38,8 @@ urlpatterns = [
     path('', include(router_secciones_menu.urls)),
     path('', include(router_platos.urls)),
     path('', include(router_detalle_plato.urls)),
+    path('preparacion-asignada', PreparacionAsignadaApiViewSet.as_view({'get': 'list', 'post': 'create'}), name='preparacion-asignada-list'),
+    path('preparacion-asignada/<int:pk>', PreparacionAsignadaApiViewSet.as_view({'get': 'retrieve', 'delete': 'destroy'}), name='preparacion-asignada-detail'),
     path('', include(router_preparacion_asignada.urls)),
 
     path('', include(router_asistencia_diaria.urls)),

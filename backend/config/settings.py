@@ -34,6 +34,8 @@ ALLOWED_HOSTS = parse_env_list(
     "localhost,127.0.0.1,0.0.0.0,testserver,.onrender.com"
 )
 
+APPEND_SLASH = False
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",

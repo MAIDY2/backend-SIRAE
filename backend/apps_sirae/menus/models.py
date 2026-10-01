@@ -9,7 +9,8 @@ class Menu(models.Model):
     id_jornada = models.ForeignKey(
         Jornada,
         on_delete=models.CASCADE,
-        db_column='id_jornada'
+        db_column='id_jornada',
+        db_constraint=False
     )
 
     fecha = models.DateField()
@@ -17,6 +18,15 @@ class Menu(models.Model):
     estado = models.CharField(max_length=50)
     informacion_nutricional = models.TextField()
     id_contrato = models.IntegerField()
+
+    def __init__(self, *args, **kwargs):
+        if 'id_jornada' in kwargs and 'id_jornada_id' not in kwargs:
+            value = kwargs.pop('id_jornada')
+            if value is None or isinstance(value, (int, str)):
+                kwargs['id_jornada_id'] = value
+            else:
+                kwargs['id_jornada'] = value
+        super().__init__(*args, **kwargs)
 
     class Meta:
         db_table = 'menus'
