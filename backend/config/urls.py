@@ -25,7 +25,7 @@ urlpatterns = [
     path('api/jornadas/', include('apps_sirae.jornadas.api.urls')),
     path('api/categorias-inventario/', include('apps_sirae.categorias_inventario.api.urls')),
     path('api/menus/', include('apps_sirae.menus.api.urls')),
-    path('api/secciones-menu/', include('apps_sirae.secciones_menu.api.urls')),  # <--- ¡Añadida aquí!
+
 
     # Documentación Swagger y Redoc
     path(
@@ -41,7 +41,7 @@ urlpatterns = [
 ]
 
 from django.conf import settings
-from django.conf.urls.static import static
+from django.contrib.staticfiles.urls import staticfiles_urlpatterns
 
 if settings.DEBUG:
-    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+    urlpatterns += staticfiles_urlpatterns()
