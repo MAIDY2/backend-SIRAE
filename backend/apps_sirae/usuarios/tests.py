@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
@@ -42,6 +43,76 @@ class UsuarioCompatibilityTests(TestCase):
         self.assertIsNone(error)
         self.assertEqual(usuario_validado.id_usuario, usuario.id_usuario)
         self.assertEqual(usuario_validado.correo, usuario.correo)
+
+
+class UsuarioLoginTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.usuario = Usuario.objects.create_user(
+            correo="admin@sirae.com",
+            nombre="Administrador",
+            apellido="Sistema",
+            password="Safe-Passphrase-2026!",
+            tipo_documento="CC",
+            numero_documento="LOGIN001",
+        )
+
+    def test_login_accepts_email_and_password(self):
+        response = self.client.post(
+            reverse("login"),
+            {"correo": self.usuario.correo.upper(), "password": "Safe-Passphrase-2026!"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("access", response.data)
+        self.assertEqual(response.data["usuario"]["correo"], self.usuario.correo)
+
+    def test_login_rejects_wrong_password(self):
+        response = self.client.post(
+            reverse("login"),
+            {"correo": self.usuario.correo, "password": "incorrect-password"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 401)
+
+
+class UsuarioSeedCommandTests(TestCase):
+    @patch("apps_sirae.usuarios.management.commands.crear_usuario_prueba.getpass.getpass")
+    def test_seed_creates_accounts_and_does_not_reset_existing_passwords(self, get_password):
+        get_password.return_value = "Unique-Safe-Passphrase-2026!"
+
+        call_command("crear_usuario_prueba")
+
+        self.assertEqual(Usuario.objects.count(), 4)
+        self.assertEqual(get_password.call_count, 8)
+        usuario = Usuario.objects.get(correo="admin@sirae.com")
+        self.assertTrue(usuario.check_password("Unique-Safe-Passphrase-2026!"))
+
+        call_command("crear_usuario_prueba")
+
+        self.assertEqual(get_password.call_count, 8)
+        usuario.refresh_from_db()
+        self.assertTrue(usuario.check_password("Unique-Safe-Passphrase-2026!"))
+
+    @patch("apps_sirae.usuarios.management.commands.crear_usuario_prueba.getpass.getpass")
+    def test_seed_only_resets_existing_passwords_when_requested(self, get_password):
+        Usuario.objects.create_user(
+            correo="admin@sirae.com",
+            nombre="Old",
+            apellido="Admin",
+            password="Previous-Safe-Passphrase-2026!",
+            tipo_documento="CC",
+            numero_documento="RESET001",
+        )
+        get_password.return_value = "Replacement-Safe-Passphrase-2026!"
+
+        call_command("crear_usuario_prueba", "--reset-existing-passwords")
+
+        usuario = Usuario.objects.get(correo="admin@sirae.com")
+        self.assertTrue(usuario.check_password("Replacement-Safe-Passphrase-2026!"))
+        self.assertEqual(get_password.call_count, 8)
 
 
 @override_settings(GOOGLE_OAUTH2_CLIENT_ID='test-google-client-id')

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import dj_database_url
 from dotenv import load_dotenv
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -22,12 +23,13 @@ def parse_env_list(value, default):
     return [str(item).strip() for item in raw if str(item).strip()]
 
 
-SECRET_KEY = os.getenv(
-    "SECRET_KEY",
-    "django-insecure-pmt1w^!r9=)mza56h*qmjv(31z#l*2ldc71@(ti+5=tc59)l89"
-)
-
 DEBUG = os.getenv("DEBUG", "True").strip().lower() in {"1", "true", "yes", "on"}
+
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    if not DEBUG:
+        raise ImproperlyConfigured("SECRET_KEY debe configurarse cuando DEBUG está desactivado.")
+    SECRET_KEY = "django-insecure-local-development-only"
 
 ALLOWED_HOSTS = parse_env_list(
     os.getenv("ALLOWED_HOSTS"),
@@ -168,6 +170,8 @@ if DATABASE_URL:
             ssl_require=True,
         )
     }
+elif not DEBUG:
+    raise ImproperlyConfigured("DATABASE_URL debe configurarse cuando DEBUG está desactivado.")
 else:
     DATABASES = {
         "default": {
