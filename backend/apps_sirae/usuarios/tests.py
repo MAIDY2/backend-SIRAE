@@ -1,12 +1,13 @@
 from unittest.mock import patch
 
 from django.core.management import call_command
-from django.test import TestCase, override_settings
+from django.test import TestCase
 from django.urls import reverse
 from rest_framework.test import APIClient
 
 from apps_sirae.usuarios.api.password_reset import PasswordResetService
 from apps_sirae.usuarios.models import Usuario
+from apps_sirae.roles.models import Rol
 
 
 class UsuarioCompatibilityTests(TestCase):
@@ -134,81 +135,53 @@ class UsuarioSeedCommandTests(TestCase):
         )
 
 
-@override_settings(GOOGLE_OAUTH2_CLIENT_ID='test-google-client-id')
-class GoogleLoginTests(TestCase):
-	def setUp(self):
-		self.client = APIClient()
-		self.url = reverse('google-login')
+class EmailPasswordLoginTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.role = Rol.objects.create(nombre=Rol.NombreRol.SUPERVISOR)
+        self.user = Usuario.objects.create_user(
+            correo='supervisor@example.com',
+            nombre='Ana',
+            apellido='Pérez',
+            password='secure-password-42',
+            tipo_documento='CC',
+            numero_documento='123456789',
+            rol=self.role,
+        )
 
-	@patch('apps_sirae.usuarios.api.views.id_token.verify_oauth2_token')
-	def test_new_user_requires_document_fields(self, verify_token):
-		verify_token.return_value = {
-			'email': 'new.user@example.com',
-			'email_verified': True,
-			'given_name': 'New',
-			'family_name': 'User',
-		}
+    def test_login_returns_tokens_and_the_user_role(self):
+        response = self.client.post(
+            reverse('login'),
+            {
+                'correo': 'SUPERVISOR@EXAMPLE.COM',
+                'password': 'secure-password-42',
+            },
+            format='json',
+        )
 
-		response = self.client.post(self.url, {'token': 'valid-token'}, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data['access'])
+        self.assertTrue(response.data['refresh'])
+        self.assertEqual(
+            response.data['usuario'],
+            {
+                'id_usuario': self.user.id_usuario,
+                'nombre': 'Ana',
+                'apellido': 'Pérez',
+                'correo': 'supervisor@example.com',
+                'numero_documento': '123456789',
+                'rol': 'supervisor',
+            },
+        )
 
-		self.assertEqual(response.status_code, 400)
-		self.assertIn('tipo_documento', response.data)
-		self.assertFalse(Usuario.objects.filter(correo='new.user@example.com').exists())
+    def test_login_rejects_an_incorrect_password(self):
+        response = self.client.post(
+            reverse('login'),
+            {
+                'correo': self.user.correo,
+                'password': 'incorrect-password',
+            },
+            format='json',
+        )
 
-	@patch('apps_sirae.usuarios.api.views.id_token.verify_oauth2_token')
-	def test_new_user_is_created_with_unusable_password(self, verify_token):
-		verify_token.return_value = {
-			'email': 'new.user@example.com',
-			'email_verified': True,
-			'given_name': 'New',
-			'family_name': 'User',
-		}
-
-		response = self.client.post(
-			self.url,
-			{
-				'token': 'valid-token',
-				'tipo_documento': 'CC',
-				'numero_documento': '123456',
-			},
-			format='json'
-		)
-
-		usuario = Usuario.objects.get(correo='new.user@example.com')
-		self.assertEqual(response.status_code, 200)
-		self.assertFalse(usuario.has_usable_password())
-		verify_token.assert_called_once()
-		self.assertEqual(verify_token.call_args.args[2], 'test-google-client-id')
-
-	@patch('apps_sirae.usuarios.api.views.id_token.verify_oauth2_token')
-	def test_unverified_email_is_rejected(self, verify_token):
-		verify_token.return_value = {
-			'email': 'unverified@example.com',
-			'email_verified': False,
-		}
-
-		response = self.client.post(self.url, {'token': 'valid-token'}, format='json')
-
-		self.assertEqual(response.status_code, 401)
-		self.assertFalse(Usuario.objects.filter(correo='unverified@example.com').exists())
-
-	@patch('apps_sirae.usuarios.api.views.id_token.verify_oauth2_token')
-	def test_inactive_user_cannot_log_in(self, verify_token):
-		Usuario.objects.create_user(
-			correo='inactive@example.com',
-			nombre='Inactive',
-			apellido='User',
-			password='local-password',
-			tipo_documento='CC',
-			numero_documento='654321',
-			is_active=False,
-		)
-		verify_token.return_value = {
-			'email': 'inactive@example.com',
-			'email_verified': True,
-		}
-
-		response = self.client.post(self.url, {'token': 'valid-token'}, format='json')
-
-		self.assertEqual(response.status_code, 403)
-		self.assertNotIn('access', response.data)
+        self.assertEqual(response.status_code, 401)

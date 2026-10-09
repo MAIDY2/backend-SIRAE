@@ -80,7 +80,6 @@ INSTALLED_APPS = [
 ]
 
 AUTH_USER_MODEL = "usuarios.Usuario"
-GOOGLE_OAUTH2_CLIENT_ID = os.getenv("GOOGLE_OAUTH2_CLIENT_ID", "").strip()
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173").strip()
 
 # Configuración global de Rest Framework

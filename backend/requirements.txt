@@ -9,7 +9,6 @@ django-cors-headers==4.9.0
 djangorestframework==3.18.0
 djangorestframework_simplejwt==5.5.1
 drf-yasg==1.21.15
-google-auth==2.58.1
 gunicorn==26.2.0
 idna==3.20
 inflection==0.5.1

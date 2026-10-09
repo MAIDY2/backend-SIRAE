@@ -24,8 +24,8 @@ from apps_sirae.contratos_pae.api.router import router_contratos
 from apps_sirae.contratos_seccion_menu.api.router import router_contrato_seccion_menu
 from apps_sirae.jornadas.api.router import router_jornadas
 
-# Importamos las vistas de autenticación avanzadas desde la app de usuarios
-from apps_sirae.usuarios.api.views import RecuperarPasswordView, google_login_view
+# Importamos la vista de recuperación de contraseña desde la app de usuarios
+from apps_sirae.usuarios.api.views import RecuperarPasswordView
 
 
 urlpatterns = [
@@ -34,7 +34,6 @@ urlpatterns = [
     
     # Rutas directas y corregidas (sin duplicar 'api/')
     path('auth/recuperar-password/', RecuperarPasswordView.as_view(), name='recuperar-password'),
-    path('auth/google/', google_login_view, name='google-login'),
 
     path('', include(router_unidades_medida.urls)),
     path('', include(router_secciones_menu.urls)),
