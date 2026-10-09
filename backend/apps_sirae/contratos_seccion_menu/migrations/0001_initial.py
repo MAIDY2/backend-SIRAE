@@ -50,6 +50,7 @@ class Migration(migrations.Migration):
                     'id_contrato',
                     models.ForeignKey(
                         db_column='id_contrato',
+                        db_constraint=False,
                         on_delete=django.db.models.deletion.DO_NOTHING,
                         to='contratos_pae.contrato',
                     ),

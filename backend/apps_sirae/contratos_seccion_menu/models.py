@@ -7,7 +7,8 @@ class ContratoSeccionMenu(models.Model):
     id_contrato = models.ForeignKey(
         'contratos_pae.Contrato',
         on_delete=models.DO_NOTHING,
-        db_column='id_contrato'
+        db_column='id_contrato',
+        db_constraint=False,
     )
 
     id_seccion = models.ForeignKey(
