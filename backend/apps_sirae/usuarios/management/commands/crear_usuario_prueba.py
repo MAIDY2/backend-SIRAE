@@ -1,4 +1,5 @@
 import getpass
+import os
 
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
@@ -18,6 +19,15 @@ class Command(BaseCommand):
             action="store_true",
             help="Solicita y reemplaza también las claves de las cuentas ya existentes.",
         )
+        parser.add_argument(
+            "--non-interactive",
+            action="store_true",
+            help=(
+                "Lee las contraseñas de SIRAE_ADMIN_PASSWORD, "
+                "SIRAE_SUPERVISOR_PASSWORD, SIRAE_JEFE_PASSWORD y "
+                "SIRAE_MANIPULADORA_PASSWORD."
+            ),
+        )
 
     def handle(self, *args, **options):
         roles = [
@@ -35,7 +45,14 @@ class Command(BaseCommand):
             ("jefe@sirae.com", "Jefa", "Manipuladoras", "JefaManipuladoras", "RENDER003"),
             ("manipuladora@sirae.com", "Manipuladora", "PAE", "Manipuladora", "RENDER004"),
         ]
+        password_envs = {
+            "admin@sirae.com": "SIRAE_ADMIN_PASSWORD",
+            "supervisor@sirae.com": "SIRAE_SUPERVISOR_PASSWORD",
+            "jefe@sirae.com": "SIRAE_JEFE_PASSWORD",
+            "manipuladora@sirae.com": "SIRAE_MANIPULADORA_PASSWORD",
+        }
 
+        passwords = {}
         for correo, nombre, apellido, nombre_rol, documento in cuentas:
             usuario = Usuario.objects.filter(correo__iexact=correo).first()
             creado = usuario is None
@@ -51,19 +68,44 @@ class Command(BaseCommand):
                 usuario.nombre = nombre
                 usuario.apellido = apellido
 
-            usuario.rol = Rol.objects.get(nombre=nombre_rol)
-            usuario.is_active = True
             configurar_password = creado or options["reset_existing_passwords"]
             if configurar_password:
-                password = getpass.getpass(f"Nueva contraseña para {correo}: ")
-                confirmacion = getpass.getpass(f"Confirma la contraseña para {correo}: ")
-                if not password or password != confirmacion:
-                    raise CommandError(f"La contraseña para {correo} está vacía o no coincide.")
+                if options["non_interactive"]:
+                    password_env = password_envs[correo]
+                    password = os.environ.get(password_env)
+                    if not password:
+                        raise CommandError(
+                            f"Falta configurar la variable secreta {password_env}."
+                        )
+                else:
+                    password = getpass.getpass(f"Nueva contraseña para {correo}: ")
+                    confirmacion = getpass.getpass(f"Confirma la contraseña para {correo}: ")
+                    if not password or password != confirmacion:
+                        raise CommandError(f"La contraseña para {correo} está vacía o no coincide.")
                 try:
                     validate_password(password, user=usuario)
                 except ValidationError as exc:
-                    raise CommandError(f"La contraseña para {correo} no cumple los requisitos: {exc}") from exc
-                usuario.set_password(password)
+                    raise CommandError(
+                        f"La contraseña configurada para {correo} no cumple los requisitos: {exc}"
+                    ) from exc
+                passwords[correo] = password
+
+        for correo, nombre, apellido, nombre_rol, documento in cuentas:
+            usuario, _ = Usuario.objects.get_or_create(
+                correo=correo,
+                defaults={
+                    "nombre": nombre,
+                    "apellido": apellido,
+                    "tipo_documento": "CC",
+                    "numero_documento": documento,
+                },
+            )
+            usuario.nombre = nombre
+            usuario.apellido = apellido
+            usuario.rol = Rol.objects.get(nombre=nombre_rol)
+            usuario.is_active = True
+            if correo in passwords:
+                usuario.set_password(passwords[correo])
 
             with transaction.atomic():
                 usuario.save()

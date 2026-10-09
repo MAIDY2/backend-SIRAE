@@ -21,3 +21,9 @@ El segundo comando pide una contraseña nueva dos veces por cada cuenta creada y
 no muestra lo que se escribe. Para restablecer también las cuentas existentes,
 añade `--reset-existing-passwords`. Usa contraseñas nuevas y robustas; el comando
 no almacena contraseñas en el repositorio.
+
+Si necesitas sembrar las cuentas en un despliegue sin Shell, configura
+temporalmente en Render las variables secretas `SIRAE_ADMIN_PASSWORD`,
+`SIRAE_SUPERVISOR_PASSWORD`, `SIRAE_JEFE_PASSWORD` y
+`SIRAE_MANIPULADORA_PASSWORD`, y ejecuta el comando con `--non-interactive`.
+Retira esas variables después de verificar que las cuentas se crearon.

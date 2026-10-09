@@ -114,6 +114,25 @@ class UsuarioSeedCommandTests(TestCase):
         self.assertTrue(usuario.check_password("Replacement-Safe-Passphrase-2026!"))
         self.assertEqual(get_password.call_count, 8)
 
+    @patch.dict(
+        "os.environ",
+        {
+            "SIRAE_ADMIN_PASSWORD": "Admin-Seed-Passphrase-2026!xQ",
+            "SIRAE_SUPERVISOR_PASSWORD": "Supervisor-Seed-Passphrase-2026!xQ",
+            "SIRAE_JEFE_PASSWORD": "Jefa-Seed-Passphrase-2026!xQ",
+            "SIRAE_MANIPULADORA_PASSWORD": "Manipuladora-Seed-Passphrase-2026!xQ",
+        },
+    )
+    def test_seed_supports_non_interactive_secret_environment(self):
+        call_command("crear_usuario_prueba", "--non-interactive")
+
+        self.assertEqual(Usuario.objects.count(), 4)
+        self.assertTrue(
+            Usuario.objects.get(correo="admin@sirae.com").check_password(
+                "Admin-Seed-Passphrase-2026!xQ"
+            )
+        )
+
 
 @override_settings(GOOGLE_OAUTH2_CLIENT_ID='test-google-client-id')
 class GoogleLoginTests(TestCase):
