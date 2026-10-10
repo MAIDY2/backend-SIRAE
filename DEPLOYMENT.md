@@ -15,7 +15,17 @@ La recuperación de contraseña envía un código de seis dígitos válido duran
 variables `EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend`,
 `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USE_TLS`, `EMAIL_HOST_USER`,
 `EMAIL_HOST_PASSWORD` y `DEFAULT_FROM_EMAIL`. Mantén las credenciales de correo
-como variables secretas.
+como variables secretas. En producción, la recuperación devuelve un error si
+faltan las credenciales SMTP; no informa que el mensaje fue enviado si el backend
+solo puede escribirlo en los logs del servidor.
+
+Solo para pruebas con cuentas sin buzón, se puede habilitar `PASSWORD_RESET_EXPOSE_CODE=True`
+y establecer `PASSWORD_RESET_EXPOSE_CODE_EMAILS` con una lista separada por comas de
+correos de prueba. Para esas cuentas el código de un solo uso se devuelve al frontend
+en `debug_code` en vez de enviarse por SMTP. Esto permite a cualquier persona que
+conozca el correo solicitar y ver el código; no habilites esta opción para cuentas
+reales ni en una aplicación pública. Déjala desactivada y elimina la lista al terminar
+las pruebas.
 
 El frontend solicita el código con `POST /api/auth/recuperar-password/` y el
 campo `correo`. Después envía `correo`, `codigo`, `nueva_password` y

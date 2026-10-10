@@ -60,7 +60,10 @@ class UsuarioLoginTests(TestCase):
             tipo_documento="CC",
             numero_documento="LOGIN001",
         )
+
+
 @override_settings(
+    DEBUG=True,
     EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
 )
 class PasswordRecoveryApiTests(TestCase):
@@ -88,6 +91,85 @@ class PasswordRecoveryApiTests(TestCase):
             'Tu código para recuperar la contraseña es:',
             mail.outbox[0].body,
         )
+
+    @override_settings(
+        DEBUG=False,
+        EMAIL_BACKEND='django.core.mail.backends.smtp.EmailBackend',
+        EMAIL_HOST_USER='',
+        EMAIL_HOST_PASSWORD='',
+    )
+    @patch('apps_sirae.usuarios.api.password_reset.send_mail')
+    def test_production_without_smtp_credentials_does_not_claim_email_was_sent(self, send_mail):
+        response = self.client.post(
+            reverse('recuperar-password'),
+            {'correo': self.usuario.correo},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn('servicio de correo no está configurado', response.data['error'])
+        send_mail.assert_not_called()
+        self.assertFalse(
+            PasswordResetCode.objects.filter(usuario=self.usuario).exists()
+        )
+
+    @override_settings(
+        DEBUG=False,
+        EMAIL_BACKEND='django.core.mail.backends.console.EmailBackend',
+    )
+    @patch('apps_sirae.usuarios.api.password_reset.send_mail')
+    def test_production_console_backend_does_not_claim_email_was_sent(self, send_mail):
+        response = self.client.post(
+            reverse('recuperar-password'),
+            {'correo': self.usuario.correo},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 503)
+        send_mail.assert_not_called()
+        self.assertFalse(
+            PasswordResetCode.objects.filter(usuario=self.usuario).exists()
+        )
+
+    @override_settings(
+        DEBUG=False,
+        EMAIL_BACKEND='django.core.mail.backends.smtp.EmailBackend',
+        EMAIL_HOST_USER='',
+        EMAIL_HOST_PASSWORD='',
+        PASSWORD_RESET_EXPOSE_CODE=True,
+        PASSWORD_RESET_EXPOSE_CODE_EMAILS={'reset@example.com'},
+    )
+    @patch('apps_sirae.usuarios.api.password_reset.send_mail')
+    def test_production_demo_account_receives_code_without_smtp(self, send_mail):
+        response = self.client.post(
+            reverse('recuperar-password'),
+            {'correo': self.usuario.correo},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertRegex(response.data['debug_code'], r'^\d{6}$')
+        send_mail.assert_not_called()
+
+    @override_settings(
+        DEBUG=False,
+        EMAIL_BACKEND='django.core.mail.backends.smtp.EmailBackend',
+        EMAIL_HOST_USER='',
+        EMAIL_HOST_PASSWORD='',
+        PASSWORD_RESET_EXPOSE_CODE=True,
+        PASSWORD_RESET_EXPOSE_CODE_EMAILS={'other@example.com'},
+    )
+    @patch('apps_sirae.usuarios.api.password_reset.send_mail')
+    def test_production_does_not_expose_code_for_unlisted_account(self, send_mail):
+        response = self.client.post(
+            reverse('recuperar-password'),
+            {'correo': self.usuario.correo},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn('debug_code', response.data)
+        send_mail.assert_not_called()
 
     def test_confirm_recovery_changes_password_and_invalidates_token(self):
         token = PasswordResetService.generar_token(self.usuario)
@@ -279,6 +361,12 @@ class EmailPasswordLoginTests(TestCase):
         self.assertEqual(response.status_code, 401)
 
 
+@override_settings(
+    DEBUG=False,
+    EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend",
+    EMAIL_HOST_USER="prueba@example.com",
+    EMAIL_HOST_PASSWORD="clave-de-prueba",
+)
 class PasswordRecoveryCodeTests(TestCase):
     def setUp(self):
         self.client = APIClient()
