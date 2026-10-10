@@ -100,6 +100,33 @@ class SolicitarCodigoRecuperacionPasswordView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        expose_code = (
+            settings.PASSWORD_RESET_EXPOSE_CODE
+            and correo.casefold() in settings.PASSWORD_RESET_EXPOSE_CODE_EMAILS
+        )
+        smtp_is_configured = bool(
+            settings.EMAIL_BACKEND == "django.core.mail.backends.smtp.EmailBackend"
+            and settings.EMAIL_HOST_USER
+            and settings.EMAIL_HOST_PASSWORD
+        ) or bool(
+            settings.EMAIL_BACKEND == "anymail.backends.brevo.EmailBackend"
+            and getattr(settings, "BREVO_API_KEY", "")
+        )
+        if not settings.DEBUG and not expose_code and not smtp_is_configured:
+            logger.error(
+                "No se puede enviar recuperación de contraseña: "
+                "el correo de producción no está configurado."
+            )
+            return Response(
+                {
+                    "error": (
+                        "El servicio de correo no está configurado. "
+                        "Contacta al administrador del sistema."
+                    )
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
         with transaction.atomic():
             usuario = (
                 Usuario.objects.select_for_update()
@@ -127,36 +154,40 @@ class SolicitarCodigoRecuperacionPasswordView(APIView):
                 },
             )
 
-        try:
-            send_mail(
-                subject="Código para recuperar tu contraseña - SIRAE",
-                message=(
-                    f"Hola {usuario.nombre_completo},\n\n"
-                    f"Tu código para recuperar la contraseña es: {codigo}\n\n"
-                    "El código vence en 10 minutos y solo puede utilizarse una vez. "
-                    "Si no solicitaste este cambio, ignora este mensaje."
-                ),
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[usuario.correo],
-                fail_silently=False,
-            )
-        except (OSError, smtplib.SMTPException):
-            logger.exception("No se pudo enviar el código de recuperación de contraseña.")
-            PasswordResetCode.objects.filter(usuario=usuario).delete()
-            return Response(
-                {
-                    "error": (
-                        "No fue posible enviar el código de recuperación. "
-                        "Verifica la configuración de correo del servidor e inténtalo nuevamente."
-                    )
-                },
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+        if not expose_code:
+            try:
+                send_mail(
+                    subject="Código para recuperar tu contraseña - SIRAE",
+                    message=(
+                        f"Hola {usuario.nombre_completo},\n\n"
+                        f"Tu código para recuperar la contraseña es: {codigo}\n\n"
+                        "El código vence en 10 minutos y solo puede utilizarse una vez. "
+                        "Si no solicitaste este cambio, ignora este mensaje."
+                    ),
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[usuario.correo],
+                    fail_silently=False,
+                )
+            except Exception:
+                logger.exception("No se pudo enviar el código de recuperación de contraseña.")
+                PasswordResetCode.objects.filter(usuario=usuario).delete()
+                return Response(
+                    {
+                        "error": (
+                            "No fue posible enviar el código de recuperación. "
+                            "Verifica la configuración de correo del servidor e inténtalo nuevamente."
+                        )
+                    },
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
 
         respuesta = self.respuesta_generica()
         if (
-            settings.DEBUG
-            and settings.EMAIL_BACKEND == "django.core.mail.backends.console.EmailBackend"
+            expose_code
+            or (
+                settings.DEBUG
+                and settings.EMAIL_BACKEND == "django.core.mail.backends.console.EmailBackend"
+            )
         ):
             respuesta.data["debug_code"] = codigo
         return respuesta
