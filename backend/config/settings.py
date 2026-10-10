@@ -56,7 +56,6 @@ INSTALLED_APPS = [
     "apps_sirae.usuarios",
     "apps_sirae.asistencia_diaria",
     "apps_sirae.entregas",
-    "apps_sirae.movimientos_inventario",
     "apps_sirae.entradas_inventario",
     "apps_sirae.salidas_inventario",
     "apps_sirae.notificaciones",

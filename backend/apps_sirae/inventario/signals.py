@@ -6,7 +6,7 @@ from django.db import transaction
 from apps_sirae.inventario.models import Inventario
 from apps_sirae.entradas_inventario.models import EntradaInventario
 from apps_sirae.salidas_inventario.models import SalidaInventario
-from apps_sirae.entregas.models import Entrega  # <--- Nombre correcto (en singular)
+from apps_sirae.entregas.models import Entrega  
 
 
 # 1. Al registrar una ENTRADA o ENTREGA -> SUMAR AL INVENTARIO
