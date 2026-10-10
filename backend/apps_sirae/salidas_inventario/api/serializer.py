@@ -21,7 +21,7 @@ class SalidaInventarioSerializer(serializers.ModelSerializer):
         # 2. Consultar el stock actual en la tabla 'inventario'
         try:
             # Si id_ingrediente es ForeignKey en SalidaInventario, id_ing ya es la instancia del Ingrediente
-            inventario = Inventario.objects.get(id_ingrediente=id_ing)
+            inventario = Inventario.objects.get(id_ingrediente=id_ing.id_ingrediente)
 
             if inventario.cantidad_actual < cantidad:
                 raise serializers.ValidationError({
