@@ -22,6 +22,8 @@ from apps_sirae.usuario_turno.api.router import router_usuario_turno
 from apps_sirae.contratos_pae.api.router import router_contratos
 from apps_sirae.contratos_seccion_menu.api.router import router_contrato_seccion_menu
 from apps_sirae.jornadas.api.router import router_jornadas
+from apps_sirae.categorias_inventario.api.router import router_categorias
+from apps_sirae.tipos_mercado.api.router import router_tipos_mercado
 
 # Importamos las vistas de recuperación de contraseña desde la app de usuarios
 from apps_sirae.usuarios.api.password_reset import (
@@ -72,5 +74,7 @@ urlpatterns = [
     path('', include(router_inventario.urls)),
     path('', include(router_contratos.urls)),
     path('', include(router_contrato_seccion_menu.urls)),
-    path('', include(router_jornadas.urls))
+    path('', include(router_jornadas.urls)),
+    path('', include(router_categorias.urls)),
+    path('', include(router_tipos_mercado.urls))
 ]

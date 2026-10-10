@@ -8,5 +8,3 @@ class DetallePlatoApiViewSet(ModelViewSet):
     serializer_class = DetallePlatoSerializer
     queryset = DetallePlato.objects.all()
     permission_classes = [AllowAny]
-    authentication_classes = []
-    http_method_names = ['get']
