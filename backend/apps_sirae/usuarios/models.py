@@ -1,5 +1,7 @@
-from django.db import models
+import unicodedata
+
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
+from django.db import models
 
 from apps_sirae.roles.models import Rol
 
@@ -136,6 +138,28 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
     @id_rol.setter
     def id_rol(self, value):
         self.rol_id = value
+
+    def _rol_normalizado(self):
+        nombre = self.rol.nombre if self.rol_id and self.rol else ''
+        return ' '.join(
+            ''.join(
+                caracter
+                for caracter in unicodedata.normalize('NFD', nombre)
+                if unicodedata.category(caracter) != 'Mn'
+            ).strip().lower().split()
+        )
+
+    def es_supervisor(self):
+        return self._rol_normalizado() in {'supervisor', 'coordinador', 'coordinador pae'}
+
+    def es_administrador(self):
+        return self._rol_normalizado() in {'administrador', 'admin'}
+
+    def es_jefa_manipuladoras(self):
+        return self._rol_normalizado() in {'jefamanipuladoras', 'jefa de manipuladoras'}
+
+    def es_manipuladora(self):
+        return self._rol_normalizado() in {'manipuladora', 'manipuladora de alimentos'}
 
     def __str__(self):
         return f"{self.nombre} {self.apellido} - {self.correo}"

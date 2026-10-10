@@ -1,8 +1,7 @@
 from rest_framework import viewsets
-from rest_framework.permissions import IsAuthenticated
-
 from ..models import AsistenciaDiaria
 from .serializer import AsistenciaDiariaSerializer
+from apps_sirae.usuarios.permissions import IsJefaRole
 
 
 class AsistenciaDiariaViewSet(viewsets.ModelViewSet):
@@ -14,4 +13,10 @@ class AsistenciaDiariaViewSet(viewsets.ModelViewSet):
 
     serializer_class = AsistenciaDiariaSerializer
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsJefaRole]
+
+    def perform_create(self, serializer):
+        serializer.save(id_usuario_manipuladora=self.request.user.id_usuario)
+
+    def perform_update(self, serializer):
+        serializer.save(id_usuario_manipuladora=self.request.user.id_usuario)

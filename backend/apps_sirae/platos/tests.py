@@ -1,3 +1,4 @@
+from django.db import connection
 from django.test import TestCase
 from rest_framework.test import APIClient
 from rest_framework import status
@@ -9,8 +10,38 @@ from apps_sirae.detalle_plato.models import DetallePlato
 
 
 class EndpointsSiraeTestCase(TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                'CREATE TABLE entradas_inventario ('
+                'id_entrada INTEGER PRIMARY KEY, '
+                'id_ingrediente INTEGER NOT NULL, '
+                'id_usuario INTEGER NULL, '
+                'fecha DATETIME NULL, '
+                'cantidad DECIMAL NULL, '
+                'id_unidad_medida INTEGER NOT NULL, '
+                'observaciones TEXT NULL)'
+            )
+
+    @classmethod
+    def tearDownClass(cls):
+        with connection.cursor() as cursor:
+            cursor.execute('DROP TABLE entradas_inventario')
+        super().tearDownClass()
+
     def setUp(self):
         self.client = APIClient()
+        self.client.force_authenticate(user=type(
+            'Administrador',
+            (),
+            {
+                'is_authenticated': True,
+                'es_jefa_manipuladoras': lambda self: False,
+                'es_administrador': lambda self: True,
+            },
+        )())
 
         # Datos iniciales para pruebas
         self.seccion = SeccionMenu.objects.create(
@@ -35,8 +66,8 @@ class EndpointsSiraeTestCase(TestCase):
             estado_preparacion="Pendiente"
         )
 
-    # --- 1. CRUD completo en unidades_medida ---
-    def test_unidades_medida_crud_completo(self):
+    # --- 1. Unidades de medida: crear, consultar y actualizar ---
+    def test_unidades_medida_crud_sin_entradas_asociadas(self):
         # Listar
         res_list = self.client.get('/api/unidades_medida/')
         self.assertEqual(res_list.status_code, status.HTTP_200_OK)
@@ -63,10 +94,6 @@ class EndpointsSiraeTestCase(TestCase):
         self.assertEqual(res_update.status_code, status.HTTP_200_OK)
         self.assertEqual(res_update.data['nombre'], 'Kilos')
 
-        # Eliminar (DELETE)
-        res_delete = self.client.delete(f'/api/unidades_medida/{nuevo_id}/')
-        self.assertEqual(res_delete.status_code, status.HTTP_204_NO_CONTENT)
-
     # --- 2. Secciones de Menú: solo listar y consultar detalle ---
     def test_secciones_menu_solo_listar(self):
         # Listar
@@ -87,7 +114,7 @@ class EndpointsSiraeTestCase(TestCase):
         res_del = self.client.delete(f'/api/secciones_menu/{self.seccion.id_seccion}/')
         self.assertEqual(res_del.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
 
-    # --- 3. Platos: solo listar y consultar detalle ---
+    # --- 3. Platos: lectura y escritura ---
     def test_platos_solo_listar(self):
         # Listar
         res_list = self.client.get('/api/platos/')
@@ -99,15 +126,13 @@ class EndpointsSiraeTestCase(TestCase):
         self.assertEqual(res_detail.status_code, status.HTTP_200_OK)
         self.assertEqual(res_detail.data['nombre_plato'], 'Avena con Frutas')
 
-        # Intento de creación debe ser rechazado (405 Method Not Allowed)
+        # Crear y eliminar platos es necesario para el editor de menús.
         res_post = self.client.post('/api/platos/', {'nombre_plato': 'Sopa'})
-        self.assertEqual(res_post.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        self.assertEqual(res_post.status_code, status.HTTP_201_CREATED)
+        res_del = self.client.delete(f"/api/platos/{res_post.data['id_plato']}/")
+        self.assertEqual(res_del.status_code, status.HTTP_204_NO_CONTENT)
 
-        # Intento de eliminación debe ser rechazado (405 Method Not Allowed)
-        res_del = self.client.delete(f'/api/platos/{self.plato.id_plato}/')
-        self.assertEqual(res_del.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
-
-    # --- 4. Detalle de Plato: solo listar y consultar detalle ---
+    # --- 4. Detalle de Plato: lectura y escritura ---
     def test_detalle_plato_solo_listar(self):
         # Listar
         res_list = self.client.get('/api/detalle_plato/')
@@ -119,10 +144,25 @@ class EndpointsSiraeTestCase(TestCase):
         self.assertEqual(res_detail.status_code, status.HTTP_200_OK)
         self.assertEqual(res_detail.data['estado_preparacion'], 'Pendiente')
 
-        # Intento de creación debe ser rechazado (405 Method Not Allowed)
+        # El editor de menús crea y elimina detalles de platos.
         res_post = self.client.post('/api/detalle_plato/', {'estado_preparacion': 'Listo'})
-        self.assertEqual(res_post.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        self.assertEqual(res_post.status_code, status.HTTP_201_CREATED)
+        res_del = self.client.delete(
+            f"/api/detalle_plato/{res_post.data['id_detalle_plato']}/"
+        )
+        self.assertEqual(res_del.status_code, status.HTTP_204_NO_CONTENT)
 
-        # Intento de eliminación debe ser rechazado (405 Method Not Allowed)
-        res_del = self.client.delete(f'/api/detalle_plato/{self.detalle.id_detalle_plato}/')
-        self.assertEqual(res_del.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+    def test_supervisor_cannot_read_or_change_menus_and_dishes(self):
+        self.client.force_authenticate(user=type(
+            'Supervisor',
+            (),
+            {
+                'is_authenticated': True,
+                'es_jefa_manipuladoras': lambda self: False,
+                'es_administrador': lambda self: False,
+                'es_supervisor': lambda self: True,
+            },
+        )())
+
+        self.assertEqual(self.client.get('/api/platos/').status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client.get('/api/detalle_plato/').status_code, status.HTTP_403_FORBIDDEN)

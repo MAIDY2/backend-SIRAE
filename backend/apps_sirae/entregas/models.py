@@ -10,6 +10,8 @@ class Entrega(models.Model):
     fecha_vencimiento = models.DateField()
     cantidad = models.DecimalField(max_digits=10, decimal_places=2)
     observaciones = models.TextField(blank=True)
+    frecuencia = models.CharField(max_length=20, blank=True, default='')
+    unidad = models.CharField(max_length=30, blank=True, default='')
 
     class Meta:
         db_table = 'entregas'
