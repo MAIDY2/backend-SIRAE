@@ -24,8 +24,13 @@ from apps_sirae.contratos_pae.api.router import router_contratos
 from apps_sirae.contratos_seccion_menu.api.router import router_contrato_seccion_menu
 from apps_sirae.jornadas.api.router import router_jornadas
 
-# Importamos la vista de recuperación de contraseña desde la app de usuarios
-from apps_sirae.usuarios.api.views import RecuperarPasswordView
+# Importamos las vistas de recuperación de contraseña desde la app de usuarios
+from apps_sirae.usuarios.api.password_reset import (
+    CambiarPasswordView,
+    ConfirmarRecuperacionPasswordView,
+    SolicitarRecuperacionPasswordView,
+    ValidarTokenPasswordView,
+)
 
 
 urlpatterns = [
@@ -33,7 +38,10 @@ urlpatterns = [
     path('', include('apps_sirae.usuarios.api.urls')),
     
     # Rutas directas y corregidas (sin duplicar 'api/')
-    path('auth/recuperar-password/', RecuperarPasswordView.as_view(), name='recuperar-password'),
+    path('auth/recuperar-password/', SolicitarRecuperacionPasswordView.as_view(), name='recuperar-password'),
+    path('auth/password-reset/validar-token/', ValidarTokenPasswordView.as_view(), name='password-reset-validar-token'),
+    path('auth/password-reset/confirmar/', ConfirmarRecuperacionPasswordView.as_view(), name='password-reset-confirmar'),
+    path('auth/cambiar-password/', CambiarPasswordView.as_view(), name='cambiar-password'),
 
     path('', include(router_unidades_medida.urls)),
     path('', include(router_secciones_menu.urls)),

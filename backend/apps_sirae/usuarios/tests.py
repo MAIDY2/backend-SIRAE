@@ -1,7 +1,10 @@
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 
 from django.core.management import call_command
-from django.test import TestCase
+from django.contrib.auth.hashers import check_password
+from django.core import mail
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
 
@@ -47,6 +50,98 @@ class UsuarioCompatibilityTests(TestCase):
 
 
 class UsuarioLoginTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.usuario = Usuario.objects.create_user(
+            correo="admin@sirae.com",
+            nombre="Administrador",
+            apellido="Sistema",
+            password="Safe-Passphrase-2026!",
+            tipo_documento="CC",
+            numero_documento="LOGIN001",
+        )
+@override_settings(
+    EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+    FRONTEND_URL='https://frontend.example.com',
+)
+class PasswordRecoveryApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.usuario = Usuario.objects.create_user(
+            correo='reset@example.com',
+            nombre='Reset',
+            apellido='User',
+            password='old-password-123',
+            tipo_documento='CC',
+            numero_documento='987654321',
+        )
+
+    def test_request_recovery_sends_link_to_configured_frontend(self):
+        response = self.client.post(
+            reverse('recuperar-password'),
+            {'correo': self.usuario.correo},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(mail.outbox), 1)
+        link = next(
+            line for line in mail.outbox[0].body.splitlines()
+            if line.startswith('https://frontend.example.com/recuperar-password?')
+        )
+        token = parse_qs(urlparse(link).query)['token'][0]
+        self.assertIsNone(PasswordResetService.validar_token(token)[1])
+
+    def test_confirm_recovery_changes_password_and_invalidates_token(self):
+        token = PasswordResetService.generar_token(self.usuario)
+        validation = self.client.post(
+            reverse('password-reset-validar-token'),
+            {'token': token},
+            format='json',
+        )
+        self.assertEqual(validation.status_code, 200)
+        self.assertTrue(validation.data['valido'])
+
+        response = self.client.post(
+            reverse('password-reset-confirmar'),
+            {
+                'token': token,
+                'nueva_password': 'new-password-123',
+                'confirmar_password': 'new-password-123',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.usuario.refresh_from_db()
+        self.assertTrue(check_password('new-password-123', self.usuario.password))
+        self.assertEqual(
+            self.client.post(
+                reverse('password-reset-validar-token'),
+                {'token': token},
+                format='json',
+            ).status_code,
+            400,
+        )
+
+    def test_authenticated_password_change_checks_current_password(self):
+        self.client.force_authenticate(user=self.usuario)
+        response = self.client.post(
+            reverse('cambiar-password'),
+            {
+                'password_actual': 'old-password-123',
+                'nueva_password': 'another-password-123',
+                'confirmar_password': 'another-password-123',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.usuario.refresh_from_db()
+        self.assertTrue(check_password('another-password-123', self.usuario.password))
+
+
+class UsuarioLoginBehaviorTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.usuario = Usuario.objects.create_user(

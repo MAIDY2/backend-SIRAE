@@ -80,7 +80,7 @@ INSTALLED_APPS = [
 ]
 
 AUTH_USER_MODEL = "usuarios.Usuario"
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173").strip()
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:4200").strip()
 
 # Configuración global de Rest Framework
 REST_FRAMEWORK = {
@@ -101,7 +101,7 @@ CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = parse_env_list(
     os.getenv("CSRF_TRUSTED_ORIGINS"),
-    "http://localhost:5173,http://127.0.0.1:5173,https://*.onrender.com"
+    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4200,http://127.0.0.1:4200,https://*.onrender.com"
 )
 
 # Configuración JWT

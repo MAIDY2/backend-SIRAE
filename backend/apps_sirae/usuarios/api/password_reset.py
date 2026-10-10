@@ -1,4 +1,5 @@
 import logging
+from urllib.parse import urlencode
 from django.conf import settings
 from django.core.mail import send_mail
 from django.core.signing import TimestampSigner, BadSignature, SignatureExpired
@@ -64,7 +65,10 @@ class SolicitarRecuperacionPasswordView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        email = request.data.get('email', '').strip()
+        email = request.data.get('email') or request.data.get('correo') or ''
+        if not isinstance(email, str):
+            email = ''
+        email = email.strip()
         if not email:
             return Response(
                 {"error": "Debes proporcionar un correo electrónico válido."},
@@ -91,8 +95,11 @@ class SolicitarRecuperacionPasswordView(APIView):
             )
 
         token = PasswordResetService.generar_token(usuario)
-        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
-        enlace_recuperacion = f"{frontend_url}/recuperar-password?token={token}"
+        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200')
+        enlace_recuperacion = (
+            f"{frontend_url}/recuperar-password?"
+            f"{urlencode({'token': token})}"
+        )
 
         asunto = "Restablecimiento de Contraseña - Sistema SIRAE PAE"
         mensaje_texto = (
