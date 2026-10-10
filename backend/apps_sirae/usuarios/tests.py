@@ -1,5 +1,5 @@
+import re
 from unittest.mock import patch
-from urllib.parse import parse_qs, urlparse
 
 from django.core.management import call_command
 from django.contrib.auth.hashers import check_password
@@ -9,7 +9,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 
 from apps_sirae.usuarios.api.password_reset import PasswordResetService
-from apps_sirae.usuarios.models import Usuario
+from apps_sirae.usuarios.models import PasswordResetCode, Usuario
 from apps_sirae.roles.models import Rol
 
 
@@ -62,7 +62,6 @@ class UsuarioLoginTests(TestCase):
         )
 @override_settings(
     EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
-    FRONTEND_URL='https://frontend.example.com',
 )
 class PasswordRecoveryApiTests(TestCase):
     def setUp(self):
@@ -76,7 +75,7 @@ class PasswordRecoveryApiTests(TestCase):
             numero_documento='987654321',
         )
 
-    def test_request_recovery_sends_link_to_configured_frontend(self):
+    def test_request_recovery_sends_verification_code(self):
         response = self.client.post(
             reverse('recuperar-password'),
             {'correo': self.usuario.correo},
@@ -85,12 +84,10 @@ class PasswordRecoveryApiTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(mail.outbox), 1)
-        link = next(
-            line for line in mail.outbox[0].body.splitlines()
-            if line.startswith('https://frontend.example.com/recuperar-password?')
+        self.assertIn(
+            'Tu código para recuperar la contraseña es:',
+            mail.outbox[0].body,
         )
-        token = parse_qs(urlparse(link).query)['token'][0]
-        self.assertIsNone(PasswordResetService.validar_token(token)[1])
 
     def test_confirm_recovery_changes_password_and_invalidates_token(self):
         token = PasswordResetService.generar_token(self.usuario)
@@ -280,3 +277,135 @@ class EmailPasswordLoginTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 401)
+
+
+class PasswordRecoveryCodeTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = Usuario.objects.create_user(
+            correo="reset@example.com",
+            nombre="Ana",
+            apellido="Pérez",
+            password="Original-Safe-Password-2026!",
+            tipo_documento="CC",
+            numero_documento="RESET123",
+        )
+
+    @override_settings(
+        DEBUG=True,
+        EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend",
+    )
+    @patch("apps_sirae.usuarios.api.password_reset.send_mail")
+    def test_local_console_backend_returns_the_code_for_development(self, send_mail):
+        response = self.client.post(
+            reverse("recuperar-password"),
+            {"correo": self.user.correo},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertRegex(response.data["debug_code"], r"^\d{6}$")
+
+    @patch("apps_sirae.usuarios.api.password_reset.send_mail")
+    def test_registered_email_receives_six_digit_code(self, send_mail):
+        response = self.client.post(
+            reverse("recuperar-password"),
+            {"correo": self.user.correo.upper()},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        send_mail.assert_called_once()
+        codigo = re.search(
+            r"código para recuperar la contraseña es: (\d{6})",
+            send_mail.call_args.kwargs["message"],
+        )
+        self.assertIsNotNone(codigo)
+        recuperacion = PasswordResetCode.objects.get(usuario=self.user)
+        self.assertNotEqual(recuperacion.codigo_hash, codigo.group(1))
+
+    @patch(
+        "apps_sirae.usuarios.api.password_reset.send_mail",
+        side_effect=OSError("mail server unavailable"),
+    )
+    def test_email_failure_returns_error_and_removes_recovery_code(self, send_mail):
+        response = self.client.post(
+            reverse("recuperar-password"),
+            {"correo": self.user.correo},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("No fue posible enviar", response.data["error"])
+        self.assertFalse(PasswordResetCode.objects.filter(usuario=self.user).exists())
+
+    @patch("apps_sirae.usuarios.api.password_reset.send_mail")
+    def test_unknown_email_gets_same_response_and_does_not_send_email(self, send_mail):
+        registered = self.client.post(
+            reverse("recuperar-password"),
+            {"correo": self.user.correo},
+            format="json",
+        )
+        send_mail.reset_mock()
+        unknown = self.client.post(
+            reverse("recuperar-password"),
+            {"correo": "unknown@example.com"},
+            format="json",
+        )
+
+        self.assertEqual(registered.status_code, unknown.status_code)
+        self.assertEqual(registered.data, unknown.data)
+        send_mail.assert_not_called()
+
+    @patch("apps_sirae.usuarios.api.password_reset.send_mail")
+    def test_code_resets_password_once(self, send_mail):
+        self.client.post(
+            reverse("recuperar-password"),
+            {"correo": self.user.correo},
+            format="json",
+        )
+        codigo = re.search(
+            r"código para recuperar la contraseña es: (\d{6})",
+            send_mail.call_args.kwargs["message"],
+        ).group(1)
+
+        response = self.client.post(
+            reverse("confirmar-recuperacion-password"),
+            {
+                "correo": self.user.correo,
+                "codigo": codigo,
+                "nueva_password": "New-Safe-Password-2026!",
+                "confirmar_password": "New-Safe-Password-2026!",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("New-Safe-Password-2026!"))
+        self.assertFalse(PasswordResetCode.objects.filter(usuario=self.user).exists())
+
+    @patch("apps_sirae.usuarios.api.password_reset.send_mail")
+    def test_five_wrong_codes_invalidate_the_recovery_code(self, send_mail):
+        self.client.post(
+            reverse("recuperar-password"),
+            {"correo": self.user.correo},
+            format="json",
+        )
+
+        for _ in range(5):
+            response = self.client.post(
+                reverse("confirmar-recuperacion-password"),
+                {
+                    "correo": self.user.correo,
+                    "codigo": "000000",
+                    "nueva_password": "New-Safe-Password-2026!",
+                    "confirmar_password": "New-Safe-Password-2026!",
+                },
+                format="json",
+            )
+            self.assertEqual(response.status_code, 400)
+
+        self.assertFalse(PasswordResetCode.objects.filter(usuario=self.user).exists())
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("Original-Safe-Password-2026!"))

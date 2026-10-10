@@ -31,6 +31,7 @@ from apps_sirae.usuarios.api.password_reset import (
     SolicitarRecuperacionPasswordView,
     ValidarTokenPasswordView,
 )
+from apps_sirae.usuarios.api.views import ConfirmarCodigoRecuperacionPasswordView, RecuperarPasswordView
 
 
 urlpatterns = [
@@ -38,7 +39,12 @@ urlpatterns = [
     path('', include('apps_sirae.usuarios.api.urls')),
     
     # Rutas directas y corregidas (sin duplicar 'api/')
-    path('auth/recuperar-password/', SolicitarRecuperacionPasswordView.as_view(), name='recuperar-password'),
+    path('auth/recuperar-password/', RecuperarPasswordView.as_view(), name='recuperar-password'),
+    path(
+        'auth/confirmar-recuperacion-password/',
+        ConfirmarCodigoRecuperacionPasswordView.as_view(),
+        name='confirmar-recuperacion-password',
+    ),
     path('auth/password-reset/validar-token/', ValidarTokenPasswordView.as_view(), name='password-reset-validar-token'),
     path('auth/password-reset/confirmar/', ConfirmarRecuperacionPasswordView.as_view(), name='password-reset-confirmar'),
     path('auth/cambiar-password/', CambiarPasswordView.as_view(), name='cambiar-password'),

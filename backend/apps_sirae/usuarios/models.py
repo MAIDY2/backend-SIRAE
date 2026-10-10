@@ -139,3 +139,21 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return f"{self.nombre} {self.apellido} - {self.correo}"
+
+
+class PasswordResetCode(models.Model):
+    usuario = models.OneToOneField(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='password_reset_code',
+    )
+    codigo_hash = models.CharField(max_length=128)
+    creado_en = models.DateTimeField(auto_now_add=True)
+    expira_en = models.DateTimeField()
+    intentos_fallidos = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        db_table = 'usuarios_codigo_recuperacion'
+
+    def __str__(self):
+        return f"Código de recuperación para {self.usuario.correo}"

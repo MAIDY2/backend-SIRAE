@@ -10,6 +10,18 @@ archivos estáticos. La aplicación se niega a iniciar en producción si no reci
 `DATABASE_URL` o `SECRET_KEY`, para evitar usar SQLite efímera o una clave de
 desarrollo por accidente.
 
+La recuperación de contraseña envía un código de seis dígitos válido durante
+10 minutos. Para que los correos salgan en producción, configura en Render las
+variables `EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend`,
+`EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USE_TLS`, `EMAIL_HOST_USER`,
+`EMAIL_HOST_PASSWORD` y `DEFAULT_FROM_EMAIL`. Mantén las credenciales de correo
+como variables secretas.
+
+El frontend solicita el código con `POST /api/auth/recuperar-password/` y el
+campo `correo`. Después envía `correo`, `codigo`, `nueva_password` y
+`confirmar_password` a `POST /api/auth/confirmar-recuperacion-password/`.
+El código se invalida tras cinco intentos fallidos y solo se puede usar una vez.
+
 Después del primer despliegue, desde **Shell** del servicio ejecuta:
 
 ```text

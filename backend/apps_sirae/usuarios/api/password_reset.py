@@ -1,15 +1,24 @@
 import logging
 from urllib.parse import urlencode
+import secrets
+import smtplib
+from datetime import timedelta
+
 from django.conf import settings
 from django.core.mail import send_mail
 from django.core.signing import TimestampSigner, BadSignature, SignatureExpired
 from django.contrib.auth.hashers import check_password, make_password
+from django.contrib.auth import password_validation
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
+from django.db import transaction
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 
-from ..models import Usuario
+from ..models import PasswordResetCode, Usuario
 from .serializers import UsuarioSerializer
 
 logger = logging.getLogger(__name__)
@@ -55,6 +64,207 @@ class PasswordResetService:
             return None, "El enlace de recuperación ha caducado (vence en 15 minutos). Por favor solicita uno nuevo."
         except (BadSignature, ValueError, Usuario.DoesNotExist):
             return None, "El enlace o token de recuperación es inválido o está corrupto."
+
+
+class SolicitarCodigoRecuperacionPasswordView(APIView):
+    permission_classes = [AllowAny]
+    DURACION_CODIGO = timedelta(minutes=10)
+    INTERVALO_SOLICITUD = timedelta(minutes=1)
+
+    @staticmethod
+    def respuesta_generica():
+        return Response(
+            {
+                "mensaje": (
+                    "Si el correo está registrado, recibirás un código de "
+                    "verificación para recuperar tu contraseña."
+                )
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        correo = request.data.get("correo", "")
+        if not isinstance(correo, str) or not correo.strip():
+            return Response(
+                {"error": "Debes proporcionar un correo electrónico válido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        correo = correo.strip()
+        try:
+            validate_email(correo)
+        except ValidationError:
+            return Response(
+                {"error": "Debes proporcionar un correo electrónico válido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            usuario = (
+                Usuario.objects.select_for_update()
+                .filter(correo__iexact=correo, is_active=True)
+                .first()
+            )
+            if usuario is None:
+                return self.respuesta_generica()
+
+            codigo_existente = PasswordResetCode.objects.filter(usuario=usuario).first()
+            ahora = timezone.now()
+            if (
+                codigo_existente is not None
+                and codigo_existente.creado_en > ahora - self.INTERVALO_SOLICITUD
+            ):
+                return self.respuesta_generica()
+
+            codigo = f"{secrets.randbelow(1_000_000):06d}"
+            PasswordResetCode.objects.update_or_create(
+                usuario=usuario,
+                defaults={
+                    "codigo_hash": make_password(codigo),
+                    "expira_en": ahora + self.DURACION_CODIGO,
+                    "intentos_fallidos": 0,
+                },
+            )
+
+        try:
+            send_mail(
+                subject="Código para recuperar tu contraseña - SIRAE",
+                message=(
+                    f"Hola {usuario.nombre_completo},\n\n"
+                    f"Tu código para recuperar la contraseña es: {codigo}\n\n"
+                    "El código vence en 10 minutos y solo puede utilizarse una vez. "
+                    "Si no solicitaste este cambio, ignora este mensaje."
+                ),
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[usuario.correo],
+                fail_silently=False,
+            )
+        except (OSError, smtplib.SMTPException):
+            logger.exception("No se pudo enviar el código de recuperación de contraseña.")
+            PasswordResetCode.objects.filter(usuario=usuario).delete()
+            return Response(
+                {
+                    "error": (
+                        "No fue posible enviar el código de recuperación. "
+                        "Verifica la configuración de correo del servidor e inténtalo nuevamente."
+                    )
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        respuesta = self.respuesta_generica()
+        if (
+            settings.DEBUG
+            and settings.EMAIL_BACKEND == "django.core.mail.backends.console.EmailBackend"
+        ):
+            respuesta.data["debug_code"] = codigo
+        return respuesta
+
+
+class ConfirmarCodigoRecuperacionPasswordView(APIView):
+    permission_classes = [AllowAny]
+    MAX_INTENTOS = 5
+
+    def post(self, request):
+        correo = request.data.get("correo", "")
+        codigo = request.data.get("codigo", "")
+        nueva_password = request.data.get("nueva_password", "")
+        confirmar_password = request.data.get("confirmar_password", "")
+
+        if not all(isinstance(value, str) for value in (
+            correo, codigo, nueva_password, confirmar_password
+        )):
+            return Response(
+                {"error": "Todos los campos son obligatorios y deben ser texto."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        correo = correo.strip()
+        codigo = codigo.strip()
+        if not correo or len(codigo) != 6 or not codigo.isdigit():
+            return Response(
+                {"error": "El correo o el código de verificación no son válidos."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not nueva_password or not confirmar_password:
+            return Response(
+                {"error": "Debes ingresar y confirmar la nueva contraseña."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if nueva_password != confirmar_password:
+            return Response(
+                {"error": "Las contraseñas no coinciden."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            validate_email(correo)
+        except ValidationError:
+            return Response(
+                {"error": "El correo o el código de verificación no son válidos."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            try:
+                recuperacion = (
+                    PasswordResetCode.objects.select_for_update()
+                    .select_related("usuario")
+                    .get(usuario__correo__iexact=correo, usuario__is_active=True)
+                )
+            except PasswordResetCode.DoesNotExist:
+                return Response(
+                    {"error": "El código no es válido o ha vencido. Solicita uno nuevo."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if recuperacion.expira_en <= timezone.now():
+                recuperacion.delete()
+                return Response(
+                    {"error": "El código ha vencido. Solicita uno nuevo."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if recuperacion.intentos_fallidos >= self.MAX_INTENTOS:
+                recuperacion.delete()
+                return Response(
+                    {"error": "Se agotaron los intentos. Solicita un código nuevo."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if not check_password(codigo, recuperacion.codigo_hash):
+                recuperacion.intentos_fallidos += 1
+                if recuperacion.intentos_fallidos >= self.MAX_INTENTOS:
+                    recuperacion.delete()
+                    mensaje = "Se agotaron los intentos. Solicita un código nuevo."
+                else:
+                    recuperacion.save(update_fields=["intentos_fallidos"])
+                    mensaje = "El código no es válido."
+                return Response(
+                    {"error": mensaje},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            try:
+                password_validation.validate_password(
+                    nueva_password,
+                    user=recuperacion.usuario,
+                )
+            except ValidationError as error:
+                return Response(
+                    {"error": list(error.messages)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            recuperacion.usuario.set_password(nueva_password)
+            recuperacion.usuario.save(update_fields=["password"])
+            recuperacion.delete()
+
+        return Response(
+            {"mensaje": "Contraseña restablecida. Ya puedes iniciar sesión."},
+            status=status.HTTP_200_OK,
+        )
 
 
 class SolicitarRecuperacionPasswordView(APIView):
