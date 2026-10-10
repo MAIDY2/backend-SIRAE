@@ -8,10 +8,7 @@ class CategoriaInventario(models.Model):
         max_length=100,
         null=True,
         blank=True
-         )
-
-    class Meta:
-        db_table = 'categorias_inventario'
+        )
 
     class Meta:
         db_table = 'categorias_inventario'

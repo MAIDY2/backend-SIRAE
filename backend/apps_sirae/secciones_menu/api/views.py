@@ -9,5 +9,4 @@ class SeccionMenuApiViewSet(ModelViewSet):
     serializer_class = SeccionMenuSerializer
     queryset = SeccionMenu.objects.all().order_by('nombre_seccion')
     permission_classes = [AllowAny]
-    authentication_classes = []
-    http_method_names = ['get']
+
