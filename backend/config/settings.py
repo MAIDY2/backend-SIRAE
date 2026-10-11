@@ -84,7 +84,10 @@ INSTALLED_APPS = [
     "apps_sirae.gramage",
     "apps_sirae.grados",
     "apps_sirae.contratos_seccion_menu",
-    "apps_sirae.tipos_mercado"
+    "apps_sirae.tipos_mercado",
+    "apps_sirae.instituciones",
+    "apps_sirae.sedes",
+    "apps_sirae.sede_jornada",
 ]
 
 AUTH_USER_MODEL = "usuarios.Usuario"
