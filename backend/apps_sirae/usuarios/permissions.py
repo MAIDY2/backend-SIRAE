@@ -34,7 +34,7 @@ class IsSupervisorOrAdminRole(BasePermission):
     def has_permission(self, request, view):
         if not (request.user and request.user.is_authenticated):
             return False
-        return request.user.es_supervisor() or request.user.es_administrador() or request.user.es_jefa_manipuladoras() or request.user.es_manipuladora()
+        return request.user.es_supervisor() or request.user.es_administrador()
 
 
 class IsJefaOrAdminRole(BasePermission):
