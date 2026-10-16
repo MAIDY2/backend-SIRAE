@@ -10,6 +10,9 @@ from pathlib import Path
 import dj_database_url
 from dotenv import load_dotenv
 from django.core.exceptions import ImproperlyConfigured
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -138,6 +141,14 @@ SWAGGER_SETTINGS = {
     },
     'USE_SESSION_AUTH': False,
 }
+
+# Configuración de Cloudinary
+cloudinary.config(
+    cloud_name = os.getenv('CLOUDINARY_CLOUD_NAME', 'tu_cloud_name'),
+    api_key = os.getenv('CLOUDINARY_API_KEY', 'tu_api_key'),
+    api_secret = os.getenv('CLOUDINARY_API_SECRET', 'tu_api_secret'),
+    secure = True
+)
 
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
