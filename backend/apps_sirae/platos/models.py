@@ -21,6 +21,12 @@ class Plato(models.Model):
         null=True,
         blank=True
     )
+    # 🖼️ NUEVO CAMPO PARA CLOUDINARY
+    imagen_url = models.URLField(
+        max_length=500, 
+        null=True, 
+        blank=True
+    )
 
     def __init__(self, *args, **kwargs):
         if 'id_seccion' in kwargs and 'id_seccion_id' not in kwargs:
