@@ -91,6 +91,8 @@ INSTALLED_APPS = [
     "apps_sirae.instituciones",
     "apps_sirae.sedes",
     "apps_sirae.sede_jornada",
+
+
 ]
 
 AUTH_USER_MODEL = "usuarios.Usuario"
@@ -128,6 +130,9 @@ SIMPLE_JWT = {
     'USER_ID_CLAIM': 'user_id',
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 
 # Configuración Swagger (Permite ingresar token Bearer en la interfaz web)
 SWAGGER_SETTINGS = {

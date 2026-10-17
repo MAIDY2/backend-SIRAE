@@ -75,7 +75,10 @@ urlpatterns = [
     
     path('', include(router_notificaciones.urls)),
 
+    # --- RUTA DE INGREDIENTES ---
     path('', include(router_ingredientes.urls)),
+    # ----------------------------
+
     path('', include(router_turnos.urls)),
     path('', include(router_usuario_turno.urls)),
 
