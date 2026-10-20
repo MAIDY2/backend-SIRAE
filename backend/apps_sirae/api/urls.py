@@ -29,6 +29,7 @@ from apps_sirae.tipos_mercado.api.router import router_tipos_mercado
 from apps_sirae.instituciones.api.router import router as router_instituciones
 from apps_sirae.sedes.api.router import router as router_sedes
 from apps_sirae.sede_jornada.api.router import router as router_sede_jornadas
+from apps_sirae.facturas_compra.api.router import router_facturas_compra
 
 from apps_sirae.usuarios.api.password_reset import (
     CambiarPasswordView,
@@ -92,5 +93,6 @@ urlpatterns = [
     path('', include(router_tipos_mercado.urls)),
     path('', include(router_instituciones.urls)),
     path('', include(router_sedes.urls)),
-    path('', include(router_sede_jornadas.urls))
+    path('', include(router_sede_jornadas.urls)),
+    path('', include(router_facturas_compra.urls)),
 ]

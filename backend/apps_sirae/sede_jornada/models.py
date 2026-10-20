@@ -16,6 +16,7 @@ class SedeJornada(models.Model):
       db_column='id_jornada',
       related_name='sede_jornadas',
   )
+  cupos = models.IntegerField(default=0)
 
   class Meta:
     db_table = 'sede_jornada'

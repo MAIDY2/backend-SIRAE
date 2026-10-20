@@ -20,14 +20,21 @@ class EntradaInventarioApiViewSet(viewsets.ModelViewSet):
         ingrediente = serializer.validated_data['id_ingrediente']
         cantidad = serializer.validated_data['cantidad']
 
-        try:
-            inventario = Inventario.objects.get(
-                id_ingrediente=ingrediente.id_ingrediente
+        inventario = Inventario.objects.filter(
+            id_ingrediente=ingrediente.id_ingrediente
+        ).first()
+
+        if not inventario:
+            inventario = Inventario.objects.create(
+                id_ingrediente=ingrediente.id_ingrediente,
+                cantidad_actual=0,
+                stock_minimo=0,
+                id_unidad_medida=(
+                    ingrediente.id_unidad_medida.id_unidad_medida
+                    if ingrediente.id_unidad_medida
+                    else 1
+                ),
             )
-        except Inventario.DoesNotExist:
-            raise ValidationError({
-                'id_ingrediente': 'No existe un registro de inventario para este ingrediente.'
-            })
 
         inventario.cantidad_actual += cantidad
         inventario.save()

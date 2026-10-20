@@ -9,11 +9,14 @@ from ..models import Entrega
 class EntregaSerializer(serializers.ModelSerializer):
     ingrediente_nombre = serializers.SerializerMethodField()
     tipo_mercado_nombre = serializers.SerializerMethodField()
+    sede_nombre = serializers.CharField(source='id_sede.nombre_sede', read_only=True)
 
     class Meta:
         model = Entrega
         fields = [
             'id_entrega',
+            'id_sede',
+            'sede_nombre',
             'id_ingrediente',
             'ingrediente_nombre',
             'id_usuario_supervisor',

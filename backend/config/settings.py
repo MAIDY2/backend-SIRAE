@@ -91,8 +91,7 @@ INSTALLED_APPS = [
     "apps_sirae.instituciones",
     "apps_sirae.sedes",
     "apps_sirae.sede_jornada",
-
-
+    "apps_sirae.facturas_compra",
 ]
 
 AUTH_USER_MODEL = "usuarios.Usuario"
