@@ -12,6 +12,14 @@ class Entrega(models.Model):
     observaciones = models.TextField(blank=True)
     frecuencia = models.CharField(max_length=20, blank=True, default='')
     unidad = models.CharField(max_length=30, blank=True, default='')
+    id_sede = models.ForeignKey(
+        'sedes.Sede',
+        on_delete=models.RESTRICT,
+        db_column='id_sede',
+        null=True,
+        blank=True,
+        related_name='entregas'
+    )
 
     class Meta:
         db_table = 'entregas'

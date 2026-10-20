@@ -71,6 +71,11 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
 
     is_staff = models.BooleanField(default=False)
 
+    debe_cambiar_password = models.BooleanField(
+        default=False,
+        help_text="Indica si el usuario está obligado a cambiar su contraseña en el próximo inicio de sesión."
+    )
+
     objects = UsuarioManager()
 
     USERNAME_FIELD = 'correo'
@@ -147,6 +152,12 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
                 for caracter in unicodedata.normalize('NFD', nombre)
                 if unicodedata.category(caracter) != 'Mn'
             ).strip().lower().split()
+        )
+
+    def es_super_administrador(self):
+        return (
+            self._rol_normalizado() in {'superadministrador', 'super administrador', 'super admin'}
+            or bool(self.is_superuser)
         )
 
     def es_supervisor(self):

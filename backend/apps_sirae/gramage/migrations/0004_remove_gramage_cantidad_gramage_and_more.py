@@ -4,6 +4,15 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
+def sync_tabla_gramajes(apps, schema_editor):
+    connection = schema_editor.connection
+    tablas = connection.introspection.table_names()
+    if 'gramajes' not in tablas:
+        from django.apps import apps as global_apps
+        Gramage = global_apps.get_model('gramage', 'Gramage')
+        schema_editor.create_model(Gramage)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -59,7 +68,9 @@ class Migration(migrations.Migration):
                     table='gramajes',
                 ),
             ],
-            database_operations=[],
+            database_operations=[
+                migrations.RunPython(sync_tabla_gramajes, migrations.RunPython.noop),
+            ],
         ),
     ]
 

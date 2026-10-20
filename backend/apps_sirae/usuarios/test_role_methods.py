@@ -33,3 +33,11 @@ class UsuarioRoleMethodTests(TestCase):
 
         self.assertFalse(usuario.es_supervisor())
         self.assertTrue(usuario.es_jefa_manipuladoras())
+
+    def test_super_administrador_role(self):
+        usuario = self.create_user_with_role(Rol.NombreRol.SUPER_ADMINISTRADOR)
+
+        self.assertTrue(usuario.es_super_administrador())
+        self.assertFalse(usuario.es_supervisor())
+        self.assertFalse(usuario.es_jefa_manipuladoras())
+        self.assertFalse(usuario.es_manipuladora())

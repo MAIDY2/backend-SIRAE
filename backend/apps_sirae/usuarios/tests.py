@@ -345,6 +345,8 @@ class EmailPasswordLoginTests(TestCase):
                 'correo': 'supervisor@example.com',
                 'numero_documento': '123456789',
                 'rol': 'supervisor',
+                'is_superuser': False,
+                'debe_cambiar_password': False,
             },
         )
 
