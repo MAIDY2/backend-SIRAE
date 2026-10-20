@@ -3,11 +3,13 @@ from django.urls import include, path
 from apps_sirae.unidades_medida.api.router import router_unidades_medida
 from apps_sirae.secciones_menu.api.router import router_secciones_menu
 from apps_sirae.platos.api.router import router_platos
+from apps_sirae.platos.views import SubirImagenPlatoView  # <--- Importación de la vista de Cloudinary
 from apps_sirae.detalle_plato.api.router import router_detalle_plato
 from apps_sirae.preparacion_asignada.api.router import router as router_preparacion_asignada
 from apps_sirae.preparacion_asignada.api.views import PreparacionAsignadaApiViewSet
 
 from apps_sirae.asistencia_diaria.api.router import router_asistencia_diaria
+from apps_sirae.menus.api.router import router_menus
 from apps_sirae.entregas.api.router import router_entregas
 from apps_sirae.entradas_inventario.api.router import router_entradas_inventario
 from apps_sirae.salidas_inventario.api.router import router_salidas_inventario
@@ -24,8 +26,10 @@ from apps_sirae.contratos_seccion_menu.api.router import router_contrato_seccion
 from apps_sirae.jornadas.api.router import router_jornadas
 from apps_sirae.categorias_inventario.api.router import router_categorias
 from apps_sirae.tipos_mercado.api.router import router_tipos_mercado
+from apps_sirae.instituciones.api.router import router as router_instituciones
+from apps_sirae.sedes.api.router import router as router_sedes
+from apps_sirae.sede_jornada.api.router import router as router_sede_jornadas
 
-# Importamos las vistas de recuperación de contraseña desde la app de usuarios
 from apps_sirae.usuarios.api.password_reset import (
     CambiarPasswordView,
     ConfirmarRecuperacionPasswordView,
@@ -52,20 +56,29 @@ urlpatterns = [
 
     path('', include(router_unidades_medida.urls)),
     path('', include(router_secciones_menu.urls)),
+    
+    # --- RUTA PARA SUBIR LA IMAGEN DEL PLATO ---
+    path('platos/<int:pk>/subir-imagen/', SubirImagenPlatoView.as_view(), name='subir-imagen-plato'),
     path('', include(router_platos.urls)),
+    # -------------------------------------------
+
     path('', include(router_detalle_plato.urls)),
     path('preparacion-asignada', PreparacionAsignadaApiViewSet.as_view({'get': 'list', 'post': 'create'}), name='preparacion-asignada-list'),
     path('preparacion-asignada/<int:pk>', PreparacionAsignadaApiViewSet.as_view({'get': 'retrieve', 'delete': 'destroy'}), name='preparacion-asignada-detail'),
     path('', include(router_preparacion_asignada.urls)),
 
     path('', include(router_asistencia_diaria.urls)),
+    path('', include(router_menus.urls)),
     path('', include(router_entregas.urls)),
     path('', include(router_entradas_inventario.urls)),
     path('', include(router_salidas_inventario.urls)),
     
     path('', include(router_notificaciones.urls)),
 
+    # --- RUTA DE INGREDIENTES ---
     path('', include(router_ingredientes.urls)),
+    # ----------------------------
+
     path('', include(router_turnos.urls)),
     path('', include(router_usuario_turno.urls)),
 
@@ -76,5 +89,8 @@ urlpatterns = [
     path('', include(router_contrato_seccion_menu.urls)),
     path('', include(router_jornadas.urls)),
     path('', include(router_categorias.urls)),
-    path('', include(router_tipos_mercado.urls))
+    path('', include(router_tipos_mercado.urls)),
+    path('', include(router_instituciones.urls)),
+    path('', include(router_sedes.urls)),
+    path('', include(router_sede_jornadas.urls))
 ]

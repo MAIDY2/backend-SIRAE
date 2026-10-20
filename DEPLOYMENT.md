@@ -10,6 +10,17 @@ archivos estáticos. La aplicación se niega a iniciar en producción si no reci
 `DATABASE_URL` o `SECRET_KEY`, para evitar usar SQLite efímera o una clave de
 desarrollo por accidente.
 
+La API de entregas requiere `Authorization: Bearer <access>`. Antes de probarla,
+inicia sesión para obtener el token. El endpoint devuelve los nombres de
+ingrediente y tipo de mercado junto con sus IDs. La migración añade frecuencia y
+unidad a las entregas existentes; los registros anteriores quedan con esos dos
+campos vacíos. El comando de despliegue de Render ejecuta la migración
+automáticamente.
+
+En Render, configura `CORS_ALLOWED_ORIGINS` y `CSRF_TRUSTED_ORIGINS` con el origen
+exacto del frontend publicado (incluye `https://`, sin ruta final). No uses
+`*`: las peticiones autenticadas llevan el encabezado `Authorization`.
+
 La recuperación de contraseña envía un código de seis dígitos válido durante
 10 minutos. Para que los correos salgan en producción, configura en Render las
 variables `EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend`,

@@ -25,6 +25,30 @@ class IsSupervisorRole(BasePermission):
         return request.user.es_supervisor()
 
 
+class IsSupervisorOrAdminRole(BasePermission):
+    """
+    Permite al Supervisor gestionar la operación PAE y al Administrador supervisarla.
+    """
+    message = "Acceso restringido: se requiere el rol de Supervisor o Administrador."
+
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        return request.user.es_supervisor() or request.user.es_administrador()
+
+
+class IsJefaOrAdminRole(BasePermission):
+    """
+    Permite a la Jefa gestionar la operación de menús y al Administrador mantenerla.
+    """
+    message = "Acceso restringido: se requiere el rol de Jefa de manipuladoras o Administrador."
+
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        return request.user.es_jefa_manipuladoras() or request.user.es_administrador()
+
+
 # Alias para compatibilidad
 IsCoordinadorRole = IsSupervisorRole
 

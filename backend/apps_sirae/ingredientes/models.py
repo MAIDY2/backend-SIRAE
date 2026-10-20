@@ -1,7 +1,13 @@
+
 from django.db import models
 
 
 class Ingrediente(models.Model):
+    TIPO_CONSERVACION_CHOICES = [
+        ('perecedero', 'Perecedero'),
+        ('no_perecedero', 'No perecedero'),
+    ]
+
     id_ingrediente = models.AutoField(primary_key=True)
 
     nombre_ingrediente = models.CharField(
@@ -41,6 +47,14 @@ class Ingrediente(models.Model):
         db_column='id_unidad_medida',
         null=True,
         blank=True
+    )
+
+    tipo_conservacion = models.CharField(
+        max_length=20,
+        choices=TIPO_CONSERVACION_CHOICES,
+        null=True,
+        blank=True,
+        db_column='tipo_conservacion'
     )
 
     class Meta:
