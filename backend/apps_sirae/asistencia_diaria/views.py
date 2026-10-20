@@ -38,11 +38,13 @@ class CalculoRacionesPorGradoView(APIView):
         resultado_calculo = []
         
         for g in gramajes_del_grado:
-            total_requerido = g.cantidad_gramage * ninos
+            cantidad = g.cantidad_gramaje or 0
+            total_requerido = cantidad * ninos
+            ingrediente_id = g.id_ingrediente_id if hasattr(g, 'id_ingrediente_id') else g.id_ingrediente
             resultado_calculo.append({
-                'id_ingrediente': g.id_ingrediente,
+                'id_ingrediente': ingrediente_id,
                 'descripcion_gramaje': g.descripcion,
-                'cantidad_por_nino': g.cantidad_gramage,
+                'cantidad_por_nino': cantidad,
                 'total_ingrediente_requerido': total_requerido
             })
             
