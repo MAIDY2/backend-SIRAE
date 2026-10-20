@@ -57,6 +57,15 @@ class Ingrediente(models.Model):
         db_column='tipo_conservacion'
     )
 
+    id_tipo_mercado = models.ForeignKey(
+        'tipos_mercado.TipoMercado',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='id_tipo_mercado',
+        related_name='ingredientes'
+    )
+
     class Meta:
         db_table = 'ingredientes'
 

@@ -544,6 +544,7 @@ class CambiarPasswordView(APIView):
             )
 
         usuario.password = make_password(nueva_password)
+        usuario.debe_cambiar_password = False
         usuario.save()
 
         return Response(

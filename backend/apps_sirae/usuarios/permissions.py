@@ -92,15 +92,66 @@ class IsAdminOrReadOnly(BasePermission):
         return request.user.es_administrador()
 
 
-class IsNotAdminRole(BasePermission):
+class IsSuperAdminRole(BasePermission):
     """
-    Regla de negocio PAE:
-    El Administrador NO selecciona el menú diario ni registra asistencia diaria
-    (no reemplaza la función operativa de la jefa).
+    Permiso que autoriza únicamente al Super Administrador.
     """
-    message = "El rol Administrador no está autorizado para realizar operaciones exclusivas de la Jefa de manipuladoras."
+    message = "Acceso restringido: Se requiere el rol de Super Administrador."
 
     def has_permission(self, request, view):
         if not (request.user and request.user.is_authenticated):
             return False
-        return not request.user.es_administrador()
+        return getattr(request.user, 'es_super_administrador', lambda: False)()
+
+
+class IsSuperAdminOrReadOnly(BasePermission):
+    """
+    Permite lectura a cualquier usuario autenticado, pero reserva
+    la creación/modificación/eliminación exclusivamente al Super Administrador.
+    Aplica a catálogo global (productos/ingredientes, categorías, unidades,
+    tipos de mercado, porciones y minutas) e instituciones y sedes.
+    """
+    message = "Solo el Super Administrador puede crear o modificar estos registros."
+
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        if request.method in SAFE_METHODS:
+            return True
+        return getattr(request.user, 'es_super_administrador', lambda: False)()
+
+
+class IsOperationalAuditedRole(BasePermission):
+    """
+    Regla de negocio PAE:
+    En módulos operativos (asistencia diaria, selección de menús, avance de cocina, entregas),
+    el Super Administrador tiene visibilidad total en modo lectura (auditoría),
+    pero NO PUEDE realizar operaciones de registro o modificación.
+    """
+    message = "El Super Administrador solo tiene acceso de consulta y auditoría en este módulo operativo."
+
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        if getattr(request.user, 'es_super_administrador', lambda: False)():
+            return request.method in SAFE_METHODS
+        return True
+
+
+class IsNotAdminRole(BasePermission):
+    """
+    Regla de negocio PAE:
+    El Administrador y el Super Administrador NO seleccionan el menú diario ni registran asistencia diaria
+    (no reemplazan la función operativa de la jefa).
+    El Super Administrador puede consultar en modo auditoría (SAFE_METHODS).
+    """
+    message = "No está autorizado para realizar operaciones exclusivas de la Jefa de manipuladoras."
+
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        if request.method in SAFE_METHODS and getattr(request.user, 'es_super_administrador', lambda: False)():
+            return True
+        if request.user.es_administrador() or getattr(request.user, 'es_super_administrador', lambda: False)():
+            return False
+        return True

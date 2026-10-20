@@ -17,6 +17,12 @@ class UsuarioViewSet(viewsets.ModelViewSet):
     queryset = Usuario.objects.all()
     serializer_class = UsuarioSerializer
 
+    def perform_destroy(self, instance):
+        if instance.es_super_administrador():
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('El Super Administrador no puede ser eliminado del sistema.')
+        super().perform_destroy(instance)
+
 
 class RegistroView(APIView):
     permission_classes = [AllowAny]

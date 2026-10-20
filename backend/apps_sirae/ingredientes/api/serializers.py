@@ -3,6 +3,11 @@ from apps_sirae.ingredientes.models import Ingrediente
 
 
 class IngredienteSerializer(serializers.ModelSerializer):
+    categoria_nombre = serializers.CharField(source='id_categoria_inventario.nombre_categoria', read_only=True)
+    unidad_nombre = serializers.CharField(source='id_unidad_medida.nombre', read_only=True)
+    unidad_abreviatura = serializers.CharField(source='id_unidad_medida.abreviatura', read_only=True)
+    tipo_mercado_nombre = serializers.CharField(source='id_tipo_mercado.nombre_tipo', read_only=True)
+
     class Meta:
         model = Ingrediente
         fields = '__all__'

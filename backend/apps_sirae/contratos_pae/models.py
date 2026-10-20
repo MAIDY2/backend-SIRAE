@@ -34,6 +34,18 @@ class Contrato(models.Model):
         db_column='id_usuario_supervisor',
         related_name='contratos_supervisados'
     )
+    id_jornada = models.ForeignKey(
+        'jornadas.Jornada',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='id_jornada',
+        related_name='contratos'
+    )
+    cupos = models.PositiveIntegerField(
+        default=0,
+        help_text="Cantidad de cupos asignados a la institución/sede"
+    )
 
     class Meta:
         db_table = 'contrato_pae'

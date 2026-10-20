@@ -7,6 +7,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         roles = [
+            ("SuperAdministrador", "Gestión global de instituciones, contratos, catálogo y auditoría."),
             ("Administrador", "Configura usuarios y parámetros generales del sistema."),
             ("supervisor", "Supervisa manipuladoras y procesos del PAE."),
             ("JefaManipuladoras", "Gestiona manipuladoras y menús."),

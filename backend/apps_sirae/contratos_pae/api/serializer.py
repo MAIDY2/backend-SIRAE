@@ -6,6 +6,7 @@ from ..models import Contrato
 class ContratoSerializer(serializers.ModelSerializer):
     institucion_nombre = serializers.CharField(source='id_institucion.nombre_institucion', read_only=True)
     sede_nombre = serializers.CharField(source='id_sede.nombre_sede', read_only=True)
+    jornada_nombre = serializers.CharField(source='id_jornada.nombre_jornada', read_only=True)
     supervisor_nombre = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
@@ -22,6 +23,9 @@ class ContratoSerializer(serializers.ModelSerializer):
             "institucion_nombre",
             "id_sede",
             "sede_nombre",
+            "id_jornada",
+            "jornada_nombre",
+            "cupos",
             "id_usuario_supervisor",
             "supervisor_nombre",
         ]
