@@ -108,11 +108,18 @@ REST_FRAMEWORK = {
     ),
 }
 
+CORS_ALLOW_ALL_ORIGINS = os.getenv("CORS_ALLOW_ALL_ORIGINS", "True").strip().lower() in {"1", "true", "yes", "on"}
+CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = parse_env_list(
     os.getenv("CORS_ALLOWED_ORIGINS"),
     "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4200,http://127.0.0.1:4200"
 )
-CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^http://localhost:\d+$",
+    r"^http://127\.0\.0\.1:\d+$",
+    r"^https://.*\.vercel\.app$",
+    r"^https://.*\.onrender\.com$",
+]
 
 CSRF_TRUSTED_ORIGINS = parse_env_list(
     os.getenv("CSRF_TRUSTED_ORIGINS"),
@@ -267,4 +274,3 @@ EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
 
 sys.path.insert(0, str(BASE_DIR / "apps_sirae"))
-CORS_ALLOW_ALL_ORIGINS = False
