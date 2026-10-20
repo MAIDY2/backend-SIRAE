@@ -12,7 +12,7 @@ def crear_tabla_si_falta(apps, schema_editor):
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("grados", "0003_reparar_tabla_grados"),
+        ("grados", "0002_alter_grados_options"),
         ("gramage", "0002_alter_gramage_options"),
     ]
 
