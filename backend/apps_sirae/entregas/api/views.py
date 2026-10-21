@@ -21,13 +21,40 @@ class entregasApiViewset(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
+        user = self.request.user
+
+        # Filtro según rol autenticado
+        if user and user.is_authenticated:
+            if hasattr(user, 'es_administrador') and user.es_administrador() and user.id_institucion_id:
+                from django.db.models import Q
+                qs = qs.filter(
+                    Q(id_institucion_id=user.id_institucion_id) |
+                    Q(id_sede__id_institucion_id=user.id_institucion_id)
+                )
+            elif hasattr(user, 'es_supervisor') and user.es_supervisor():
+                from django.db.models import Q
+                colegios_ids = list(user.instituciones_asignadas.values_list('id_institucion_id', flat=True))
+                qs = qs.filter(
+                    Q(id_usuario_supervisor=user.id_usuario) |
+                    Q(id_institucion_id__in=colegios_ids) |
+                    Q(id_sede__id_institucion_id__in=colegios_ids)
+                )
+
         id_sede = self.request.query_params.get('id_sede')
         if id_sede:
             qs = qs.filter(id_sede_id=id_sede)
 
         id_institucion = self.request.query_params.get('id_institucion')
         if id_institucion:
-            qs = qs.filter(id_sede__id_institucion_id=id_institucion)
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(id_institucion_id=id_institucion) |
+                Q(id_sede__id_institucion_id=id_institucion)
+            )
+
+        estado = self.request.query_params.get('estado')
+        if estado:
+            qs = qs.filter(estado__iexact=estado.strip())
 
         fecha_inicio = self.request.query_params.get('fecha_inicio')
         if fecha_inicio:
@@ -41,7 +68,26 @@ class entregasApiViewset(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         user_id = getattr(self.request.user, 'id_usuario', None)
-        serializer.save(id_usuario_supervisor=user_id)
+        inst = serializer.validated_data.get('id_institucion')
+        sede = serializer.validated_data.get('id_sede')
+
+        if not inst and sede and hasattr(sede, 'id_institucion') and sede.id_institucion:
+            inst = sede.id_institucion
+
+        with transaction.atomic():
+            entrega = serializer.save(
+                id_usuario_supervisor=user_id or 1,
+                id_institucion=inst,
+                estado='EN_TRANSITO'
+            )
+            # Descontar del inventario central si existe stock
+            inv_central = InventarioCentral.objects.filter(id_ingrediente=entrega.id_ingrediente).first()
+            if inv_central and entrega.cantidad:
+                inv_central.cantidad_disponible = max(
+                    Decimal('0.000'),
+                    inv_central.cantidad_disponible - Decimal(str(entrega.cantidad))
+                )
+                inv_central.save(update_fields=['cantidad_disponible', 'fecha_ultima_actualizacion'])
 
     @action(detail=False, methods=['get'], url_path='calcular-mercado')
     def calcular_mercado(self, request):
@@ -207,23 +253,110 @@ class entregasApiViewset(viewsets.ModelViewSet):
                 if not id_ing or cant is None:
                     continue
 
+                inst_sede = getattr(sede, 'id_institucion', None)
+                cant_dec = Decimal(str(cant))
                 entrega = Entrega.objects.create(
+                    id_institucion=inst_sede,
                     id_sede=sede,
                     id_ingrediente=id_ing,
                     id_usuario_supervisor=user_id,
                     id_tipo_mercado=id_tipo_mercado,
                     fecha_entrega=fecha_entrega,
                     fecha_vencimiento=fecha_vencimiento or fecha_entrega,
-                    cantidad=Decimal(str(cant)),
+                    cantidad=cant_dec,
                     observaciones=observaciones,
                     frecuencia=frecuencia,
                     unidad=unidad,
+                    estado='EN_TRANSITO',
                 )
                 entregas_creadas.append(entrega)
+
+                # Descontar de bodega central si existe
+                inv_central = InventarioCentral.objects.filter(id_ingrediente=id_ing).first()
+                if inv_central:
+                    inv_central.cantidad_disponible = max(
+                        Decimal('0.000'),
+                        inv_central.cantidad_disponible - cant_dec
+                    )
+                    inv_central.save(update_fields=['cantidad_disponible', 'fecha_ultima_actualizacion'])
 
         serializer = EntregaSerializer(entregas_creadas, many=True)
         return Response({
             'mensaje': f"Se registraron exitosamente {len(entregas_creadas)} despachos para la sede {sede.nombre_sede}.",
             'total_items': len(entregas_creadas),
             'despachos': serializer.data,
-        }, status=status.HTTP_201_CREATED)
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='confirmar-recepcion')
+    def confirmar_recepcion(self, request, pk=None):
+        entrega = self.get_object()
+
+        if entrega.estado in {'RECIBIDA', 'CON_NOVEDAD', 'RECHAZADA'}:
+            return Response(
+                {'error': f"Esta entrega ya fue procesada anteriormente con estado: {entrega.estado}."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        data = request.data
+        try:
+            cant_recibida = Decimal(str(data.get('cantidad_recibida', entrega.cantidad)))
+        except Exception:
+            return Response({'error': 'cantidad_recibida debe ser un número válido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            cant_rechazada = Decimal(str(data.get('cantidad_rechazada', '0.00')))
+        except Exception:
+            cant_rechazada = Decimal('0.00')
+
+        motivo_rechazo = str(data.get('motivo_rechazo', '')).strip()
+
+        if cant_recibida < 0 or cant_rechazada < 0:
+            return Response({'error': 'Las cantidades no pueden ser negativas.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if cant_recibida == 0 and cant_rechazada > 0:
+            nuevo_estado = 'RECHAZADA'
+        elif cant_rechazada > 0:
+            nuevo_estado = 'CON_NOVEDAD'
+        else:
+            nuevo_estado = 'RECIBIDA'
+
+        from django.utils import timezone
+        with transaction.atomic():
+            entrega.estado = nuevo_estado
+            entrega.cantidad_recibida = cant_recibida
+            entrega.cantidad_rechazada = cant_rechazada
+            entrega.motivo_rechazo = motivo_rechazo
+            entrega.id_usuario_receptor = request.user if request.user.is_authenticated else None
+            entrega.fecha_recepcion = timezone.now()
+            entrega.save()
+
+            # Sumar al inventario de la institución o sede
+            if cant_recibida > 0:
+                inv = Inventario.objects.filter(
+                    id_ingrediente=entrega.id_ingrediente,
+                    id_institucion=entrega.id_institucion,
+                    id_sede=entrega.id_sede
+                ).first()
+
+                if not inv:
+                    inv = Inventario.objects.create(
+                        id_ingrediente=entrega.id_ingrediente,
+                        id_institucion=entrega.id_institucion,
+                        id_sede=entrega.id_sede,
+                        cantidad_actual=cant_recibida,
+                        stock_minimo=Decimal('0.00'),
+                        id_unidad_medida=1
+                    )
+                else:
+                    inv.cantidad_actual = (inv.cantidad_actual or Decimal('0.00')) + cant_recibida
+                    inv.save()
+
+        serializer = self.get_serializer(entrega)
+        return Response({
+            'mensaje': 'Recepción confirmada exitosamente.',
+            'estado': nuevo_estado,
+            'cantidad_recibida': str(cant_recibida),
+            'cantidad_rechazada': str(cant_rechazada),
+            'motivo_rechazo': motivo_rechazo,
+            'entrega': serializer.data,
+        }, status=status.HTTP_200_OK)

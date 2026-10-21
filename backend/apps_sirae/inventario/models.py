@@ -7,6 +7,14 @@ class Inventario(models.Model):
     cantidad_actual = models.DecimalField(max_digits=10, decimal_places=2)
     stock_minimo = models.DecimalField(max_digits=10, decimal_places=2)
     id_unidad_medida = models.IntegerField()
+    id_institucion = models.ForeignKey(
+        'instituciones.Institucion',
+        on_delete=models.CASCADE,
+        db_column='id_institucion',
+        null=True,
+        blank=True,
+        related_name='inventarios'
+    )
     id_sede = models.ForeignKey(
         'sedes.Sede',
         on_delete=models.CASCADE,
