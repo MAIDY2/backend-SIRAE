@@ -253,19 +253,32 @@ class entregasApiViewset(viewsets.ModelViewSet):
                 if not id_ing or cant is None:
                     continue
 
+                inst_sede = getattr(sede, 'id_institucion', None)
+                cant_dec = Decimal(str(cant))
                 entrega = Entrega.objects.create(
+                    id_institucion=inst_sede,
                     id_sede=sede,
                     id_ingrediente=id_ing,
                     id_usuario_supervisor=user_id,
                     id_tipo_mercado=id_tipo_mercado,
                     fecha_entrega=fecha_entrega,
                     fecha_vencimiento=fecha_vencimiento or fecha_entrega,
-                    cantidad=Decimal(str(cant)),
+                    cantidad=cant_dec,
                     observaciones=observaciones,
                     frecuencia=frecuencia,
                     unidad=unidad,
+                    estado='EN_TRANSITO',
                 )
                 entregas_creadas.append(entrega)
+
+                # Descontar de bodega central si existe
+                inv_central = InventarioCentral.objects.filter(id_ingrediente=id_ing).first()
+                if inv_central:
+                    inv_central.cantidad_disponible = max(
+                        Decimal('0.000'),
+                        inv_central.cantidad_disponible - cant_dec
+                    )
+                    inv_central.save(update_fields=['cantidad_disponible', 'fecha_ultima_actualizacion'])
 
         serializer = EntregaSerializer(entregas_creadas, many=True)
         return Response({
