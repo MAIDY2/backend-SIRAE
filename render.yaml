@@ -3,7 +3,7 @@ services:
     name: sirae-backend
     runtime: python
     rootDir: backend
-    buildCommand: "pip install -r requirements.txt && python manage.py migrate"
+    buildCommand: "pip install -r requirements.txt && python manage.py migrate && python manage.py collectstatic --noinput"
     startCommand: "gunicorn config.wsgi:application --bind 0.0.0.0:$PORT"
     envVars:
       - key: DJANGO_SETTINGS_MODULE
@@ -12,11 +12,31 @@ services:
         generateValue: true
       - key: DEBUG
         value: "False"
+      - key: SECURE_SSL_REDIRECT
+        value: "True"
       - key: DATABASE_URL
-        fromDatabase:
-          name: siraedb
-          property: connectionString
+        sync: false
       - key: ALLOWED_HOSTS
-        value: "*.onrender.com,localhost,127.0.0.1"
+        value: ".onrender.com,localhost,127.0.0.1,0.0.0.0,testserver"
       - key: FRONTEND_URL
-        value: "https://tu-frontend.onrender.com"   # ← cambia esto
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: CSRF_TRUSTED_ORIGINS
+        sync: false
+      - key: EMAIL_BACKEND
+        value: "django.core.mail.backends.smtp.EmailBackend"
+      - key: EMAIL_HOST
+        value: "smtp.gmail.com"
+      - key: EMAIL_PORT
+        value: "587"
+      - key: EMAIL_USE_TLS
+        value: "True"
+      - key: EMAIL_HOST_USER
+        sync: false
+      - key: EMAIL_HOST_PASSWORD
+        sync: false
+      - key: DEFAULT_FROM_EMAIL
+        sync: false
+      - key: EMAIL_TIMEOUT
+        value: "10"

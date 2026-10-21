@@ -9,22 +9,45 @@ from pathlib import Path
 
 import dj_database_url
 from dotenv import load_dotenv
+from django.core.exceptions import ImproperlyConfigured
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / ".env")
 
-SECRET_KEY = os.getenv(
-    "SECRET_KEY",
-    "django-insecure-pmt1w^!r9=)mza56h*qmjv(31z#l*2ldc71@(ti+5=tc59)l89"
+
+def parse_env_list(value, default):
+    raw = value or default
+    if isinstance(raw, str):
+        return [item.strip() for item in raw.split(",") if item.strip()]
+    return [str(item).strip() for item in raw if str(item).strip()]
+
+
+DEBUG = os.getenv("DEBUG", "True").strip().lower() in {"1", "true", "yes", "on"}
+PASSWORD_RESET_EXPOSE_CODE = (
+    os.getenv("PASSWORD_RESET_EXPOSE_CODE", "False").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
+PASSWORD_RESET_EXPOSE_CODE_EMAILS = {
+    email.casefold()
+    for email in parse_env_list(os.getenv("PASSWORD_RESET_EXPOSE_CODE_EMAILS"), "")
+}
+
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    if not DEBUG:
+        raise ImproperlyConfigured("SECRET_KEY debe configurarse cuando DEBUG está desactivado.")
+    SECRET_KEY = "django-insecure-local-development-only"
+
+ALLOWED_HOSTS = parse_env_list(
+    os.getenv("ALLOWED_HOSTS"),
+    "localhost,127.0.0.1,0.0.0.0,testserver,.onrender.com"
 )
 
-DEBUG = os.getenv("DEBUG", "True") == "True"
-
-ALLOWED_HOSTS = os.getenv(
-    "ALLOWED_HOSTS",
-    "localhost,127.0.0.1,testserver,*"
-).split(",")
+APPEND_SLASH = False
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -44,7 +67,8 @@ INSTALLED_APPS = [
     "apps_sirae.usuarios",
     "apps_sirae.asistencia_diaria",
     "apps_sirae.entregas",
-    "apps_sirae.movimientos_inventario",
+    "apps_sirae.entradas_inventario",
+    "apps_sirae.salidas_inventario",
     "apps_sirae.notificaciones",
     "apps_sirae.inventario",
     "apps_sirae.jornadas",
@@ -62,9 +86,16 @@ INSTALLED_APPS = [
     "apps_sirae.preparacion_asignada",
     "apps_sirae.gramage",
     "apps_sirae.grados",
+    "apps_sirae.contratos_seccion_menu",
+    "apps_sirae.tipos_mercado",
+    "apps_sirae.instituciones",
+    "apps_sirae.sedes",
+    "apps_sirae.sede_jornada",
+    "apps_sirae.facturas_compra",
 ]
 
 AUTH_USER_MODEL = "usuarios.Usuario"
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:4200").strip()
 
 # Configuración global de Rest Framework
 REST_FRAMEWORK = {
@@ -73,9 +104,27 @@ REST_FRAMEWORK = {
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
-        'rest_framework.permissions.IsAuthenticated',  # Exige autenticación a TODAS las vistas por defecto
+        'rest_framework.permissions.IsAuthenticated',
     ),
 }
+
+CORS_ALLOW_ALL_ORIGINS = os.getenv("CORS_ALLOW_ALL_ORIGINS", "True").strip().lower() in {"1", "true", "yes", "on"}
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOWED_ORIGINS = parse_env_list(
+    os.getenv("CORS_ALLOWED_ORIGINS"),
+    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4200,http://127.0.0.1:4200"
+)
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^http://localhost:\d+$",
+    r"^http://127\.0\.0\.1:\d+$",
+    r"^https://.*\.vercel\.app$",
+    r"^https://.*\.onrender\.com$",
+]
+
+CSRF_TRUSTED_ORIGINS = parse_env_list(
+    os.getenv("CSRF_TRUSTED_ORIGINS"),
+    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4200,http://127.0.0.1:4200,https://*.onrender.com"
+)
 
 # Configuración JWT
 SIMPLE_JWT = {
@@ -87,6 +136,9 @@ SIMPLE_JWT = {
     'USER_ID_CLAIM': 'user_id',
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 
 # Configuración Swagger (Permite ingresar token Bearer en la interfaz web)
 SWAGGER_SETTINGS = {
@@ -101,10 +153,18 @@ SWAGGER_SETTINGS = {
     'USE_SESSION_AUTH': False,
 }
 
+# Configuración de Cloudinary
+cloudinary.config(
+    cloud_name = os.getenv('CLOUDINARY_CLOUD_NAME', 'tu_cloud_name'),
+    api_key = os.getenv('CLOUDINARY_API_KEY', 'tu_api_key'),
+    api_secret = os.getenv('CLOUDINARY_API_SECRET', 'tu_api_secret'),
+    secure = True
+)
+
 MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
-    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -142,6 +202,8 @@ if DATABASE_URL:
             ssl_require=True,
         )
     }
+elif not DEBUG:
+    raise ImproperlyConfigured("DATABASE_URL debe configurarse cuando DEBUG está desactivado.")
 else:
     DATABASES = {
         "default": {
@@ -165,25 +227,50 @@ USE_I18N = True
 USE_TZ = True
 
 # Static files
-STATIC_URL = "static/"
+STATIC_URL = "/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "False").strip().lower() in {"1", "true", "yes", "on"}
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    if SECURE_SSL_REDIRECT:
+        SESSION_COOKIE_SECURE = True
+        CSRF_COOKIE_SECURE = True
+else:
+    SECURE_SSL_REDIRECT = False
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SECURE = False
 
 # Correo
-EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
+BREVO_API_KEY = os.getenv("BREVO_API_KEY", "").strip()
+
+if BREVO_API_KEY:
+    # Envío por API HTTPS (Render gratis bloquea SMTP)
+    INSTALLED_APPS += ["anymail"]
+    EMAIL_BACKEND = "anymail.backends.brevo.EmailBackend"
+    ANYMAIL = {"BREVO_API_KEY": BREVO_API_KEY}
+    DEFAULT_FROM_EMAIL = os.getenv(
+        "DEFAULT_FROM_EMAIL",
+        "SIRAE <riveracjhonf@gmail.com>",
+    )
+else:
+    EMAIL_BACKEND = os.getenv(
+        "EMAIL_BACKEND",
+        "django.core.mail.backends.console.EmailBackend"
+        if DEBUG
+        else "django.core.mail.backends.smtp.EmailBackend",
+    )
+    email_user = os.getenv("EMAIL_HOST_USER", "")
+    DEFAULT_FROM_EMAIL = os.getenv(
+        "DEFAULT_FROM_EMAIL",
+        f"SIRAE PAE <{email_user}>" if email_user else "SIRAE PAE <no-reply@sirae-pae.edu.co>",
+    )
+
 EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
-EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True") == "True"
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").strip().lower() in {"1", "true", "yes", "on"}
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
-
-email_user = os.getenv("EMAIL_HOST_USER", "")
-
-DEFAULT_FROM_EMAIL = os.getenv(
-    "DEFAULT_FROM_EMAIL",
-    f"SIRAE PAE <{email_user}>" if email_user else "SIRAE PAE <no-reply@sirae-pae.edu.co>",
-)
-
 EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 sys.path.insert(0, str(BASE_DIR / "apps_sirae"))
-CORS_ALLOW_ALL_ORIGINS = True

@@ -4,6 +4,7 @@ from django.db import models
 class Rol(models.Model):
 
     class NombreRol(models.TextChoices):
+        SUPER_ADMINISTRADOR = 'SuperAdministrador', 'Super Administrador'
         ADMINISTRADOR       = 'Administrador',       'Administrador'
         SUPERVISOR      =  'supervisor', 'supervisor'
         JEFA_MANIPULADORAS  = 'JefaManipuladoras',   'Jefa de Manipuladoras'

@@ -22,5 +22,8 @@ class Migration(migrations.Migration):
                 ('fecha_fin', models.DateField()),
                 ('estado', models.CharField(max_length=50)),
             ],
+            options={
+                'db_table': 'contrato_pae',
+            },
         ),
     ]

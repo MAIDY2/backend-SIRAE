@@ -3,6 +3,8 @@ from django.urls import include, path
 from rest_framework import permissions
 from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
+from django.conf import settings
+from django.contrib.staticfiles.urls import staticfiles_urlpatterns
 
 # Configuración de drf-yasg con autenticación Bearer por esquema
 schema_view = get_schema_view(
@@ -18,13 +20,8 @@ schema_view = get_schema_view(
 urlpatterns = [
     path('admin/', admin.site.urls),
     
-    # Endpoints de la API
+    # Endpoint central que orquesta todos los routers de las apps
     path('api/', include('apps_sirae.api.urls')),
-
-    # Rutas individuales
-    path('api/jornadas/', include('apps_sirae.jornadas.api.urls')),
-    path('api/categorias-inventario/', include('apps_sirae.categorias_inventario.api.urls')),
-    path('api/menus/', include('apps_sirae.menus.api.urls')),
 
     # Documentación Swagger y Redoc
     path(
@@ -33,8 +30,16 @@ urlpatterns = [
         name='schema-swagger-ui'
     ),
     path(
+        'api/swagger/',
+        schema_view.with_ui('swagger', cache_timeout=0),
+        name='schema-swagger-ui-api'
+    ),
+    path(
         'redoc/',
         schema_view.with_ui('redoc', cache_timeout=0),
         name='schema-redoc'
     ),
 ]
+
+if settings.DEBUG:
+    urlpatterns += staticfiles_urlpatterns()

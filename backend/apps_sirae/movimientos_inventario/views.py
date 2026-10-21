@@ -1,1 +1,0 @@
-"""Vistas web de la app de movimientos de inventario."""

@@ -9,4 +9,4 @@ class Grados(models.Model):
 
     class Meta:
         db_table = 'grados'
-        managed = False
+        managed = True  # Cambiado a True para que Django gestione la tabla

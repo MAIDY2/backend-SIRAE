@@ -1,14 +1,24 @@
 import logging
+from urllib.parse import urlencode
+import secrets
+import smtplib
+from datetime import timedelta
+
 from django.conf import settings
 from django.core.mail import send_mail
 from django.core.signing import TimestampSigner, BadSignature, SignatureExpired
 from django.contrib.auth.hashers import check_password, make_password
+from django.contrib.auth import password_validation
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
+from django.db import transaction
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 
-from ..models import Usuario
+from ..models import PasswordResetCode, Usuario
 from .serializers import UsuarioSerializer
 
 logger = logging.getLogger(__name__)
@@ -25,10 +35,8 @@ class PasswordResetService:
     @classmethod
     def generar_token(cls, usuario: Usuario) -> str:
         signer = TimestampSigner(salt=cls.SALT)
-        # Se incluye un fragmento del hash de la contraseña actual.
-        # Si la contraseña cambia, el token se invalida automáticamente.
         pwd_snippet = str(usuario.password)[-12:] if usuario.password else 'nopwd'
-        data_str = f"{usuario.id_usuario}:{usuario.email}:{pwd_snippet}"
+        data_str = f"{usuario.id_usuario}:{usuario.correo}:{pwd_snippet}"
         return signer.sign(data_str)
 
     @classmethod
@@ -40,8 +48,8 @@ class PasswordResetService:
             if len(partes) != 3:
                 return None, "Estructura del token no válida."
 
-            id_usuario, email, pwd_snippet = partes
-            usuario = Usuario.objects.select_related('id_rol').get(id_usuario=id_usuario, email=email)
+            id_usuario, correo, pwd_snippet = partes
+            usuario = Usuario.objects.select_related('rol').get(id_usuario=id_usuario, correo__iexact=correo)
 
             actual_snippet = str(usuario.password)[-12:] if usuario.password else 'nopwd'
             if actual_snippet != pwd_snippet:
@@ -58,6 +66,238 @@ class PasswordResetService:
             return None, "El enlace o token de recuperación es inválido o está corrupto."
 
 
+class SolicitarCodigoRecuperacionPasswordView(APIView):
+    permission_classes = [AllowAny]
+    DURACION_CODIGO = timedelta(minutes=10)
+    INTERVALO_SOLICITUD = timedelta(minutes=1)
+
+    @staticmethod
+    def respuesta_generica():
+        return Response(
+            {
+                "mensaje": (
+                    "Si el correo está registrado, recibirás un código de "
+                    "verificación para recuperar tu contraseña."
+                )
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        correo = request.data.get("correo", "")
+        if not isinstance(correo, str) or not correo.strip():
+            return Response(
+                {"error": "Debes proporcionar un correo electrónico válido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        correo = correo.strip()
+        try:
+            validate_email(correo)
+        except ValidationError:
+            return Response(
+                {"error": "Debes proporcionar un correo electrónico válido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        expose_code = (
+            settings.PASSWORD_RESET_EXPOSE_CODE
+            and correo.casefold() in settings.PASSWORD_RESET_EXPOSE_CODE_EMAILS
+        )
+        smtp_is_configured = bool(
+            settings.EMAIL_BACKEND == "django.core.mail.backends.smtp.EmailBackend"
+            and settings.EMAIL_HOST_USER
+            and settings.EMAIL_HOST_PASSWORD
+        ) or bool(
+            settings.EMAIL_BACKEND == "anymail.backends.brevo.EmailBackend"
+            and getattr(settings, "BREVO_API_KEY", "")
+        )
+        if not settings.DEBUG and not expose_code and not smtp_is_configured:
+            logger.error(
+                "No se puede enviar recuperación de contraseña: "
+                "el correo de producción no está configurado."
+            )
+            return Response(
+                {
+                    "error": (
+                        "El servicio de correo no está configurado. "
+                        "Contacta al administrador del sistema."
+                    )
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        with transaction.atomic():
+            usuario = (
+                Usuario.objects.select_for_update()
+                .filter(correo__iexact=correo, is_active=True)
+                .first()
+            )
+            if usuario is None:
+                return self.respuesta_generica()
+
+            codigo_existente = PasswordResetCode.objects.filter(usuario=usuario).first()
+            ahora = timezone.now()
+            if (
+                codigo_existente is not None
+                and codigo_existente.creado_en > ahora - self.INTERVALO_SOLICITUD
+            ):
+                return self.respuesta_generica()
+
+            codigo = f"{secrets.randbelow(1_000_000):06d}"
+            PasswordResetCode.objects.update_or_create(
+                usuario=usuario,
+                defaults={
+                    "codigo_hash": make_password(codigo),
+                    "expira_en": ahora + self.DURACION_CODIGO,
+                    "intentos_fallidos": 0,
+                },
+            )
+
+        if not expose_code:
+            try:
+                send_mail(
+                    subject="Código para recuperar tu contraseña - SIRAE",
+                    message=(
+                        f"Hola {usuario.nombre_completo},\n\n"
+                        f"Tu código para recuperar la contraseña es: {codigo}\n\n"
+                        "El código vence en 10 minutos y solo puede utilizarse una vez. "
+                        "Si no solicitaste este cambio, ignora este mensaje."
+                    ),
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[usuario.correo],
+                    fail_silently=False,
+                )
+            except Exception:
+                logger.exception("No se pudo enviar el código de recuperación de contraseña.")
+                PasswordResetCode.objects.filter(usuario=usuario).delete()
+                return Response(
+                    {
+                        "error": (
+                            "No fue posible enviar el código de recuperación. "
+                            "Verifica la configuración de correo del servidor e inténtalo nuevamente."
+                        )
+                    },
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+
+        respuesta = self.respuesta_generica()
+        if (
+            expose_code
+            or (
+                settings.DEBUG
+                and settings.EMAIL_BACKEND == "django.core.mail.backends.console.EmailBackend"
+            )
+        ):
+            respuesta.data["debug_code"] = codigo
+        return respuesta
+
+
+class ConfirmarCodigoRecuperacionPasswordView(APIView):
+    permission_classes = [AllowAny]
+    MAX_INTENTOS = 5
+
+    def post(self, request):
+        correo = request.data.get("correo", "")
+        codigo = request.data.get("codigo", "")
+        nueva_password = request.data.get("nueva_password", "")
+        confirmar_password = request.data.get("confirmar_password", "")
+
+        if not all(isinstance(value, str) for value in (
+            correo, codigo, nueva_password, confirmar_password
+        )):
+            return Response(
+                {"error": "Todos los campos son obligatorios y deben ser texto."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        correo = correo.strip()
+        codigo = codigo.strip()
+        if not correo or len(codigo) != 6 or not codigo.isdigit():
+            return Response(
+                {"error": "El correo o el código de verificación no son válidos."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not nueva_password or not confirmar_password:
+            return Response(
+                {"error": "Debes ingresar y confirmar la nueva contraseña."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if nueva_password != confirmar_password:
+            return Response(
+                {"error": "Las contraseñas no coinciden."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            validate_email(correo)
+        except ValidationError:
+            return Response(
+                {"error": "El correo o el código de verificación no son válidos."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            try:
+                recuperacion = (
+                    PasswordResetCode.objects.select_for_update()
+                    .select_related("usuario")
+                    .get(usuario__correo__iexact=correo, usuario__is_active=True)
+                )
+            except PasswordResetCode.DoesNotExist:
+                return Response(
+                    {"error": "El código no es válido o ha vencido. Solicita uno nuevo."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if recuperacion.expira_en <= timezone.now():
+                recuperacion.delete()
+                return Response(
+                    {"error": "El código ha vencido. Solicita uno nuevo."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if recuperacion.intentos_fallidos >= self.MAX_INTENTOS:
+                recuperacion.delete()
+                return Response(
+                    {"error": "Se agotaron los intentos. Solicita un código nuevo."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if not check_password(codigo, recuperacion.codigo_hash):
+                recuperacion.intentos_fallidos += 1
+                if recuperacion.intentos_fallidos >= self.MAX_INTENTOS:
+                    recuperacion.delete()
+                    mensaje = "Se agotaron los intentos. Solicita un código nuevo."
+                else:
+                    recuperacion.save(update_fields=["intentos_fallidos"])
+                    mensaje = "El código no es válido."
+                return Response(
+                    {"error": mensaje},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            try:
+                password_validation.validate_password(
+                    nueva_password,
+                    user=recuperacion.usuario,
+                )
+            except ValidationError as error:
+                return Response(
+                    {"error": list(error.messages)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            recuperacion.usuario.set_password(nueva_password)
+            recuperacion.usuario.save(update_fields=["password"])
+            recuperacion.delete()
+
+        return Response(
+            {"mensaje": "Contraseña restablecida. Ya puedes iniciar sesión."},
+            status=status.HTTP_200_OK,
+        )
+
+
 class SolicitarRecuperacionPasswordView(APIView):
     """
     POST /api/auth/password-reset/solicitar/
@@ -66,7 +306,10 @@ class SolicitarRecuperacionPasswordView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        email = request.data.get('email', '').strip()
+        email = request.data.get('email') or request.data.get('correo') or ''
+        if not isinstance(email, str):
+            email = ''
+        email = email.strip()
         if not email:
             return Response(
                 {"error": "Debes proporcionar un correo electrónico válido."},
@@ -74,7 +317,7 @@ class SolicitarRecuperacionPasswordView(APIView):
             )
 
         try:
-            usuario = Usuario.objects.select_related('id_rol').get(email__iexact=email)
+            usuario = Usuario.objects.select_related('rol').get(correo__iexact=email)
         except Usuario.DoesNotExist:
             # Respuesta amigable para evitar enumeración de correos
             return Response(
@@ -93,8 +336,11 @@ class SolicitarRecuperacionPasswordView(APIView):
             )
 
         token = PasswordResetService.generar_token(usuario)
-        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
-        enlace_recuperacion = f"{frontend_url}/recuperar-password?token={token}"
+        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200')
+        enlace_recuperacion = (
+            f"{frontend_url}/recuperar-password?"
+            f"{urlencode({'token': token})}"
+        )
 
         asunto = "Restablecimiento de Contraseña - Sistema SIRAE PAE"
         mensaje_texto = (
@@ -147,14 +393,14 @@ class SolicitarRecuperacionPasswordView(APIView):
                 subject=asunto,
                 message=mensaje_texto,
                 from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'no-reply@sirae.edu.co'),
-                recipient_list=[usuario.email],
+                recipient_list=[usuario.correo],
                 html_message=mensaje_html,
                 fail_silently=False,
             )
-            print(f"[SIRAE EMAIL] Correo de recuperacion enviado con exito a: {usuario.email}")
+            print(f"[SIRAE EMAIL] Correo de recuperacion enviado con exito a: {usuario.correo}")
         except Exception as e:
-            logger.error(f"[SIRAE EMAIL ERROR] No se pudo enviar el correo a {usuario.email}: {e}", exc_info=True)
-            print(f"[SIRAE EMAIL ERROR] Fallo el envio de correo a {usuario.email}: {e}")
+            logger.error(f"[SIRAE EMAIL ERROR] No se pudo enviar el correo a {usuario.correo}: {e}", exc_info=True)
+            print(f"[SIRAE EMAIL ERROR] Fallo el envio de correo a {usuario.correo}: {e}")
             return Response(
                 {
                     "error": "No fue posible enviar el correo de recuperación en este momento. Por favor verifica la configuración de correo del servidor o contacta al administrador.",
@@ -166,7 +412,7 @@ class SolicitarRecuperacionPasswordView(APIView):
         respuesta = {
             "status": "success",
             "mensaje": "Se han enviado las instrucciones de recuperación al correo electrónico registrado.",
-            "email": usuario.email,
+            "email": usuario.correo,
         }
 
         # En modo DEBUG facilitamos el token en la respuesta para agilizar pruebas de desarrollo
@@ -197,7 +443,7 @@ class ValidarTokenPasswordView(APIView):
             {
                 "valido": True,
                 "mensaje": "Token verificado exitosamente.",
-                "email": usuario.email,
+                "email": usuario.correo,
                 "nombre_completo": usuario.nombre_completo
             },
             status=status.HTTP_200_OK
@@ -298,6 +544,7 @@ class CambiarPasswordView(APIView):
             )
 
         usuario.password = make_password(nueva_password)
+        usuario.debe_cambiar_password = False
         usuario.save()
 
         return Response(

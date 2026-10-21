@@ -6,7 +6,7 @@ from .views import MenuApiViewSet
 router_menus = DefaultRouter()
 
 router_menus.register(
-    prefix='',
+    prefix='menus',
     viewset=MenuApiViewSet,
     basename='menus'
 )

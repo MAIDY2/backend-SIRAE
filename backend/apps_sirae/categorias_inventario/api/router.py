@@ -6,7 +6,9 @@ from .views import CategoriaInventarioApiViewSet
 router_categorias = DefaultRouter()
 
 router_categorias.register(
-    prefix='',
+    prefix='categorias_inventario',
     viewset=CategoriaInventarioApiViewSet,
-    basename='categorias-inventario'
+    basename='categorias_inventario'
 )
+
+urlpatterns = []
