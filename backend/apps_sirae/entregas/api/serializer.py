@@ -3,7 +3,7 @@ from rest_framework import serializers
 from apps_sirae.ingredientes.models import Ingrediente
 from apps_sirae.tipos_mercado.models import TipoMercado
 
-from ..models import Entrega
+from apps_sirae.entregas.models import Entrega
 
 
 class EntregaSerializer(serializers.ModelSerializer):

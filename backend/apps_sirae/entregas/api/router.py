@@ -1,6 +1,6 @@
 from rest_framework.routers import DefaultRouter
 
-from .views import entregasApiViewset
+from apps_sirae.entregas.api.views import entregasApiViewset
 
 router_entregas = DefaultRouter()
 router_entregas.register(
