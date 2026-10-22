@@ -3,14 +3,14 @@ from rest_framework.permissions import BasePermission, SAFE_METHODS
 
 class IsAdminRole(BasePermission):
     """
-    Permiso que autoriza únicamente a usuarios con el rol de Administrador.
+    Permiso que autoriza únicamente a usuarios con el rol de Administrador o Super Administrador.
     """
     message = "Acceso restringido: Se requiere el rol de Administrador."
 
     def has_permission(self, request, view):
         if not (request.user and request.user.is_authenticated):
             return False
-        return request.user.es_administrador()
+        return request.user.es_administrador() or request.user.es_super_administrador()
 
 
 class IsSupervisorRole(BasePermission):
@@ -22,19 +22,23 @@ class IsSupervisorRole(BasePermission):
     def has_permission(self, request, view):
         if not (request.user and request.user.is_authenticated):
             return False
-        return request.user.es_supervisor()
+        return request.user.es_supervisor() or request.user.es_super_administrador()
 
 
 class IsSupervisorOrAdminRole(BasePermission):
     """
-    Permite al Supervisor gestionar la operación PAE y al Administrador supervisarla.
+    Permite al Supervisor gestionar la operación PAE, al Administrador supervisarla y al Super Administrador auditoría total.
     """
-    message = "Acceso restringido: se requiere el rol de Supervisor o Administrador."
+    message = "Acceso restringido: se requiere el rol de Supervisor, Administrador o Super Administrador."
 
     def has_permission(self, request, view):
         if not (request.user and request.user.is_authenticated):
             return False
-        return request.user.es_supervisor() or request.user.es_administrador()
+        return (
+            request.user.es_supervisor()
+            or request.user.es_administrador()
+            or request.user.es_super_administrador()
+        )
 
 
 class IsJefaOrAdminRole(BasePermission):
