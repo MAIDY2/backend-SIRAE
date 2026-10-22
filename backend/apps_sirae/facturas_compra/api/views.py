@@ -8,7 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps_sirae.ingredientes.models import Ingrediente
-from apps_sirae.usuarios.permissions import IsAdminOrReadOnly
+from apps_sirae.usuarios.permissions import IsAdminOrSuperAdminOrReadOnly
 from ..models import FacturaCompra, DetalleFacturaCompra, InventarioCentral
 from .serializers import (
     FacturaCompraSerializer,
@@ -20,7 +20,7 @@ from .serializers import (
 class FacturaCompraViewSet(viewsets.ModelViewSet):
     queryset = FacturaCompra.objects.all().prefetch_related('detalles__id_ingrediente')
     serializer_class = FacturaCompraSerializer
-    permission_classes = [IsAdminOrReadOnly]
+    permission_classes = [IsAdminOrSuperAdminOrReadOnly]
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -183,7 +183,7 @@ class InventarioCentralViewSet(viewsets.ModelViewSet):
         'id_unidad_medida'
     )
     serializer_class = InventarioCentralSerializer
-    permission_classes = [IsAdminOrReadOnly]
+    permission_classes = [IsAdminOrSuperAdminOrReadOnly]
 
     def get_queryset(self):
         queryset = super().get_queryset()
