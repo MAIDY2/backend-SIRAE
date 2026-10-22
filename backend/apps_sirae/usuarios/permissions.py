@@ -43,14 +43,23 @@ class IsSupervisorOrAdminRole(BasePermission):
 
 class IsJefaOrAdminRole(BasePermission):
     """
-    Permite a la Jefa gestionar la operación de menús y al Administrador mantenerla.
+    Permite a la Jefa gestionar la operación de menús, al Administrador supervisarla/mantenerla
+    y al Super Administrador control total.
     """
-    message = "Acceso restringido: se requiere el rol de Jefa de manipuladoras o Administrador."
+    message = "Acceso restringido: se requiere el rol de Jefa de manipuladoras, Administrador o Super Administrador."
 
     def has_permission(self, request, view):
         if not (request.user and request.user.is_authenticated):
             return False
-        return request.user.es_jefa_manipuladoras() or request.user.es_administrador()
+        return (
+            request.user.es_jefa_manipuladoras()
+            or request.user.es_administrador()
+            or getattr(request.user, 'es_super_administrador', lambda: False)()
+        )
+
+
+# Alias explícito de compatibilidad
+IsJefaOrAdminOrSuperAdminRole = IsJefaOrAdminRole
 
 
 # Alias para compatibilidad
@@ -84,16 +93,23 @@ class IsManipuladoraRole(BasePermission):
 class IsAdminOrReadOnly(BasePermission):
     """
     Permiso que permite lectura (GET, HEAD, OPTIONS) a cualquier usuario autenticado,
-    pero reserva la modificación (POST, PUT, PATCH, DELETE) exclusivamente al Administrador.
+    pero reserva la modificación (POST, PUT, PATCH, DELETE) al Administrador o Super Administrador.
     """
-    message = "Solo el Administrador puede modificar estos registros."
+    message = "Solo el Administrador o Super Administrador pueden modificar estos registros."
 
     def has_permission(self, request, view):
         if not (request.user and request.user.is_authenticated):
             return False
         if request.method in SAFE_METHODS:
             return True
-        return request.user.es_administrador()
+        return (
+            request.user.es_administrador()
+            or getattr(request.user, 'es_super_administrador', lambda: False)()
+        )
+
+
+# Alias explícito de compatibilidad
+IsAdminOrSuperAdminOrReadOnly = IsAdminOrReadOnly
 
 
 class IsSuperAdminRole(BasePermission):
