@@ -1,7 +1,7 @@
 from rest_framework.viewsets import ModelViewSet
 
-from ..models import Menu
-from .serializer import MenuSerializer
+from apps_sirae.menus.models import Menu
+from apps_sirae.menus.api.serializer import MenuSerializer
 from apps_sirae.usuarios.permissions import IsJefaOrAdminRole
 
 

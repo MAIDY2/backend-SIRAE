@@ -4,8 +4,8 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from ..models import Entrega
-from .serializer import EntregaSerializer
+from apps_sirae.entregas.models import Entrega
+from apps_sirae.entregas.api.serializer import EntregaSerializer
 from apps_sirae.usuarios.permissions import IsSupervisorOrAdminRole
 from apps_sirae.sedes.models import Sede
 from apps_sirae.sede_jornada.models import SedeJornada
