@@ -8,12 +8,14 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps_sirae.ingredientes.models import Ingrediente
+from apps_sirae.inventario.models import Inventario
 from apps_sirae.usuarios.permissions import IsAdminOrReadOnly
-from ..models import FacturaCompra, DetalleFacturaCompra, InventarioCentral
+from ..models import FacturaCompra, DetalleFacturaCompra, InventarioCentral, Proveedor
 from .serializers import (
     FacturaCompraSerializer,
     DetalleFacturaCompraSerializer,
-    InventarioCentralSerializer
+    InventarioCentralSerializer,
+    ProveedorSerializer
 )
 
 
@@ -105,7 +107,7 @@ class FacturaCompraViewSet(viewsets.ModelViewSet):
                 fecha_vencimiento=fecha_vencimiento,
             )
 
-            # 3. Sumar automáticamente al Inventario Central (Bodega)
+            # 3. Sumar automáticamente al Inventario Central (Bodega) y al Inventario Global
             inv_central, _ = InventarioCentral.objects.get_or_create(
                 id_ingrediente=ingrediente,
                 defaults={
@@ -118,6 +120,22 @@ class FacturaCompraViewSet(viewsets.ModelViewSet):
             if ingrediente.id_unidad_medida and not inv_central.id_unidad_medida:
                 inv_central.id_unidad_medida = ingrediente.id_unidad_medida
             inv_central.save()
+
+            # Sincronizar también con el Inventario General (id_sede=None) para catálogos y reportes
+            unidad_id = ingrediente.id_unidad_medida_id if ingrediente.id_unidad_medida_id else 1
+            inv_general, _ = Inventario.objects.get_or_create(
+                id_ingrediente=ingrediente.id_ingrediente,
+                id_sede=None,
+                defaults={
+                    'cantidad_actual': Decimal('0.00'),
+                    'stock_minimo': Decimal('0.00'),
+                    'id_unidad_medida': unidad_id
+                }
+            )
+            inv_general.cantidad_actual = (inv_general.cantidad_actual or Decimal('0.00')) + cantidad
+            if ingrediente.id_unidad_medida_id:
+                inv_general.id_unidad_medida = ingrediente.id_unidad_medida_id
+            inv_general.save()
 
         # Actualizar valor total final
         factura.valor_total = Decimal(str(data.get('valor_total', total_acumulado)))
@@ -157,7 +175,7 @@ class FacturaCompraViewSet(viewsets.ModelViewSet):
         factura.fecha_anulacion = timezone.now()
         factura.save()
 
-        # Descontar del Inventario Central las cantidades de esta factura
+        # Descontar del Inventario Central y del Inventario Global las cantidades de esta factura
         for detalle in factura.detalles.all():
             inv_central = InventarioCentral.objects.filter(id_ingrediente=detalle.id_ingrediente).first()
             if inv_central:
@@ -166,6 +184,17 @@ class FacturaCompraViewSet(viewsets.ModelViewSet):
                     inv_central.cantidad_disponible - detalle.cantidad
                 )
                 inv_central.save()
+
+            inv_general = Inventario.objects.filter(
+                id_ingrediente=detalle.id_ingrediente.id_ingrediente,
+                id_sede__isnull=True
+            ).first()
+            if inv_general:
+                inv_general.cantidad_actual = max(
+                    Decimal('0.00'),
+                    (inv_general.cantidad_actual or Decimal('0.00')) - Decimal(str(detalle.cantidad))
+                )
+                inv_general.save()
 
         serializer = self.get_serializer(factura)
         return Response(
@@ -197,3 +226,17 @@ class InventarioCentralViewSet(viewsets.ModelViewSet):
         if categoria:
             queryset = queryset.filter(id_ingrediente__id_categoria_inventario=categoria)
         return queryset
+
+
+class ProveedorViewSet(viewsets.ModelViewSet):
+    queryset = Proveedor.objects.all().order_by('nombre')
+    serializer_class = ProveedorSerializer
+    permission_classes = [IsAdminOrReadOnly]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        buscar = self.request.query_params.get('buscar') or self.request.query_params.get('search')
+        if buscar:
+            queryset = queryset.filter(nombre__icontains=buscar.strip())
+        return queryset
+

@@ -47,6 +47,27 @@ class EntregaSerializer(serializers.ModelSerializer):
             'fecha_recepcion',
         ]
 
+    def validate(self, attrs):
+        id_ingrediente = attrs.get('id_ingrediente') or getattr(self.instance, 'id_ingrediente', None)
+        if id_ingrediente:
+            try:
+                ing = Ingrediente.objects.select_related('id_unidad_medida', 'id_tipo_mercado').get(pk=id_ingrediente)
+                # Auto-completar o fijar la unidad desde el ingrediente maestro
+                if ing.id_unidad_medida:
+                    attrs['unidad'] = ing.id_unidad_medida.abreviatura or ing.id_unidad_medida.nombre
+
+                # Auto-completar id_tipo_mercado desde el ingrediente
+                if ing.id_tipo_mercado_id:
+                    attrs['id_tipo_mercado'] = ing.id_tipo_mercado_id
+                elif ing.tipo_conservacion and not attrs.get('id_tipo_mercado'):
+                    es_per = 'no' not in ing.tipo_conservacion.lower()
+                    tm = TipoMercado.objects.filter(nombre_tipo__icontains='pereced').exclude(nombre_tipo__icontains='no').first() if es_per else TipoMercado.objects.filter(nombre_tipo__icontains='no').first()
+                    if tm:
+                        attrs['id_tipo_mercado'] = tm.id_tipo_mercado
+            except Ingrediente.DoesNotExist:
+                pass
+        return super().validate(attrs)
+
     def get_ingrediente_nombre(self, entrega):
         if not entrega.id_ingrediente:
             return ''

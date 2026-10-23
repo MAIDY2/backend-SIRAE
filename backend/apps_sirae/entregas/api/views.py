@@ -75,19 +75,11 @@ class entregasApiViewset(viewsets.ModelViewSet):
             inst = sede.id_institucion
 
         with transaction.atomic():
-            entrega = serializer.save(
+            serializer.save(
                 id_usuario_supervisor=user_id or 1,
                 id_institucion=inst,
                 estado='EN_TRANSITO'
             )
-            # Descontar del inventario central si existe stock
-            inv_central = InventarioCentral.objects.filter(id_ingrediente=entrega.id_ingrediente).first()
-            if inv_central and entrega.cantidad:
-                inv_central.cantidad_disponible = max(
-                    Decimal('0.000'),
-                    inv_central.cantidad_disponible - Decimal(str(entrega.cantidad))
-                )
-                inv_central.save(update_fields=['cantidad_disponible', 'fecha_ultima_actualizacion'])
 
     @action(detail=False, methods=['get'], url_path='calcular-mercado')
     def calcular_mercado(self, request):

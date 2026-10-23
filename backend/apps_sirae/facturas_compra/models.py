@@ -106,3 +106,21 @@ class InventarioCentral(models.Model):
     def __str__(self):
         ing = self.id_ingrediente.nombre_ingrediente if self.id_ingrediente else 'Ingrediente'
         return f"Inventario Central - {ing}: {self.cantidad_disponible}"
+
+
+class Proveedor(models.Model):
+    id_proveedor = models.AutoField(primary_key=True)
+    nombre = models.CharField(max_length=150, unique=True)
+    nit = models.CharField(max_length=50, blank=True, null=True)
+    telefono = models.CharField(max_length=50, blank=True, null=True)
+    direccion = models.CharField(max_length=200, blank=True, null=True)
+    correo = models.EmailField(max_length=100, blank=True, null=True)
+    contacto = models.CharField(max_length=100, blank=True, null=True)
+    estado = models.CharField(max_length=20, default='ACTIVO')
+
+    class Meta:
+        db_table = 'proveedores'
+        ordering = ['nombre']
+
+    def __str__(self):
+        return f"{self.nombre} ({self.nit})" if self.nit else self.nombre
