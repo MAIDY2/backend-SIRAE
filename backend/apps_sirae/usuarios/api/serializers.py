@@ -35,53 +35,52 @@ class UsuarioSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'password': {'write_only': True, 'required': False}
         }
-
     def validate(self, attrs):
-        request = self.context.get('request')
-        current_user = request.user if request and request.user.is_authenticated else None
+                request = self.context.get('request')
+                current_user = request.user if request and request.user.is_authenticated else None
 
-        # Validación 1: Nadie puede crear un Super Administrador por la API (solo seeder/management command)
-        rol = attrs.get('rol') or (self.instance.rol if self.instance else None)
-        rol_nombre = (rol.nombre if rol and hasattr(rol, 'nombre') else '').strip().lower()
+                # Validación 1: Nadie puede crear un Super Administrador por la API (solo seeder/management command)
+                rol = attrs.get('rol') or (self.instance.rol if self.instance else None)
+                rol_nombre = (rol.nombre if rol and hasattr(rol, 'nombre') else '').strip().lower()
 
-        if rol_nombre in {'superadministrador', 'super administrador', 'super admin'}:
-            if not self.instance:
-                raise serializers.ValidationError({
-                    'rol': 'No está permitido registrar nuevos usuarios con el rol de Super Administrador.'
-                })
+                if rol_nombre in {'superadministrador', 'super administrador', 'super admin'}:
+                    if not self.instance:
+                        raise serializers.ValidationError({
+                            'rol': 'No está permitido registrar nuevos usuarios con el rol de Super Administrador.'
+                        })
 
-        # Validación 2: Proteger al Super Administrador de ser editado por otros roles
-        if self.instance and self.instance.es_super_administrador():
-            if not current_user or (current_user.id_usuario != self.instance.id_usuario and not current_user.is_superuser):
-                raise serializers.ValidationError(
-                    'No tienes permisos para modificar los datos del Super Administrador.'
-                )
+                # Validación 2: Proteger al Super Administrador de ser editado por otros roles
+                if self.instance and self.instance.es_super_administrador():
+                    if not current_user or (current_user.id_usuario != self.instance.id_usuario and not current_user.is_superuser):
+                        raise serializers.ValidationError(
+                            'No tienes permisos para modificar los datos del Super Administrador.'
+                        )
 
-        # Validación 3: Jerarquía estricta al crear nuevos usuarios
-        if not self.instance and current_user:
-            if current_user.es_super_administrador():
-                # Super Admin solo crea Administradores y Supervisores
-                es_rol_permitido = any(r in rol_nombre for r in ['admin', 'supervisor', 'coordinador'])
-                if not es_rol_permitido:
-                    raise serializers.ValidationError({
-                        'rol': 'El Super Administrador solo puede crear usuarios con rol de Administrador o Supervisor.'
-                    })
-            elif current_user.es_administrador():
-                # Administrador solo crea personal de cocina (Manipuladoras y Manipuladora Jefe)
-                es_rol_cocina = any(r in rol_nombre for r in ['manipuladora', 'jefa', 'cocina'])
-                if not es_rol_cocina:
-                    raise serializers.ValidationError({
-                        'rol': 'El Administrador solo puede crear usuarios de cocina (Manipuladora Jefe o Manipuladoras).'
-                    })
-                # Asigna automáticamente su misma institución
-                if current_user.id_institucion_id:
-                    attrs['id_institucion'] = current_user.id_institucion
-            else:
-                raise serializers.ValidationError(
-                    'Tu rol no tiene autorización para registrar nuevos usuarios.'
-                )
+                # Validación 3: Jerarquía estricta al crear nuevos usuarios
+                if not self.instance and current_user:
+                    if current_user.es_super_administrador():
+                        # Super Admin solo crea Administradores y Supervisores
+                        es_rol_permitido = any(r in rol_nombre for r in ['admin', 'supervisor', 'coordinador'])
+                        if not es_rol_permitido:
+                            raise serializers.ValidationError({
+                                'rol': 'El Super Administrador solo puede crear usuarios con rol de Administrador o Supervisor.'
+                            })
+                    elif current_user.es_administrador():
+                        # Administrador solo crea personal de cocina (Manipuladoras y Manipuladora Jefe)
+                        es_rol_cocina = any(r in rol_nombre for r in ['manipuladora', 'jefa', 'cocina'])
+                        if not es_rol_cocina:
+                            raise serializers.ValidationError({
+                                'rol': 'El Administrador solo puede crear usuarios de cocina (Manipuladora Jefe o Manipuladoras).'
+                            })
+                        # Asigna automáticamente su misma institución
+                        if current_user.id_institucion_id:
+                            attrs['id_institucion'] = current_user.id_institucion
+                    else:
+                        raise serializers.ValidationError(
+                            'Tu rol no tiene autorización para registrar nuevos usuarios.'
+                        )
 
-        return attrs
+                return attrs
 
     def create(self, validated_data):
         password = validated_data.pop('password', None)
@@ -92,6 +91,19 @@ class UsuarioSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"password": "La contraseña es requerida."})
         usuario.save()
         return usuario
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop('password', None)
+        
+        # Actualizar los demás campos normalmente
+        instance = super().update(instance, validated_data)
+        
+        # Si se envió una nueva contraseña, hashearla y guardarla
+        if password:
+            instance.set_password(password)
+            instance.save()
+            
+        return instance
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
