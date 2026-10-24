@@ -3,6 +3,8 @@ from django.db import models
 
 
 class Ingrediente(models.Model):
+    objects = models.Manager()
+
     TIPO_CONSERVACION_CHOICES = [
         ('perecedero', 'Perecedero'),
         ('no_perecedero', 'No perecedero'),

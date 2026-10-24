@@ -1,6 +1,7 @@
 from django.db import models
 
 class Inventario(models.Model):
+    objects = models.Manager()
 
     id_inventario = models.AutoField(primary_key=True)
     id_ingrediente = models.IntegerField()

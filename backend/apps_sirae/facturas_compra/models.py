@@ -5,6 +5,8 @@ from apps_sirae.unidades_medida.models import UnidadMedida
 
 
 class FacturaCompra(models.Model):
+    objects = models.Manager()
+
     ESTADOS = [
         ('REGISTRADA', 'Registrada'),
         ('ANULADA', 'Anulada'),
@@ -50,6 +52,8 @@ class FacturaCompra(models.Model):
 
 
 class DetalleFacturaCompra(models.Model):
+    objects = models.Manager()
+
     id_detalle = models.AutoField(primary_key=True)
     id_factura = models.ForeignKey(
         FacturaCompra,
@@ -80,6 +84,8 @@ class DetalleFacturaCompra(models.Model):
 
 
 class InventarioCentral(models.Model):
+    objects = models.Manager()
+
     id_inventario_central = models.AutoField(primary_key=True)
     id_ingrediente = models.OneToOneField(
         Ingrediente,
@@ -109,6 +115,8 @@ class InventarioCentral(models.Model):
 
 
 class Proveedor(models.Model):
+    objects = models.Manager()
+
     id_proveedor = models.AutoField(primary_key=True)
     nombre = models.CharField(max_length=150, unique=True)
     nit = models.CharField(max_length=50, blank=True, null=True)
