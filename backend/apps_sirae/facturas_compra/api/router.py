@@ -1,5 +1,5 @@
 from rest_framework.routers import DefaultRouter
-from .views import FacturaCompraViewSet, InventarioCentralViewSet
+from .views import FacturaCompraViewSet, InventarioCentralViewSet, ProveedorViewSet
 
 router_facturas_compra = DefaultRouter()
 router_facturas_compra.register(
@@ -12,3 +12,9 @@ router_facturas_compra.register(
     viewset=InventarioCentralViewSet,
     basename='inventario-central'
 )
+router_facturas_compra.register(
+    prefix='proveedores',
+    viewset=ProveedorViewSet,
+    basename='proveedores'
+)
+
