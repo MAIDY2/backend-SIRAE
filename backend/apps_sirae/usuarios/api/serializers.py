@@ -39,22 +39,28 @@ class UsuarioSerializer(serializers.ModelSerializer):
         }
 
     def get_instituciones_supervisor(self, obj):
-        if hasattr(obj, 'es_supervisor') and obj.es_supervisor():
-            rels = obj.instituciones_asignadas.select_related('id_institucion').all()
-            from apps_sirae.sedes.models import Sede
-            res = []
-            for r in rels:
-                if r.id_institucion:
-                    inst = r.id_institucion
-                    sedes = list(Sede.objects.filter(id_institucion=inst).values('id_sede', 'nombre_sede'))
-                    res.append({
-                        'id_institucion': inst.id_institucion,
-                        'nombre_institucion': inst.nombre_institucion,
-                        'nit': getattr(inst, 'nit', ''),
-                        'sedes': sedes
-                    })
-            return res
+        try:
+            if hasattr(obj, 'instituciones_asignadas'):
+                rels = obj.instituciones_asignadas.select_related('id_institucion').all()
+                if not rels.exists():
+                    return []
+                from apps_sirae.sedes.models import Sede
+                res = []
+                for r in rels:
+                    if r.id_institucion:
+                        inst = r.id_institucion
+                        sedes = list(Sede.objects.filter(id_institucion=inst).values('id_sede', 'nombre_sede'))
+                        res.append({
+                            'id_institucion': inst.id_institucion,
+                            'nombre_institucion': inst.nombre_institucion,
+                            'nit': getattr(inst, 'nit', ''),
+                            'sedes': sedes
+                        })
+                return res
+        except Exception:
+            pass
         return []
+
     def validate(self, attrs):
                 request = self.context.get('request')
                 current_user = request.user if request and request.user.is_authenticated else None
