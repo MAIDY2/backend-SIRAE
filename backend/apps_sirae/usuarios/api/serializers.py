@@ -194,6 +194,20 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         inst_nombre = usuario.id_institucion.nombre_institucion if usuario.id_institucion else None
         sede_nombre = usuario.id_sede.nombre_sede if usuario.id_sede else None
 
+        instituciones_sup = []
+        if usuario.es_supervisor():
+            for rel in usuario.instituciones_asignadas.select_related('id_institucion').all():
+                inst = rel.id_institucion
+                sedes = list(inst.sedes.values('id_sede', 'nombre_sede', 'codigo_dane', 'direccion'))
+                instituciones_sup.append({
+                    'id_institucion': inst.id_institucion,
+                    'nombre_institucion': inst.nombre_institucion,
+                    'nit': inst.nit,
+                    'sedes': sedes
+                })
+            if not inst_nombre and instituciones_sup:
+                inst_nombre = instituciones_sup[0]['nombre_institucion']
+
         return {
             'access': str(refresh.access_token),
             'refresh': str(refresh),
@@ -209,6 +223,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 'institucion_nombre': inst_nombre,
                 'id_sede': usuario.id_sede_id,
                 'sede_nombre': sede_nombre,
+                'instituciones_supervisor': instituciones_sup,
                 'is_superuser': bool(usuario.is_superuser),
                 'debe_cambiar_password': bool(getattr(usuario, 'debe_cambiar_password', False)),
             }

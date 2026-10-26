@@ -5,10 +5,14 @@ from ..models import Institucion, SupervisorInstitucion
 class InstitucionSerializer(serializers.ModelSerializer):
     administrador_asignado = serializers.SerializerMethodField()
     supervisor_asignado = serializers.SerializerMethodField()
+    sedes = serializers.SerializerMethodField()
 
     class Meta:
         model = Institucion
         fields = '__all__'
+
+    def get_sedes(self, obj):
+        return list(obj.sedes.values('id_sede', 'nombre_sede', 'codigo_dane', 'direccion', 'telefono', 'estado'))
 
     def get_administrador_asignado(self, obj):
         from apps_sirae.usuarios.models import Usuario
