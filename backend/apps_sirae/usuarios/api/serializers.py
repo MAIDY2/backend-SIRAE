@@ -80,6 +80,25 @@ class UsuarioSerializer(serializers.ModelSerializer):
                             'Tu rol no tiene autorización para registrar nuevos usuarios.'
                         )
 
+                # Validación 4: Unicidad de Administrador por Institución
+                # Una institución solo puede tener un único Administrador activo
+                es_admin = any(r in rol_nombre for r in ['admin', 'administrador'])
+                id_inst = attrs.get('id_institucion') or (self.instance.id_institucion if self.instance else None)
+                if es_admin and id_inst:
+                    filtro_admin = Usuario.objects.filter(
+                        id_institucion=id_inst,
+                        is_active=True,
+                        rol__nombre__in=['Administrador', 'administrador', 'admin']
+                    )
+                    if self.instance:
+                        filtro_admin = filtro_admin.exclude(pk=self.instance.pk)
+                    admin_existente = filtro_admin.first()
+                    if admin_existente:
+                        inst_nom = id_inst.nombre_institucion if hasattr(id_inst, 'nombre_institucion') else 'esta institución'
+                        raise serializers.ValidationError({
+                            'id_institucion': f"La institución '{inst_nom}' ya tiene asignado al Administrador '{admin_existente.nombre_completo}'. Cada institución solo puede tener un único Administrador activo."
+                        })
+
                 return attrs
 
     def create(self, validated_data):
