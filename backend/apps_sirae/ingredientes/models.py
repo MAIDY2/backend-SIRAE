@@ -40,7 +40,8 @@ class Ingrediente(models.Model):
         on_delete=models.DO_NOTHING,
         db_column='id_categoria_inventario',
         null=True,
-        blank=True
+        blank=True,
+        db_constraint=False
     )
 
     id_unidad_medida = models.ForeignKey(
@@ -48,7 +49,8 @@ class Ingrediente(models.Model):
         on_delete=models.DO_NOTHING,
         db_column='id_unidad_medida',
         null=True,
-        blank=True
+        blank=True,
+        db_constraint=False
     )
 
     tipo_conservacion = models.CharField(
@@ -65,11 +67,49 @@ class Ingrediente(models.Model):
         null=True,
         blank=True,
         db_column='id_tipo_mercado',
-        related_name='ingredientes'
+        related_name='ingredientes',
+        db_constraint=False
     )
+
+    def __init__(self, *args, **kwargs):
+        legacy_fields = {
+            'id_categoria_inventario': 'id_categoria_inventario_id',
+            'id_unidad_medida': 'id_unidad_medida_id',
+            'id_tipo_mercado': 'id_tipo_mercado_id',
+            'nombre': 'nombre_ingrediente',
+            'marca': 'marca_ingrediente',
+            'imagen': 'imagen_ingrediente',
+        }
+        for legacy_name, actual_name in legacy_fields.items():
+            if legacy_name in kwargs and actual_name not in kwargs:
+                value = kwargs.pop(legacy_name)
+                if legacy_name in ('nombre', 'marca', 'imagen'):
+                    kwargs[actual_name] = value
+                elif value is None or isinstance(value, (int, str)):
+                    kwargs[actual_name] = value
+                else:
+                    kwargs[legacy_name] = value
+        super().__init__(*args, **kwargs)
+
+    @property
+    def nombre(self):
+        return self.nombre_ingrediente
+
+    @nombre.setter
+    def nombre(self, value):
+        self.nombre_ingrediente = value
+
+    @property
+    def marca(self):
+        return self.marca_ingrediente
+
+    @marca.setter
+    def marca(self, value):
+        self.marca_ingrediente = value
 
     class Meta:
         db_table = 'ingredientes'
+        managed = True
 
     def __str__(self):
         return self.nombre_ingrediente or ''
