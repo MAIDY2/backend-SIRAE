@@ -11,6 +11,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
     rol_detalle = RolSerializer(source='rol', read_only=True)
     institucion_nombre = serializers.CharField(source='id_institucion.nombre_institucion', read_only=True)
     sede_nombre = serializers.CharField(source='id_sede.nombre_sede', read_only=True)
+    instituciones_supervisor = serializers.SerializerMethodField()
 
     class Meta:
         model = Usuario
@@ -27,6 +28,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
             'institucion_nombre',
             'id_sede',
             'sede_nombre',
+            'instituciones_supervisor',
             'password',
             'is_active',
             'is_staff',
@@ -35,6 +37,24 @@ class UsuarioSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'password': {'write_only': True, 'required': False}
         }
+
+    def get_instituciones_supervisor(self, obj):
+        if hasattr(obj, 'es_supervisor') and obj.es_supervisor():
+            rels = obj.instituciones_asignadas.select_related('id_institucion').all()
+            from apps_sirae.sedes.models import Sede
+            res = []
+            for r in rels:
+                if r.id_institucion:
+                    inst = r.id_institucion
+                    sedes = list(Sede.objects.filter(id_institucion=inst).values('id_sede', 'nombre_sede'))
+                    res.append({
+                        'id_institucion': inst.id_institucion,
+                        'nombre_institucion': inst.nombre_institucion,
+                        'nit': getattr(inst, 'nit', ''),
+                        'sedes': sedes
+                    })
+            return res
+        return []
     def validate(self, attrs):
                 request = self.context.get('request')
                 current_user = request.user if request and request.user.is_authenticated else None
