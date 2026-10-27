@@ -13,12 +13,14 @@ class InstitucionViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        qs = Institucion.objects.all().prefetch_related('sedes', 'supervisores_asignados__id_supervisor')
+
         if not user or not user.is_authenticated:
-            return Institucion.objects.all()
+            return qs
 
         # Super Administrador ve todas las instituciones
         if user.es_super_administrador() or user.is_superuser:
-            return Institucion.objects.all()
+            return qs
 
         # Supervisor ve solo las instituciones que tiene asignadas
         if user.es_supervisor():
@@ -29,15 +31,15 @@ class InstitucionViewSet(viewsets.ModelViewSet):
             )
             ids_totales = asignadas_ids.union({cid for cid in contratos_ids if cid})
             if ids_totales:
-                return Institucion.objects.filter(id_institucion__in=ids_totales)
+                return qs.filter(id_institucion__in=ids_totales)
             # Si aún no tiene asignadas, retorna vacío para que no vea colegios de otros supervisores
             return Institucion.objects.none()
 
         # Administrador regular ve su institución asignada
         if user.es_administrador() and user.id_institucion_id:
-            return Institucion.objects.filter(id_institucion=user.id_institucion_id)
+            return qs.filter(id_institucion=user.id_institucion_id)
 
-        return Institucion.objects.all()
+        return qs
 
 
 class SupervisorInstitucionViewSet(viewsets.ModelViewSet):
