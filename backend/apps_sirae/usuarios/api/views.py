@@ -1,3 +1,4 @@
+from django.db.models import Q
 from rest_framework import viewsets, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -22,9 +23,16 @@ class UsuarioViewSet(viewsets.ModelViewSet):
         if not user or not user.is_authenticated:
             return Usuario.objects.none()
 
-        # Super Administrador ve todos los usuarios del sistema
+        # Super Administrador solo gestiona y visualiza Administradores y Supervisores
         if user.es_super_administrador() or user.is_superuser:
-            return Usuario.objects.select_related('rol', 'id_institucion', 'id_sede').all()
+            incluir_todos = self.request.query_params.get('todos', 'false').lower() in ('true', '1')
+            if incluir_todos:
+                return Usuario.objects.select_related('rol', 'id_institucion', 'id_sede').all()
+            return Usuario.objects.select_related('rol', 'id_institucion', 'id_sede').filter(
+                (Q(rol__nombre__icontains='admin') & ~Q(rol__nombre__icontains='super')) |
+                Q(rol__nombre__icontains='supervisor') |
+                Q(rol__nombre__icontains='coordinador')
+            )
 
         # Administrador regular solo ve los usuarios de su propia institución
         if user.es_administrador():
