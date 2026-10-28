@@ -78,9 +78,9 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            if imagen.size > 5 * 1024 * 1024:
+            if imagen.size > 15 * 1024 * 1024:
                 return Response(
-                    {'error': 'La imagen no puede superar 5 MB.'},
+                    {'error': 'La imagen no puede superar 15 MB.'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
