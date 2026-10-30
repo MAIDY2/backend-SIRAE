@@ -86,21 +86,15 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
 
         es_admin = remitente.es_administrador()
         es_supervisor = remitente.es_supervisor()
-        es_manipuladora = remitente.es_manipuladora()
         es_jefa = remitente.es_jefa_manipuladoras()
 
-        if es_admin:
-            tipo_destino = 'supervisor'
-        elif es_supervisor:
-            tipo_destino = 'android'
-        elif es_manipuladora or es_jefa:
-            tipo_destino = 'coordinacion'
-        else:
+        if not (es_admin or es_supervisor or es_jefa):
             return Response(
                 {
                     'error': (
-                        'Tu rol no tiene permiso para '
-                        'enviar notificaciones.'
+                        'Solo el administrador, el supervisor '
+                        'y la Jefa de Manipuladoras pueden enviar '
+                        'notificaciones.'
                     )
                 },
                 status=status.HTTP_403_FORBIDDEN,
@@ -110,7 +104,7 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
             is_active=True
         ).select_related('rol')
 
-        if tipo_destino == 'supervisor':
+        if es_admin:
             destinatarios = [
                 usuario
                 for usuario in usuarios_activos
@@ -119,32 +113,62 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
                     and usuario.id_usuario != remitente_id
                 )
             ]
-
-        elif tipo_destino == 'android':
+        elif es_jefa:
             destinatarios = [
                 usuario
                 for usuario in usuarios_activos
                 if (
-                    (
-                        usuario.es_manipuladora()
+                    (usuario.es_supervisor() or usuario.es_administrador())
+                    and usuario.id_usuario != remitente_id
+                )
+            ]
+        else:
+            destinatario_id = request.data.get('id_destinatario')
+
+            if not destinatario_id:
+                return Response(
+                    {
+                        'error': (
+                            'Selecciona el administrador o la '
+                            'Jefa de Manipuladoras como destinatario.'
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            try:
+                destinatario_id = int(destinatario_id)
+            except (TypeError, ValueError):
+                return Response(
+                    {'error': 'El destinatario seleccionado no es válido.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            destinatario = next(
+                (
+                    usuario
+                    for usuario in usuarios_activos
+                    if usuario.id_usuario == destinatario_id
+                    and (
+                        usuario.es_administrador()
                         or usuario.es_jefa_manipuladoras()
                     )
-                    and usuario.id_usuario != remitente_id
-                )
-            ]
+                ),
+                None,
+            )
 
-        else:
-            destinatarios = [
-                usuario
-                for usuario in usuarios_activos
-                if (
-                    (
-                        usuario.es_supervisor()
-                        or usuario.es_administrador()
-                    )
-                    and usuario.id_usuario != remitente_id
+            if destinatario is None:
+                return Response(
+                    {
+                        'error': (
+                            'Solo puedes enviar al administrador '
+                            'o a la Jefa de Manipuladoras.'
+                        )
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
                 )
-            ]
+
+            destinatarios = [destinatario]
 
         if not destinatarios:
             return Response(
@@ -213,6 +237,39 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
             },
             status=status.HTTP_201_CREATED,
         )
+
+    @action(detail=False, methods=['get'], url_path='destinatarios')
+    def destinatarios(self, request):
+        remitente = request.user
+        remitente_id = getattr(remitente, 'id_usuario', None)
+
+        if remitente.es_administrador():
+            permitido = lambda u: u.es_supervisor()
+        elif remitente.es_jefa_manipuladoras():
+            permitido = lambda u: u.es_supervisor() or u.es_administrador()
+        elif remitente.es_supervisor():
+            permitido = lambda u: (
+                u.es_administrador() or u.es_jefa_manipuladoras()
+            )
+        else:
+            return Response(
+                {'error': 'Tu rol no puede enviar notificaciones.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        usuarios = Usuario.objects.filter(
+            is_active=True
+        ).select_related('rol')
+
+        return Response([
+            {
+                'id_usuario': u.id_usuario,
+                'nombre': u.nombre_completo,
+                'rol': u.rol.nombre if u.rol else '',
+            }
+            for u in usuarios
+            if permitido(u) and u.id_usuario != remitente_id
+        ])
 
     @action(
         detail=False,
