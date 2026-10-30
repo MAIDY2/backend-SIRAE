@@ -1,11 +1,16 @@
+
 from django.urls import include, path
+
+from apps_sirae.ia_sugerencias.views import sugerencias_recetas_ia
 
 from apps_sirae.unidades_medida.api.router import router_unidades_medida
 from apps_sirae.secciones_menu.api.router import router_secciones_menu
 from apps_sirae.platos.api.router import router_platos
-from apps_sirae.platos.views import SubirImagenPlatoView  # <--- Importación de la vista de Cloudinary
+from apps_sirae.platos.views import SubirImagenPlatoView
 from apps_sirae.detalle_plato.api.router import router_detalle_plato
-from apps_sirae.preparacion_asignada.api.router import router as router_preparacion_asignada
+from apps_sirae.preparacion_asignada.api.router import (
+    router as router_preparacion_asignada,
+)
 from apps_sirae.preparacion_asignada.api.views import PreparacionAsignadaApiViewSet
 
 from apps_sirae.asistencia_diaria.api.router import router_asistencia_diaria
@@ -37,62 +42,116 @@ from apps_sirae.usuarios.api.password_reset import (
     SolicitarRecuperacionPasswordView,
     ValidarTokenPasswordView,
 )
-from apps_sirae.usuarios.api.views import ConfirmarCodigoRecuperacionPasswordView, RecuperarPasswordView
+from apps_sirae.usuarios.api.views import (
+    ConfirmarCodigoRecuperacionPasswordView,
+    RecuperarPasswordView,
+)
 
 
 urlpatterns = [
     path('', include('apps_sirae.roles.api.urls')),
     path('', include('apps_sirae.usuarios.api.urls')),
-    
-    # Rutas directas y corregidas (sin duplicar 'api/')
-    path('auth/recuperar-password/', RecuperarPasswordView.as_view(), name='recuperar-password'),
+
+    # Rutas de recuperación y cambio de contraseña
+    path(
+        'auth/recuperar-password/',
+        RecuperarPasswordView.as_view(),
+        name='recuperar-password',
+    ),
     path(
         'auth/confirmar-recuperacion-password/',
         ConfirmarCodigoRecuperacionPasswordView.as_view(),
         name='confirmar-recuperacion-password',
     ),
-    path('auth/password-reset/validar-token/', ValidarTokenPasswordView.as_view(), name='password-reset-validar-token'),
-    path('auth/password-reset/confirmar/', ConfirmarRecuperacionPasswordView.as_view(), name='password-reset-confirmar'),
-    path('auth/cambiar-password/', CambiarPasswordView.as_view(), name='cambiar-password'),
+    path(
+        'auth/password-reset/validar-token/',
+        ValidarTokenPasswordView.as_view(),
+        name='password-reset-validar-token',
+    ),
+    path(
+        'auth/password-reset/confirmar/',
+        ConfirmarRecuperacionPasswordView.as_view(),
+        name='password-reset-confirmar',
+    ),
+    path(
+        'auth/cambiar-password/',
+        CambiarPasswordView.as_view(),
+        name='cambiar-password',
+    ),
 
+    # Unidades de medida y secciones de menú
     path('', include(router_unidades_medida.urls)),
     path('', include(router_secciones_menu.urls)),
-    
-    # --- RUTA PARA SUBIR LA IMAGEN DEL PLATO ---
-    path('platos/<int:pk>/subir-imagen/', SubirImagenPlatoView.as_view(), name='subir-imagen-plato'),
-    path('', include(router_platos.urls)),
-    # -------------------------------------------
 
+    # Subir imágenes de platos y rutas de platos
+    path(
+        'platos/<int:pk>/subir-imagen/',
+        SubirImagenPlatoView.as_view(),
+        name='subir-imagen-plato',
+    ),
+    path('', include(router_platos.urls)),
+
+    # Detalles y preparación asignada
     path('', include(router_detalle_plato.urls)),
-    path('preparacion-asignada', PreparacionAsignadaApiViewSet.as_view({'get': 'list', 'post': 'create'}), name='preparacion-asignada-list'),
-    path('preparacion-asignada/<int:pk>', PreparacionAsignadaApiViewSet.as_view({'get': 'retrieve', 'delete': 'destroy'}), name='preparacion-asignada-detail'),
+    path(
+        'preparacion-asignada',
+        PreparacionAsignadaApiViewSet.as_view({
+            'get': 'list',
+            'post': 'create',
+        }),
+        name='preparacion-asignada-list',
+    ),
+    path(
+        'preparacion-asignada/<int:pk>',
+        PreparacionAsignadaApiViewSet.as_view({
+            'get': 'retrieve',
+            'delete': 'destroy',
+        }),
+        name='preparacion-asignada-detail',
+    ),
     path('', include(router_preparacion_asignada.urls)),
 
+    # Asistencia, menús y entregas
     path('', include(router_asistencia_diaria.urls)),
     path('', include(router_menus.urls)),
     path('', include(router_entregas.urls)),
+
+    # Movimientos de inventario
     path('', include(router_entradas_inventario.urls)),
     path('', include(router_salidas_inventario.urls)),
-    
+    path('', include(router_inventario.urls)),
+
+    # Notificaciones e ingredientes
     path('', include(router_notificaciones.urls)),
-
-    # --- RUTA DE INGREDIENTES ---
     path('', include(router_ingredientes.urls)),
-    # ----------------------------
 
+    # Turnos y usuarios por turno
     path('', include(router_turnos.urls)),
     path('', include(router_usuario_turno.urls)),
 
+    # Grados, gramajes y contratos
     path('', include(router_grados.urls)),
     path('', include(router_gramage.urls)),
-    path('', include(router_inventario.urls)),
     path('', include(router_contratos.urls)),
     path('', include(router_contrato_seccion_menu.urls)),
+
+    # Jornadas, categorías y tipos de mercado
     path('', include(router_jornadas.urls)),
     path('', include(router_categorias.urls)),
     path('', include(router_tipos_mercado.urls)),
+
+    # Instituciones, sedes y jornadas de sede
     path('', include(router_instituciones.urls)),
     path('', include(router_sedes.urls)),
     path('', include(router_sede_jornadas.urls)),
+
+    # Facturas de compra
     path('', include(router_facturas_compra.urls)),
+
+    # Inteligencia artificial: sugerencias de recetas con el inventario
+    path(
+        'ia/sugerencias-recetas/',
+        sugerencias_recetas_ia,
+        name='sugerencias-recetas-ia',
+    ),
 ]
