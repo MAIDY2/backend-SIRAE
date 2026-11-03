@@ -5,6 +5,11 @@ from apps_sirae.ingredientes.models import Ingrediente
 
 
 class RecetaComponente(models.Model):
+    BASE_CANTIDAD_CHOICES = [
+        ('POR_NINO', 'Por niño'),
+        ('TOTAL_PREPARACION', 'Total para una preparación'),
+    ]
+
     id_receta_componente = models.AutoField(
         primary_key=True
     )
@@ -26,6 +31,18 @@ class RecetaComponente(models.Model):
     cantidad = models.DecimalField(
         max_digits=10,
         decimal_places=2
+    )
+
+    base_cantidad = models.CharField(
+        max_length=20,
+        choices=BASE_CANTIDAD_CHOICES,
+        null=True,
+        blank=True,
+    )
+
+    porciones_base = models.PositiveIntegerField(
+        null=True,
+        blank=True,
     )
 
     class Meta:

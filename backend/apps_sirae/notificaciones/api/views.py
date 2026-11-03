@@ -87,13 +87,15 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
         es_admin = remitente.es_administrador()
         es_supervisor = remitente.es_supervisor()
         es_jefa = remitente.es_jefa_manipuladoras()
+        es_manipuladora = remitente.es_manipuladora()
 
-        if not (es_admin or es_supervisor or es_jefa):
+        if not (es_admin or es_supervisor or es_jefa or es_manipuladora):
             return Response(
                 {
                     'error': (
                         'Solo el administrador, el supervisor '
-                        'y la Jefa de Manipuladoras pueden enviar '
+                        'la Jefa de Manipuladoras y la Manipuladora '
+                        'pueden enviar '
                         'notificaciones.'
                     )
                 },
@@ -122,6 +124,50 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
                     and usuario.id_usuario != remitente_id
                 )
             ]
+        elif es_manipuladora:
+            destinatario_id = request.data.get('id_destinatario')
+
+            if not destinatario_id:
+                return Response(
+                    {
+                        'error': (
+                            'Selecciona el supervisor como '
+                            'destinatario.'
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            try:
+                destinatario_id = int(destinatario_id)
+            except (TypeError, ValueError):
+                return Response(
+                    {'error': 'El destinatario seleccionado no es válido.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            destinatario = next(
+                (
+                    usuario
+                    for usuario in usuarios_activos
+                    if usuario.id_usuario == destinatario_id
+                    and usuario.es_supervisor()
+                ),
+                None,
+            )
+
+            if destinatario is None:
+                return Response(
+                    {
+                        'error': (
+                            'La Manipuladora solo puede enviar '
+                            'notificaciones al supervisor.'
+                        )
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            destinatarios = [destinatario]
         else:
             destinatario_id = request.data.get('id_destinatario')
 
@@ -152,6 +198,13 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
                     and (
                         usuario.es_administrador()
                         or usuario.es_jefa_manipuladoras()
+                        or (
+                            usuario.es_manipuladora()
+                            and Notificacion.objects.filter(
+                                id_usuario=remitente_id,
+                                id_remitente=usuario.id_usuario,
+                            ).exists()
+                        )
                     )
                 ),
                 None,
@@ -162,7 +215,8 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
                     {
                         'error': (
                             'Solo puedes enviar al administrador '
-                            'o a la Jefa de Manipuladoras.'
+                            'o a la Jefa de Manipuladoras, o responder '
+                            'a una Manipuladora que te haya escrito.'
                         )
                     },
                     status=status.HTTP_403_FORBIDDEN,
@@ -248,9 +302,22 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
         elif remitente.es_jefa_manipuladoras():
             permitido = lambda u: u.es_supervisor() or u.es_administrador()
         elif remitente.es_supervisor():
-            permitido = lambda u: (
-                u.es_administrador() or u.es_jefa_manipuladoras()
+            manipuladoras_que_escribieron = set(
+                Notificacion.objects.filter(
+                    id_usuario=remitente_id,
+                    id_remitente__isnull=False,
+                ).values_list('id_remitente', flat=True)
             )
+            permitido = lambda u: (
+                u.es_administrador()
+                or u.es_jefa_manipuladoras()
+                or (
+                    u.es_manipuladora()
+                    and u.id_usuario in manipuladoras_que_escribieron
+                )
+            )
+        elif remitente.es_manipuladora():
+            permitido = lambda u: u.es_supervisor()
         else:
             return Response(
                 {'error': 'Tu rol no puede enviar notificaciones.'},

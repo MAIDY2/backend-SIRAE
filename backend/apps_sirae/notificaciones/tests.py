@@ -1,3 +1,6 @@
+from unittest.mock import patch
+
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APITestCase
 
 from apps_sirae.roles.models import Rol
@@ -217,6 +220,19 @@ class NotificacionApiTestCase(APITestCase):
             {self.jefa.id_usuario},
         )
 
+    def test_destinatarios_del_supervisor_son_admin_y_jefa(self):
+        response = self.solicitar(
+            'get',
+            '/api/notificaciones/destinatarios/',
+            self.supervisor,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            {destinatario['id_usuario'] for destinatario in response.data},
+            {self.admin.id_usuario, self.jefa.id_usuario},
+        )
+
     def test_supervisor_no_puede_elegir_manipuladora(self):
         response = self.solicitar(
             'post',
@@ -231,14 +247,90 @@ class NotificacionApiTestCase(APITestCase):
 
         self.assertEqual(response.status_code, 403)
 
-    def test_manipuladora_no_puede_enviar(self):
+    def test_manipuladora_puede_enviar_solo_al_supervisor(self):
+        response = self.solicitar(
+            'post',
+            '/api/notificaciones/enviar/',
+            self.manipuladora,
+            {
+                'titulo': 'Mensaje al supervisor',
+                'mensaje': 'La manipuladora solicita apoyo.',
+                'id_destinatario': self.supervisor.id_usuario,
+            },
+        )
+
+        self.assertEqual(response.status_code, 201, msg=str(response.data))
+        self.assertTrue(
+            Notificacion.objects.filter(
+                id_usuario=self.supervisor.id_usuario,
+                id_remitente=self.manipuladora.id_usuario,
+                titulo='Mensaje al supervisor',
+            ).exists()
+        )
+
+    def test_manipuladora_no_puede_enviar_al_administrador(self):
         response = self.solicitar(
             'post',
             '/api/notificaciones/enviar/',
             self.manipuladora,
             {
                 'titulo': 'Mensaje no permitido',
-                'mensaje': 'La manipuladora no puede enviar.',
+                'mensaje': 'La manipuladora no puede escribir al administrador.',
+                'id_destinatario': self.admin.id_usuario,
+            },
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_supervisor_puede_responder_a_manipuladora_que_le_escribio(self):
+        Notificacion.objects.create(
+            id_usuario=self.supervisor.id_usuario,
+            id_remitente=self.manipuladora.id_usuario,
+            titulo='Solicitud de apoyo',
+            mensaje='Necesito ayuda.',
+        )
+
+        destinatarios = self.solicitar(
+            'get',
+            '/api/notificaciones/destinatarios/',
+            self.supervisor,
+        )
+        self.assertEqual(destinatarios.status_code, 200)
+        ids_destinatarios = {
+            destinatario['id_usuario'] for destinatario in destinatarios.data
+        }
+        self.assertIn(self.manipuladora.id_usuario, ids_destinatarios)
+        self.assertNotIn(self.otra_manipuladora.id_usuario, ids_destinatarios)
+
+        response = self.solicitar(
+            'post',
+            '/api/notificaciones/enviar/',
+            self.supervisor,
+            {
+                'titulo': 'Respuesta del supervisor',
+                'mensaje': 'Con gusto, te apoyo.',
+                'id_destinatario': self.manipuladora.id_usuario,
+            },
+        )
+
+        self.assertEqual(response.status_code, 201, msg=str(response.data))
+        self.assertTrue(
+            Notificacion.objects.filter(
+                id_usuario=self.manipuladora.id_usuario,
+                id_remitente=self.supervisor.id_usuario,
+                titulo='Respuesta del supervisor',
+            ).exists()
+        )
+
+    def test_supervisor_no_puede_iniciar_conversacion_con_manipuladora(self):
+        response = self.solicitar(
+            'post',
+            '/api/notificaciones/enviar/',
+            self.supervisor,
+            {
+                'titulo': 'Mensaje no permitido',
+                'mensaje': 'No puede iniciar esta conversación.',
+                'id_destinatario': self.manipuladora.id_usuario,
             },
         )
 
@@ -249,3 +341,87 @@ class NotificacionApiTestCase(APITestCase):
             self.jefa,
             [self.supervisor, self.admin],
         )
+
+    def test_jefa_envia_imagen_visible_para_supervisor_y_administrador(self):
+        url_imagen = 'https://res.cloudinary.com/sirae/image/upload/test.png'
+        imagen = SimpleUploadedFile(
+            'evidencia.png',
+            b'\x89PNG\r\n\x1a\ncontenido-de-prueba',
+            content_type='image/png',
+        )
+
+        self.client.force_authenticate(user=self.jefa)
+        with patch(
+            'apps_sirae.notificaciones.api.views.cloudinary.uploader.upload',
+            return_value={'secure_url': url_imagen},
+        ) as subir_imagen:
+            response = self.client.post(
+                '/api/notificaciones/enviar/',
+                {
+                    'titulo': 'Reporte con imagen',
+                    'mensaje': 'Imagen enviada por la jefa.',
+                    'imagen': imagen,
+                },
+                format='multipart',
+            )
+
+        self.assertEqual(response.status_code, 201, msg=str(response.data))
+        self.assertEqual(response.data['cantidad_destinatarios'], 2)
+        subir_imagen.assert_called_once()
+
+        notificaciones = Notificacion.objects.filter(
+            id_remitente=self.jefa.id_usuario,
+            titulo='Reporte con imagen',
+        )
+        self.assertEqual(
+            set(notificaciones.values_list('id_usuario', flat=True)),
+            {self.supervisor.id_usuario, self.admin.id_usuario},
+        )
+        self.assertEqual(
+            set(notificaciones.values_list('imagen_url', flat=True)),
+            {url_imagen},
+        )
+
+        for destinatario in (self.supervisor, self.admin):
+            self.client.force_authenticate(user=destinatario)
+            respuesta_lista = self.client.get('/api/notificaciones/')
+
+            self.assertEqual(respuesta_lista.status_code, 200)
+            reporte = next(
+                item
+                for item in respuesta_lista.data
+                if item['titulo'] == 'Reporte con imagen'
+            )
+            self.assertEqual(reporte['imagen_url'], url_imagen)
+
+    def test_manipuladora_envia_imagen_al_supervisor(self):
+        url_imagen = 'https://res.cloudinary.com/sirae/image/upload/test.png'
+        imagen = SimpleUploadedFile(
+            'evidencia.png',
+            b'\x89PNG\r\n\x1a\ncontenido-de-prueba',
+            content_type='image/png',
+        )
+
+        self.client.force_authenticate(user=self.manipuladora)
+        with patch(
+            'apps_sirae.notificaciones.api.views.cloudinary.uploader.upload',
+            return_value={'secure_url': url_imagen},
+        ):
+            response = self.client.post(
+                '/api/notificaciones/enviar/',
+                {
+                    'titulo': 'Reporte de manipuladora',
+                    'mensaje': 'Adjunto evidencia.',
+                    'id_destinatario': self.supervisor.id_usuario,
+                    'imagen': imagen,
+                },
+                format='multipart',
+            )
+
+        self.assertEqual(response.status_code, 201, msg=str(response.data))
+        notificacion = Notificacion.objects.get(
+            id_usuario=self.supervisor.id_usuario,
+            id_remitente=self.manipuladora.id_usuario,
+            titulo='Reporte de manipuladora',
+        )
+        self.assertEqual(notificacion.imagen_url, url_imagen)
