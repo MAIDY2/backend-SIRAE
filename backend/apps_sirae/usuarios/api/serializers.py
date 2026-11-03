@@ -7,6 +7,33 @@ from apps_sirae.usuarios.models import Usuario
 from apps_sirae.roles.api.serializers import RolSerializer
 
 
+def instituciones_asignadas_del_supervisor(usuario):
+    instituciones = {}
+
+    for relacion in usuario.instituciones_asignadas.select_related('id_institucion').all():
+        institucion = relacion.id_institucion
+        if institucion:
+            instituciones[institucion.pk] = institucion
+
+    from apps_sirae.contratos_pae.models import Contrato
+    contratos = Contrato.objects.filter(id_usuario_supervisor=usuario).select_related('id_institucion')
+    for contrato in contratos:
+        institucion = contrato.id_institucion
+        if institucion:
+            instituciones[institucion.pk] = institucion
+
+    resultado = []
+    for institucion in instituciones.values():
+        sedes = list(institucion.sedes.values('id_sede', 'nombre_sede', 'codigo_dane', 'direccion'))
+        resultado.append({
+            'id_institucion': institucion.id_institucion,
+            'nombre_institucion': institucion.nombre_institucion,
+            'nit': getattr(institucion, 'nit', ''),
+            'sedes': sedes,
+        })
+    return resultado
+
+
 class UsuarioSerializer(serializers.ModelSerializer):
     rol_detalle = RolSerializer(source='rol', read_only=True)
     institucion_nombre = serializers.CharField(source='id_institucion.nombre_institucion', read_only=True)
@@ -41,22 +68,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
     def get_instituciones_supervisor(self, obj):
         try:
             if hasattr(obj, 'instituciones_asignadas'):
-                rels = obj.instituciones_asignadas.select_related('id_institucion').all()
-                if not rels.exists():
-                    return []
-                from apps_sirae.sedes.models import Sede
-                res = []
-                for r in rels:
-                    if r.id_institucion:
-                        inst = r.id_institucion
-                        sedes = list(Sede.objects.filter(id_institucion=inst).values('id_sede', 'nombre_sede'))
-                        res.append({
-                            'id_institucion': inst.id_institucion,
-                            'nombre_institucion': inst.nombre_institucion,
-                            'nit': getattr(inst, 'nit', ''),
-                            'sedes': sedes
-                        })
-                return res
+                return instituciones_asignadas_del_supervisor(obj)
         except Exception:
             pass
         return []
@@ -196,15 +208,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
         instituciones_sup = []
         if usuario.es_supervisor():
-            for rel in usuario.instituciones_asignadas.select_related('id_institucion').all():
-                inst = rel.id_institucion
-                sedes = list(inst.sedes.values('id_sede', 'nombre_sede', 'codigo_dane', 'direccion'))
-                instituciones_sup.append({
-                    'id_institucion': inst.id_institucion,
-                    'nombre_institucion': inst.nombre_institucion,
-                    'nit': inst.nit,
-                    'sedes': sedes
-                })
+            instituciones_sup = instituciones_asignadas_del_supervisor(usuario)
             if not inst_nombre and instituciones_sup:
                 inst_nombre = instituciones_sup[0]['nombre_institucion']
 
