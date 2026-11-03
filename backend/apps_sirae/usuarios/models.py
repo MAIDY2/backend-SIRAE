@@ -67,6 +67,24 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
         related_name='usuarios'
     )
 
+    id_institucion = models.ForeignKey(
+        'instituciones.Institucion',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='id_institucion',
+        related_name='usuarios'
+    )
+
+    id_sede = models.ForeignKey(
+        'sedes.Sede',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='id_sede',
+        related_name='usuarios'
+    )
+
     is_active = models.BooleanField(default=True)
 
     is_staff = models.BooleanField(default=False)
@@ -113,6 +131,14 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
                 kwargs['is_active'] = estado.strip().lower() in {'activo', 'active', 'true', '1', 'yes'}
             else:
                 kwargs['is_active'] = bool(estado)
+
+        id_inst = kwargs.pop('id_institucion', None)
+        if id_inst is not None and 'id_institucion' not in kwargs and 'id_institucion_id' not in kwargs:
+            kwargs['id_institucion_id'] = getattr(id_inst, 'id_institucion', id_inst)
+
+        id_s = kwargs.pop('id_sede', None)
+        if id_s is not None and 'id_sede' not in kwargs and 'id_sede_id' not in kwargs:
+            kwargs['id_sede_id'] = getattr(id_s, 'id_sede', id_s)
 
         super().__init__(*args, **kwargs)
 

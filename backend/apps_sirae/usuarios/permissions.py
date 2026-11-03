@@ -3,14 +3,14 @@ from rest_framework.permissions import BasePermission, SAFE_METHODS
 
 class IsAdminRole(BasePermission):
     """
-    Permiso que autoriza únicamente a usuarios con el rol de Administrador.
+    Permiso que autoriza únicamente a usuarios con el rol de Administrador o Super Administrador.
     """
     message = "Acceso restringido: Se requiere el rol de Administrador."
 
     def has_permission(self, request, view):
         if not (request.user and request.user.is_authenticated):
             return False
-        return request.user.es_administrador()
+        return request.user.es_administrador() or request.user.es_super_administrador()
 
 
 class IsSupervisorRole(BasePermission):
@@ -22,31 +22,44 @@ class IsSupervisorRole(BasePermission):
     def has_permission(self, request, view):
         if not (request.user and request.user.is_authenticated):
             return False
-        return request.user.es_supervisor()
+        return request.user.es_supervisor() or request.user.es_super_administrador()
 
 
 class IsSupervisorOrAdminRole(BasePermission):
     """
-    Permite al Supervisor gestionar la operación PAE y al Administrador supervisarla.
+    Permite al Supervisor gestionar la operación PAE, al Administrador supervisarla y al Super Administrador auditoría total.
     """
-    message = "Acceso restringido: se requiere el rol de Supervisor o Administrador."
+    message = "Acceso restringido: se requiere el rol de Supervisor, Administrador o Super Administrador."
 
     def has_permission(self, request, view):
         if not (request.user and request.user.is_authenticated):
             return False
-        return request.user.es_supervisor() or request.user.es_administrador()
+        return (
+            request.user.es_supervisor()
+            or request.user.es_administrador()
+            or request.user.es_super_administrador()
+        )
 
 
 class IsJefaOrAdminRole(BasePermission):
     """
-    Permite a la Jefa gestionar la operación de menús y al Administrador mantenerla.
+    Permite a la Jefa gestionar la operación de menús, al Administrador supervisarla/mantenerla
+    y al Super Administrador control total.
     """
-    message = "Acceso restringido: se requiere el rol de Jefa de manipuladoras o Administrador."
+    message = "Acceso restringido: se requiere el rol de Jefa de manipuladoras, Administrador o Super Administrador."
 
     def has_permission(self, request, view):
         if not (request.user and request.user.is_authenticated):
             return False
-        return request.user.es_jefa_manipuladoras() or request.user.es_administrador()
+        return (
+            request.user.es_jefa_manipuladoras()
+            or request.user.es_administrador()
+            or getattr(request.user, 'es_super_administrador', lambda: False)()
+        )
+
+
+# Alias explícito de compatibilidad
+IsJefaOrAdminOrSuperAdminRole = IsJefaOrAdminRole
 
 
 # Alias para compatibilidad
@@ -80,16 +93,23 @@ class IsManipuladoraRole(BasePermission):
 class IsAdminOrReadOnly(BasePermission):
     """
     Permiso que permite lectura (GET, HEAD, OPTIONS) a cualquier usuario autenticado,
-    pero reserva la modificación (POST, PUT, PATCH, DELETE) exclusivamente al Administrador.
+    pero reserva la modificación (POST, PUT, PATCH, DELETE) al Administrador o Super Administrador.
     """
-    message = "Solo el Administrador puede modificar estos registros."
+    message = "Solo el Administrador o Super Administrador pueden modificar estos registros."
 
     def has_permission(self, request, view):
         if not (request.user and request.user.is_authenticated):
             return False
         if request.method in SAFE_METHODS:
             return True
-        return request.user.es_administrador()
+        return (
+            request.user.es_administrador()
+            or getattr(request.user, 'es_super_administrador', lambda: False)()
+        )
+
+
+# Alias explícito de compatibilidad
+IsAdminOrSuperAdminOrReadOnly = IsAdminOrReadOnly
 
 
 class IsSuperAdminRole(BasePermission):

@@ -1,6 +1,6 @@
 from rest_framework.routers import DefaultRouter
 
-from .views import MenuApiViewSet
+from apps_sirae.menus.api.views import MenuApiViewSet
 
 
 router_menus = DefaultRouter()

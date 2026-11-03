@@ -1,5 +1,11 @@
 from rest_framework import serializers
-from ..models import FacturaCompra, DetalleFacturaCompra, InventarioCentral
+from ..models import FacturaCompra, DetalleFacturaCompra, InventarioCentral, Proveedor
+
+
+class ProveedorSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Proveedor
+        fields = '__all__'
 
 
 class DetalleFacturaCompraSerializer(serializers.ModelSerializer):

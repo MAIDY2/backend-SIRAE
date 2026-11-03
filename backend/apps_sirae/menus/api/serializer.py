@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from ..models import Menu
+from apps_sirae.menus.models import Menu
 
 
 class MenuSerializer(serializers.ModelSerializer):

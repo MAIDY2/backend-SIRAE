@@ -37,7 +37,7 @@ def sumar_al_inventario(sender, instance, created, **kwargs):
             inventario.cantidad_actual += Decimal(str(instance.cantidad or 0))
             inventario.save()
 
-            # Si es una ENTREGA realizada por el supervisor, descontar del Inventario Central
+            # Si es una ENTREGA realizada por el supervisor, descontar del Inventario Central y del Inventario Global
             if sender == Entrega:
                 inv_central = InventarioCentral.objects.filter(id_ingrediente_id=id_ing).first()
                 if inv_central:
@@ -46,6 +46,15 @@ def sumar_al_inventario(sender, instance, created, **kwargs):
                         Decimal(str(inv_central.cantidad_disponible)) - Decimal(str(instance.cantidad or 0))
                     )
                     inv_central.save(update_fields=['cantidad_disponible', 'fecha_ultima_actualizacion'])
+
+                if id_sede is not None:
+                    inv_global = Inventario.objects.filter(id_ingrediente=id_ing, id_sede__isnull=True).first()
+                    if inv_global:
+                        inv_global.cantidad_actual = max(
+                            Decimal('0.00'),
+                            Decimal(str(inv_global.cantidad_actual or 0)) - Decimal(str(instance.cantidad or 0))
+                        )
+                        inv_global.save(update_fields=['cantidad_actual'])
 
 
 # 2. Al registrar una SALIDA -> RESTAR DEL INVENTARIO
