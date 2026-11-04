@@ -1,4 +1,3 @@
-from django.db import connection
 from django.test import TestCase
 from rest_framework.test import APIClient
 from rest_framework import status
@@ -10,27 +9,6 @@ from apps_sirae.detalle_plato.models import DetallePlato
 
 
 class EndpointsSiraeTestCase(TestCase):
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        with connection.cursor() as cursor:
-            cursor.execute(
-                'CREATE TABLE entradas_inventario ('
-                'id_entrada INTEGER PRIMARY KEY, '
-                'id_ingrediente INTEGER NOT NULL, '
-                'id_usuario INTEGER NULL, '
-                'fecha DATETIME NULL, '
-                'cantidad DECIMAL NULL, '
-                'id_unidad_medida INTEGER NOT NULL, '
-                'observaciones TEXT NULL)'
-            )
-
-    @classmethod
-    def tearDownClass(cls):
-        with connection.cursor() as cursor:
-            cursor.execute('DROP TABLE entradas_inventario')
-        super().tearDownClass()
-
     def setUp(self):
         self.client = APIClient()
         self.client.force_authenticate(user=type(
