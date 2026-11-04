@@ -30,10 +30,14 @@ class InstitucionViewSet(viewsets.ModelViewSet):
                 Contrato.objects.filter(id_usuario_supervisor=user).values_list('id_institucion_id', flat=True)
             )
             ids_totales = asignadas_ids.union({cid for cid in contratos_ids if cid})
+            if getattr(user, 'id_institucion_id', None):
+                ids_totales.add(user.id_institucion_id)
+
             if ids_totales:
                 return qs.filter(id_institucion__in=ids_totales)
-            # Si aún no tiene asignadas, retorna vacío para que no vea colegios de otros supervisores
-            return Institucion.objects.none()
+
+            # Si aún no tiene asignadas manualmente, habilitar instituciones activas para no bloquear la operación
+            return qs.filter(estado='ACTIVO') if qs.filter(estado='ACTIVO').exists() else qs
 
         # Administrador regular ve su institución asignada
         if user.es_administrador() and user.id_institucion_id:
