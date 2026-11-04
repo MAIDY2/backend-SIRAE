@@ -76,6 +76,7 @@ INSTALLED_APPS = [
     "apps_sirae.entradas_inventario",
     "apps_sirae.salidas_inventario",
     "apps_sirae.facturas_compra",
+    "apps_sirae.movimientos_inventario",
     "apps_sirae.tipos_mercado",
     "apps_sirae.categorias_inventario",
     "apps_sirae.unidades_medida",
