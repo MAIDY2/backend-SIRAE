@@ -7,6 +7,47 @@ from apps_sirae.usuarios.models import Usuario
 from apps_sirae.roles.api.serializers import RolSerializer
 
 
+def instituciones_asignadas_del_supervisor(usuario):
+    if not usuario.es_supervisor():
+        return []
+
+    from apps_sirae.contratos_pae.models import Contrato
+    from apps_sirae.instituciones.models import Institucion
+
+    institucion_ids = set(
+        usuario.instituciones_asignadas.values_list('id_institucion_id', flat=True)
+    )
+    institucion_ids.update(
+        Contrato.objects.filter(
+            id_usuario_supervisor=usuario,
+            id_institucion__isnull=False,
+        ).values_list('id_institucion_id', flat=True)
+    )
+
+    instituciones = (
+        Institucion.objects.filter(pk__in=institucion_ids)
+        .prefetch_related('sedes')
+        .order_by('id_institucion')
+    )
+    return [
+        {
+            'id_institucion': institucion.id_institucion,
+            'nombre_institucion': institucion.nombre_institucion,
+            'nit': institucion.nit,
+            'sedes': [
+                {
+                    'id_sede': sede.id_sede,
+                    'nombre_sede': sede.nombre_sede,
+                    'codigo_dane': sede.codigo_dane,
+                    'direccion': sede.direccion,
+                }
+                for sede in institucion.sedes.all()
+            ],
+        }
+        for institucion in instituciones
+    ]
+
+
 class UsuarioSerializer(serializers.ModelSerializer):
     rol_detalle = RolSerializer(source='rol', read_only=True)
     institucion_nombre = serializers.CharField(source='id_institucion.nombre_institucion', read_only=True)
@@ -39,27 +80,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
         }
 
     def get_instituciones_supervisor(self, obj):
-        try:
-            if hasattr(obj, 'instituciones_asignadas'):
-                rels = obj.instituciones_asignadas.select_related('id_institucion').all()
-                if not rels.exists():
-                    return []
-                from apps_sirae.sedes.models import Sede
-                res = []
-                for r in rels:
-                    if r.id_institucion:
-                        inst = r.id_institucion
-                        sedes = list(Sede.objects.filter(id_institucion=inst).values('id_sede', 'nombre_sede'))
-                        res.append({
-                            'id_institucion': inst.id_institucion,
-                            'nombre_institucion': inst.nombre_institucion,
-                            'nit': getattr(inst, 'nit', ''),
-                            'sedes': sedes
-                        })
-                return res
-        except Exception:
-            pass
-        return []
+        return instituciones_asignadas_del_supervisor(obj)
 
     def validate(self, attrs):
                 request = self.context.get('request')
@@ -194,19 +215,9 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         inst_nombre = usuario.id_institucion.nombre_institucion if usuario.id_institucion else None
         sede_nombre = usuario.id_sede.nombre_sede if usuario.id_sede else None
 
-        instituciones_sup = []
-        if usuario.es_supervisor():
-            for rel in usuario.instituciones_asignadas.select_related('id_institucion').all():
-                inst = rel.id_institucion
-                sedes = list(inst.sedes.values('id_sede', 'nombre_sede', 'codigo_dane', 'direccion'))
-                instituciones_sup.append({
-                    'id_institucion': inst.id_institucion,
-                    'nombre_institucion': inst.nombre_institucion,
-                    'nit': inst.nit,
-                    'sedes': sedes
-                })
-            if not inst_nombre and instituciones_sup:
-                inst_nombre = instituciones_sup[0]['nombre_institucion']
+        instituciones_sup = instituciones_asignadas_del_supervisor(usuario)
+        if not inst_nombre and instituciones_sup:
+            inst_nombre = instituciones_sup[0]['nombre_institucion']
 
         return {
             'access': str(refresh.access_token),
