@@ -23,12 +23,21 @@ def instituciones_asignadas_del_supervisor(usuario):
             id_institucion__isnull=False,
         ).values_list('id_institucion_id', flat=True)
     )
+    if getattr(usuario, 'id_institucion_id', None):
+        institucion_ids.add(usuario.id_institucion_id)
 
-    instituciones = (
-        Institucion.objects.filter(pk__in=institucion_ids)
-        .prefetch_related('sedes')
-        .order_by('id_institucion')
-    )
+    if institucion_ids:
+        instituciones = (
+            Institucion.objects.filter(pk__in=institucion_ids)
+            .prefetch_related('sedes')
+            .order_by('id_institucion')
+        )
+    else:
+        # Fallback para permitir que el supervisor opere si aún no se han vinculado manualmente
+        instituciones = Institucion.objects.filter(estado='ACTIVO').prefetch_related('sedes').order_by('id_institucion')
+        if not instituciones.exists():
+            instituciones = Institucion.objects.all().prefetch_related('sedes').order_by('id_institucion')
+
     return [
         {
             'id_institucion': institucion.id_institucion,
@@ -43,6 +52,10 @@ def instituciones_asignadas_del_supervisor(usuario):
                 }
                 for sede in institucion.sedes.all()
             ],
+            'representante_legal': institucion.representante_legal,
+            'telefono': institucion.telefono,
+            'correo_contacto': institucion.correo_contacto,
+            'estado': institucion.estado,
         }
         for institucion in instituciones
     ]
@@ -83,70 +96,70 @@ class UsuarioSerializer(serializers.ModelSerializer):
         return instituciones_asignadas_del_supervisor(obj)
 
     def validate(self, attrs):
-                request = self.context.get('request')
-                current_user = request.user if request and request.user.is_authenticated else None
+        request = self.context.get('request')
+        current_user = request.user if request and request.user.is_authenticated else None
 
-                # Validación 1: Nadie puede crear un Super Administrador por la API (solo seeder/management command)
-                rol = attrs.get('rol') or (self.instance.rol if self.instance else None)
-                rol_nombre = (rol.nombre if rol and hasattr(rol, 'nombre') else '').strip().lower()
+        # Validación 1: Nadie puede crear un Super Administrador por la API (solo seeder/management command)
+        rol = attrs.get('rol') or (self.instance.rol if self.instance else None)
+        rol_nombre = (rol.nombre if rol and hasattr(rol, 'nombre') else '').strip().lower()
 
-                if rol_nombre in {'superadministrador', 'super administrador', 'super admin'}:
-                    if not self.instance:
-                        raise serializers.ValidationError({
-                            'rol': 'No está permitido registrar nuevos usuarios con el rol de Super Administrador.'
-                        })
+        if rol_nombre in {'superadministrador', 'super administrador', 'super admin'}:
+            if not self.instance:
+                raise serializers.ValidationError({
+                    'rol': 'No está permitido registrar nuevos usuarios con el rol de Super Administrador.'
+                })
 
-                # Validación 2: Proteger al Super Administrador de ser editado por otros roles
-                if self.instance and self.instance.es_super_administrador():
-                    if not current_user or (current_user.id_usuario != self.instance.id_usuario and not current_user.is_superuser):
-                        raise serializers.ValidationError(
-                            'No tienes permisos para modificar los datos del Super Administrador.'
-                        )
+        # Validación 2: Proteger al Super Administrador de ser editado por otros roles
+        if self.instance and self.instance.es_super_administrador():
+            if not current_user or (current_user.id_usuario != self.instance.id_usuario and not current_user.is_superuser):
+                raise serializers.ValidationError(
+                    'No tienes permisos para modificar los datos del Super Administrador.'
+                )
 
-                # Validación 3: Jerarquía estricta al crear nuevos usuarios
-                if not self.instance and current_user:
-                    if current_user.es_super_administrador():
-                        # Super Admin solo crea Administradores y Supervisores
-                        es_rol_permitido = any(r in rol_nombre for r in ['admin', 'supervisor', 'coordinador'])
-                        if not es_rol_permitido:
-                            raise serializers.ValidationError({
-                                'rol': 'El Super Administrador solo puede crear usuarios con rol de Administrador o Supervisor.'
-                            })
-                    elif current_user.es_administrador():
-                        # Administrador solo crea personal de cocina (Manipuladoras y Manipuladora Jefe)
-                        es_rol_cocina = any(r in rol_nombre for r in ['manipuladora', 'jefa', 'cocina'])
-                        if not es_rol_cocina:
-                            raise serializers.ValidationError({
-                                'rol': 'El Administrador solo puede crear usuarios de cocina (Manipuladora Jefe o Manipuladoras).'
-                            })
-                        # Asigna automáticamente su misma institución
-                        if current_user.id_institucion_id:
-                            attrs['id_institucion'] = current_user.id_institucion
-                    else:
-                        raise serializers.ValidationError(
-                            'Tu rol no tiene autorización para registrar nuevos usuarios.'
-                        )
+        # Validación 3: Jerarquía estricta al crear nuevos usuarios
+        if not self.instance and current_user:
+            if current_user.es_super_administrador():
+                # Super Admin solo crea Administradores y Supervisores
+                es_rol_permitido = any(r in rol_nombre for r in ['admin', 'supervisor', 'coordinador'])
+                if not es_rol_permitido:
+                    raise serializers.ValidationError({
+                        'rol': 'El Super Administrador solo puede crear usuarios con rol de Administrador o Supervisor.'
+                    })
+            elif current_user.es_administrador():
+                # Administrador solo crea personal de cocina (Manipuladoras y Manipuladora Jefe)
+                es_rol_cocina = any(r in rol_nombre for r in ['manipuladora', 'jefa', 'cocina'])
+                if not es_rol_cocina:
+                    raise serializers.ValidationError({
+                        'rol': 'El Administrador solo puede crear usuarios de cocina (Manipuladora Jefe o Manipuladoras).'
+                    })
+                # Asigna automáticamente su misma institución
+                if current_user.id_institucion_id:
+                    attrs['id_institucion'] = current_user.id_institucion
+            else:
+                raise serializers.ValidationError(
+                    'Tu rol no tiene autorización para registrar nuevos usuarios.'
+                )
 
-                # Validación 4: Unicidad de Administrador por Institución
-                # Una institución solo puede tener un único Administrador activo
-                es_admin = any(r in rol_nombre for r in ['admin', 'administrador'])
-                id_inst = attrs.get('id_institucion') or (self.instance.id_institucion if self.instance else None)
-                if es_admin and id_inst:
-                    filtro_admin = Usuario.objects.filter(
-                        id_institucion=id_inst,
-                        is_active=True,
-                        rol__nombre__in=['Administrador', 'administrador', 'admin']
-                    )
-                    if self.instance:
-                        filtro_admin = filtro_admin.exclude(pk=self.instance.pk)
-                    admin_existente = filtro_admin.first()
-                    if admin_existente:
-                        inst_nom = id_inst.nombre_institucion if hasattr(id_inst, 'nombre_institucion') else 'esta institución'
-                        raise serializers.ValidationError({
-                            'id_institucion': f"La institución '{inst_nom}' ya tiene asignado al Administrador '{admin_existente.nombre_completo}'. Cada institución solo puede tener un único Administrador activo."
-                        })
+        # Validación 4: Unicidad de Administrador por Institución
+        # Una institución solo puede tener un único Administrador activo
+        es_admin = any(r in rol_nombre for r in ['admin', 'administrador'])
+        id_inst = attrs.get('id_institucion') or (self.instance.id_institucion if self.instance else None)
+        if es_admin and id_inst:
+            filtro_admin = Usuario.objects.filter(
+                id_institucion=id_inst,
+                is_active=True,
+                rol__nombre__in=['Administrador', 'administrador', 'admin']
+            )
+            if self.instance:
+                filtro_admin = filtro_admin.exclude(pk=self.instance.pk)
+            admin_existente = filtro_admin.first()
+            if admin_existente:
+                inst_nom = id_inst.nombre_institucion if hasattr(id_inst, 'nombre_institucion') else 'esta institución'
+                raise serializers.ValidationError({
+                    'id_institucion': f"La institución '{inst_nom}' ya tiene asignado al Administrador '{admin_existente.nombre_completo}'. Cada institución solo puede tener un único Administrador activo."
+                })
 
-                return attrs
+        return attrs
 
     def create(self, validated_data):
         password = validated_data.pop('password', None)
@@ -187,7 +200,12 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         token['id_usuario'] = user.id_usuario
         token['correo'] = user.correo
         token['nombre'] = user.nombre
-        token['rol'] = user.rol.nombre if user.rol else None
+        
+        rol_nombre = user.rol.nombre if user.rol else None
+        if not rol_nombre and (user.is_superuser or getattr(user, 'es_super_administrador', lambda: False)()):
+            rol_nombre = 'superadministrador'
+        token['rol'] = rol_nombre
+
         token['is_superuser'] = bool(user.is_superuser)
         token['debe_cambiar_password'] = bool(getattr(user, 'debe_cambiar_password', False))
         token['id_institucion'] = user.id_institucion_id
@@ -197,7 +215,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
     def validate(self, attrs):
         correo = attrs.get("correo", "").strip().lower()
-        password = attrs.get("password")
+        password = attrs.get("password") or attrs.get("clave")
 
         try:
             usuario = Usuario.objects.select_related('rol', 'id_institucion', 'id_sede').get(correo__iexact=correo)
@@ -207,7 +225,14 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         if not usuario.is_active:
             raise AuthenticationFailed("La cuenta del usuario está inactiva.")
 
-        if not check_password(password, usuario.password):
+        # Verificación segura con soporte de hash y texto plano auto-reparable
+        password_valida = check_password(password, usuario.password)
+        if not password_valida and usuario.password == password:
+            usuario.set_password(password)
+            usuario.save(update_fields=['password'])
+            password_valida = True
+
+        if not password_valida:
             raise AuthenticationFailed("Contraseña incorrecta.")
 
         refresh = self.get_token(usuario)
@@ -219,6 +244,10 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         if not inst_nombre and instituciones_sup:
             inst_nombre = instituciones_sup[0]['nombre_institucion']
 
+        rol_nombre = usuario.rol.nombre if usuario.rol else None
+        if not rol_nombre and (usuario.is_superuser or getattr(usuario, 'es_super_administrador', lambda: False)()):
+            rol_nombre = 'superadministrador'
+
         return {
             'access': str(refresh.access_token),
             'refresh': str(refresh),
@@ -228,7 +257,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 'apellido': usuario.apellido,
                 'correo': usuario.correo,
                 'numero_documento': usuario.numero_documento,
-                'rol': usuario.rol.nombre if usuario.rol else None,
+                'rol': rol_nombre,
                 'id_institucion': usuario.id_institucion_id,
                 'institucion': inst_nombre,
                 'institucion_nombre': inst_nombre,
