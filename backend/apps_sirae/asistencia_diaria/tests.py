@@ -1,10 +1,19 @@
+
 from django.test import TestCase
 from rest_framework.test import APIClient
 
+from apps_sirae.grados.models import Grados
+
 
 class AsistenciaDiariaTestCase(TestCase):
+
     def setUp(self):
         self.client = APIClient()
+
+        Grados.objects.create(
+            id_grado=3,
+            nombre_grado='Grado de prueba'
+        )
 
     def autenticar(self, *, jefa=False, administrador=False, supervisor=False):
         self.client.force_authenticate(user=type(

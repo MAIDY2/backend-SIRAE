@@ -13,7 +13,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / ".env")
 
-DEBUG = os.getenv("DEBUG", "True").strip().lower() in {
+DEBUG = os.getenv("DEBUG", "False").strip().lower() in {
     "1", "true", "yes", "on"
 }
 

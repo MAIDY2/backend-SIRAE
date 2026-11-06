@@ -1,3 +1,4 @@
+
 from decimal import Decimal
 from django.db import transaction
 from rest_framework import viewsets, status
@@ -25,15 +26,28 @@ class entregasApiViewset(viewsets.ModelViewSet):
 
         # Filtro según rol autenticado
         if user and user.is_authenticated:
-            if hasattr(user, 'es_administrador') and user.es_administrador() and user.id_institucion_id:
+            if (
+                hasattr(user, 'es_administrador')
+                and user.es_administrador()
+                and user.id_institucion_id
+            ):
                 from django.db.models import Q
+
                 qs = qs.filter(
                     Q(id_institucion_id=user.id_institucion_id) |
                     Q(id_sede__id_institucion_id=user.id_institucion_id)
                 )
+
             elif hasattr(user, 'es_supervisor') and user.es_supervisor():
                 from django.db.models import Q
-                colegios_ids = list(user.instituciones_asignadas.values_list('id_institucion_id', flat=True))
+
+                colegios_ids = list(
+                    user.instituciones_asignadas.values_list(
+                        'id_institucion_id',
+                        flat=True
+                    )
+                )
+
                 qs = qs.filter(
                     Q(id_usuario_supervisor=user.id_usuario) |
                     Q(id_institucion_id__in=colegios_ids) |
@@ -47,6 +61,7 @@ class entregasApiViewset(viewsets.ModelViewSet):
         id_institucion = self.request.query_params.get('id_institucion')
         if id_institucion:
             from django.db.models import Q
+
             qs = qs.filter(
                 Q(id_institucion_id=id_institucion) |
                 Q(id_sede__id_institucion_id=id_institucion)
@@ -84,11 +99,10 @@ class entregasApiViewset(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='calcular-mercado')
     def calcular_mercado(self, request):
         """
-        Calcula la recomendación de mercado a despachar para una sede o institución
-        según la fórmula PAE:
-            Consumo Teórico = Total Cupos * Gramaje Estándar * Días
-            Sugerido Despacho = max(0, Consumo Teórico - Stock Actual en Sede)
-        Compara además con la disponibilidad en Inventario Central.
+        Calcula la recomendación de mercado para una sede o institución.
+
+        Consumo Teórico = Total Cupos * Gramaje Estándar * Días
+        Sugerido Despacho = max(0, Consumo Teórico - Stock Actual en Sede)
         """
         id_sede = request.query_params.get('id_sede')
         id_institucion = request.query_params.get('id_institucion')
@@ -101,41 +115,81 @@ class entregasApiViewset(viewsets.ModelViewSet):
             dias = 15
 
         if id_sede:
-            sedes = Sede.objects.filter(pk=id_sede).select_related('id_institucion')
+            sedes = Sede.objects.filter(
+                pk=id_sede
+            ).select_related('id_institucion')
+
             if not sedes.exists():
                 return Response(
                     {'error': f"La sede con id {id_sede} no fue encontrada."},
                     status=status.HTTP_404_NOT_FOUND
                 )
+
         elif id_institucion:
-            sedes = Sede.objects.filter(id_institucion_id=id_institucion, estado='ACTIVO').select_related('id_institucion')
+            sedes = Sede.objects.filter(
+                id_institucion_id=id_institucion,
+                estado='ACTIVO'
+            ).select_related('id_institucion')
+
             if not sedes.exists():
                 return Response(
-                    {'error': f"No se encontraron sedes activas para la institución {id_institucion}."},
+                    {
+                        'error': (
+                            f"No se encontraron sedes activas para "
+                            f"la institución {id_institucion}."
+                        )
+                    },
                     status=status.HTTP_404_NOT_FOUND
                 )
+
         else:
             return Response(
-                {'error': "Debe especificar el parámetro 'id_sede' o 'id_institucion'."},
+                {
+                    'error': (
+                        "Debe especificar el parámetro "
+                        "'id_sede' o 'id_institucion'."
+                    )
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # 1. Catálogo de gramajes vigentes agrupados por ingrediente
-        gramajes = Gramage.objects.all().select_related('id_ingrediente', 'id_unidad_medida')
+        # 1. Catálogo de gramajes agrupados por ingrediente
+        gramajes = Gramage.objects.all().select_related(
+            'id_ingrediente',
+            'id_unidad_medida'
+        )
+
         gramajes_dict = {}
+
         for g in gramajes:
             if not g.id_ingrediente:
                 continue
+
             ing_id = g.id_ingrediente.id_ingrediente
+
             if ing_id not in gramajes_dict:
-                nom_u = getattr(g.id_unidad_medida, 'nombre', getattr(g.id_unidad_medida, 'nombre_unidad', '')) if g.id_unidad_medida else ''
+                nom_u = (
+                    getattr(
+                        g.id_unidad_medida,
+                        'nombre',
+                        getattr(
+                            g.id_unidad_medida,
+                            'nombre_unidad',
+                            ''
+                        )
+                    )
+                    if g.id_unidad_medida else ''
+                )
+
                 gramajes_dict[ing_id] = {
                     'nombre_ingrediente': g.id_ingrediente.nombre_ingrediente,
                     'unidad_medida': nom_u,
-                    'cantidad_gramaje': g.cantidad_gramaje or Decimal('0.000'),
+                    'cantidad_gramaje': (
+                        g.cantidad_gramaje or Decimal('0.000')
+                    ),
                 }
 
-        # 2. Stock en Bodega Central
+        # 2. Existencias de bodega central
         inv_central_map = {
             ic.id_ingrediente_id: ic.cantidad_disponible
             for ic in InventarioCentral.objects.all()
@@ -145,33 +199,61 @@ class entregasApiViewset(viewsets.ModelViewSet):
 
         for sede in sedes:
             # Jornadas y cupos de la sede
-            sj_list = SedeJornada.objects.filter(id_sede=sede).select_related('id_jornada')
+            sj_list = SedeJornada.objects.filter(
+                id_sede=sede
+            ).select_related('id_jornada')
+
             total_cupos = 0
             detalle_jornadas = []
+
             for sj in sj_list:
                 cupos_j = sj.cupos or 0
                 total_cupos += cupos_j
-                nombre_j = sj.id_jornada.nombre_jornada if sj.id_jornada else f"Jornada #{sj.id_jornada_id}"
+
+                nombre_j = (
+                    sj.id_jornada.nombre_jornada
+                    if sj.id_jornada
+                    else f"Jornada #{sj.id_jornada_id}"
+                )
+
                 detalle_jornadas.append({
                     'id_jornada': sj.id_jornada_id,
                     'nombre_jornada': nombre_j,
                     'cupos': cupos_j,
                 })
 
-            # Stock actual en esta sede
+            # Existencias actuales de la sede
             inv_sede_map = {
                 inv.id_ingrediente: inv.cantidad_actual
                 for inv in Inventario.objects.filter(id_sede=sede)
             }
 
             sugerencias = []
-            for ing_id, g_info in gramajes_dict.items():
-                cant_gramaje = Decimal(str(g_info['cantidad_gramaje']))
-                consumo_teorico = Decimal(total_cupos) * cant_gramaje * Decimal(dias)
-                stock_sede = Decimal(str(inv_sede_map.get(ing_id, '0.000')))
-                stock_central = Decimal(str(inv_central_map.get(ing_id, '0.000')))
 
-                sugerido = max(Decimal('0.000'), consumo_teorico - stock_sede)
+            for ing_id, g_info in gramajes_dict.items():
+                cant_gramaje = Decimal(
+                    str(g_info['cantidad_gramaje'])
+                )
+
+                consumo_teorico = (
+                    Decimal(total_cupos) *
+                    cant_gramaje *
+                    Decimal(dias)
+                )
+
+                stock_sede = Decimal(
+                    str(inv_sede_map.get(ing_id, '0.000'))
+                )
+
+                stock_central = Decimal(
+                    str(inv_central_map.get(ing_id, '0.000'))
+                )
+
+                sugerido = max(
+                    Decimal('0.000'),
+                    consumo_teorico - stock_sede
+                )
+
                 disponible_central = stock_central >= sugerido
 
                 sugerencias.append({
@@ -179,14 +261,31 @@ class entregasApiViewset(viewsets.ModelViewSet):
                     'nombre_ingrediente': g_info['nombre_ingrediente'],
                     'unidad_medida': g_info['unidad_medida'],
                     'porcion_gramaje': float(cant_gramaje),
-                    'consumo_teorico_periodo': float(round(consumo_teorico, 3)),
-                    'stock_actual_sede': float(round(stock_sede, 3)),
-                    'cantidad_sugerida_despacho': float(round(sugerido, 3)),
-                    'stock_bodega_central': float(round(stock_central, 3)),
-                    'estado_bodega_central': 'SUFICIENTE' if disponible_central else 'INSUFICIENTE',
+                    'consumo_teorico_periodo': float(
+                        round(consumo_teorico, 3)
+                    ),
+                    'stock_actual_sede': float(
+                        round(stock_sede, 3)
+                    ),
+                    'cantidad_sugerida_despacho': float(
+                        round(sugerido, 3)
+                    ),
+                    'stock_bodega_central': float(
+                        round(stock_central, 3)
+                    ),
+                    'estado_bodega_central': (
+                        'SUFICIENTE'
+                        if disponible_central
+                        else 'INSUFICIENTE'
+                    ),
                 })
 
-            nom_inst = sede.id_institucion.nombre_institucion if sede.id_institucion else 'Sin institucion'
+            nom_inst = (
+                sede.id_institucion.nombre_institucion
+                if sede.id_institucion
+                else 'Sin institucion'
+            )
+
             resultados_por_sede.append({
                 'id_sede': sede.id_sede,
                 'nombre_sede': sede.nombre_sede,
@@ -198,17 +297,27 @@ class entregasApiViewset(viewsets.ModelViewSet):
             })
 
         if id_sede:
-            return Response(resultados_por_sede[0], status=status.HTTP_200_OK)
+            return Response(
+                resultados_por_sede[0],
+                status=status.HTTP_200_OK
+            )
 
-        return Response(resultados_por_sede, status=status.HTTP_200_OK)
+        return Response(
+            resultados_por_sede,
+            status=status.HTTP_200_OK
+        )
 
     @action(detail=False, methods=['post'], url_path='despacho-lote')
     def despacho_lote(self, request):
         """
-        Registra una entrega de múltiples productos a una sede en una sola transacción.
-        Actualiza el inventario de la sede y descuenta del Inventario Central automáticamente.
+        Registra entregas de múltiples productos a una sede.
+
+        La señal post_save de Entrega actualiza automáticamente
+        el inventario de la sede y descuenta del inventario central.
+        No se realiza un segundo descuento manual.
         """
         data = request.data
+
         id_sede = data.get('id_sede')
         id_tipo_mercado = data.get('id_tipo_mercado')
         fecha_entrega = data.get('fecha_entrega')
@@ -219,19 +328,33 @@ class entregasApiViewset(viewsets.ModelViewSet):
 
         if not id_sede or not id_tipo_mercado or not fecha_entrega:
             return Response(
-                {'error': "Los campos 'id_sede', 'id_tipo_mercado' y 'fecha_entrega' son obligatorios."},
+                {
+                    'error': (
+                        "Los campos 'id_sede', 'id_tipo_mercado' "
+                        "y 'fecha_entrega' son obligatorios."
+                    )
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if not isinstance(items, list) or len(items) == 0:
+        if not isinstance(items, list) or not items:
             return Response(
-                {'error': "Debe incluir al menos un producto en la lista 'items'."},
+                {
+                    'error': (
+                        "Debe incluir al menos un producto "
+                        "en la lista 'items'."
+                    )
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         sede = Sede.objects.filter(pk=id_sede).first()
+
         if not sede:
-            return Response({'error': f"La sede con id {id_sede} no existe."}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {'error': f"La sede con id {id_sede} no existe."},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
         user_id = getattr(request.user, 'id_usuario', None)
         entregas_creadas = []
@@ -245,10 +368,32 @@ class entregasApiViewset(viewsets.ModelViewSet):
                 if not id_ing or cant is None:
                     continue
 
-                inst_sede = getattr(sede, 'id_institucion', None)
-                cant_dec = Decimal(str(cant))
+                try:
+                    cant_dec = Decimal(str(cant))
+                except Exception:
+                    return Response(
+                        {
+                            'error': (
+                                f'Cantidad inválida para el '
+                                f'ingrediente {id_ing}.'
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                if not cant_dec.is_finite() or cant_dec <= 0:
+                    return Response(
+                        {
+                            'error': (
+                                f'La cantidad del ingrediente {id_ing} '
+                                'debe ser mayor que cero.'
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
                 entrega = Entrega.objects.create(
-                    id_institucion=inst_sede,
+                    id_institucion=sede.id_institucion,
                     id_sede=sede,
                     id_ingrediente=id_ing,
                     id_usuario_supervisor=user_id,
@@ -261,49 +406,82 @@ class entregasApiViewset(viewsets.ModelViewSet):
                     unidad=unidad,
                     estado='EN_TRANSITO',
                 )
+
+                # La señal post_save de Entrega actualiza los inventarios.
+                # No descontar nuevamente del inventario central.
                 entregas_creadas.append(entrega)
 
-                # Descontar de bodega central si existe
-                inv_central = InventarioCentral.objects.filter(id_ingrediente=id_ing).first()
-                if inv_central:
-                    inv_central.cantidad_disponible = max(
-                        Decimal('0.000'),
-                        inv_central.cantidad_disponible - cant_dec
-                    )
-                    inv_central.save(update_fields=['cantidad_disponible', 'fecha_ultima_actualizacion'])
+        serializer = EntregaSerializer(
+            entregas_creadas,
+            many=True
+        )
 
-        serializer = EntregaSerializer(entregas_creadas, many=True)
-        return Response({
-            'mensaje': f"Se registraron exitosamente {len(entregas_creadas)} despachos para la sede {sede.nombre_sede}.",
-            'total_items': len(entregas_creadas),
-            'despachos': serializer.data,
-        }, status=status.HTTP_201_CREATED)
+        return Response(
+            {
+                'mensaje': (
+                    f"Se registraron exitosamente "
+                    f"{len(entregas_creadas)} despachos "
+                    f"para la sede {sede.nombre_sede}."
+                ),
+                'total_items': len(entregas_creadas),
+                'despachos': serializer.data,
+            },
+            status=status.HTTP_201_CREATED
+        )
 
     @action(detail=True, methods=['post'], url_path='confirmar-recepcion')
     def confirmar_recepcion(self, request, pk=None):
         entrega = self.get_object()
 
-        if entrega.estado in {'RECIBIDA', 'CON_NOVEDAD', 'RECHAZADA'}:
+        if entrega.estado in {
+            'RECIBIDA',
+            'CON_NOVEDAD',
+            'RECHAZADA'
+        }:
             return Response(
-                {'error': f"Esta entrega ya fue procesada anteriormente con estado: {entrega.estado}."},
+                {
+                    'error': (
+                        'Esta entrega ya fue procesada anteriormente '
+                        f'con estado: {entrega.estado}.'
+                    )
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         data = request.data
-        try:
-            cant_recibida = Decimal(str(data.get('cantidad_recibida', entrega.cantidad)))
-        except Exception:
-            return Response({'error': 'cantidad_recibida debe ser un número válido.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            cant_rechazada = Decimal(str(data.get('cantidad_rechazada', '0.00')))
+            cant_recibida = Decimal(
+                str(data.get('cantidad_recibida', entrega.cantidad))
+            )
+        except Exception:
+            return Response(
+                {
+                    'error': (
+                        'cantidad_recibida debe ser un número válido.'
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            cant_rechazada = Decimal(
+                str(data.get('cantidad_rechazada', '0.00'))
+            )
         except Exception:
             cant_rechazada = Decimal('0.00')
 
-        motivo_rechazo = str(data.get('motivo_rechazo', '')).strip()
+        motivo_rechazo = str(
+            data.get('motivo_rechazo', '')
+        ).strip()
 
         if cant_recibida < 0 or cant_rechazada < 0:
-            return Response({'error': 'Las cantidades no pueden ser negativas.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {
+                    'error': 'Las cantidades no pueden ser negativas.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         if cant_recibida == 0 and cant_rechazada > 0:
             nuevo_estado = 'RECHAZADA'
@@ -313,16 +491,19 @@ class entregasApiViewset(viewsets.ModelViewSet):
             nuevo_estado = 'RECIBIDA'
 
         from django.utils import timezone
+
         with transaction.atomic():
             entrega.estado = nuevo_estado
             entrega.cantidad_recibida = cant_recibida
             entrega.cantidad_rechazada = cant_rechazada
             entrega.motivo_rechazo = motivo_rechazo
-            entrega.id_usuario_receptor = request.user if request.user.is_authenticated else None
+            entrega.id_usuario_receptor = (
+                request.user if request.user.is_authenticated else None
+            )
             entrega.fecha_recepcion = timezone.now()
             entrega.save()
 
-            # Sumar al inventario de la institución o sede
+            # Mantiene la lógica original de recepción.
             if cant_recibida > 0:
                 inv = Inventario.objects.filter(
                     id_ingrediente=entrega.id_ingrediente,
@@ -331,7 +512,7 @@ class entregasApiViewset(viewsets.ModelViewSet):
                 ).first()
 
                 if not inv:
-                    inv = Inventario.objects.create(
+                    Inventario.objects.create(
                         id_ingrediente=entrega.id_ingrediente,
                         id_institucion=entrega.id_institucion,
                         id_sede=entrega.id_sede,
@@ -340,15 +521,21 @@ class entregasApiViewset(viewsets.ModelViewSet):
                         id_unidad_medida=1
                     )
                 else:
-                    inv.cantidad_actual = (inv.cantidad_actual or Decimal('0.00')) + cant_recibida
+                    inv.cantidad_actual = (
+                        inv.cantidad_actual or Decimal('0.00')
+                    ) + cant_recibida
                     inv.save()
 
         serializer = self.get_serializer(entrega)
-        return Response({
-            'mensaje': 'Recepción confirmada exitosamente.',
-            'estado': nuevo_estado,
-            'cantidad_recibida': str(cant_recibida),
-            'cantidad_rechazada': str(cant_rechazada),
-            'motivo_rechazo': motivo_rechazo,
-            'entrega': serializer.data,
-        }, status=status.HTTP_200_OK)
+
+        return Response(
+            {
+                'mensaje': 'Recepción confirmada exitosamente.',
+                'estado': nuevo_estado,
+                'cantidad_recibida': str(cant_recibida),
+                'cantidad_rechazada': str(cant_rechazada),
+                'motivo_rechazo': motivo_rechazo,
+                'entrega': serializer.data,
+            },
+            status=status.HTTP_200_OK
+        )

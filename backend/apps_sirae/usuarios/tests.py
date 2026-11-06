@@ -8,13 +8,14 @@ from django.core import mail
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import AccessToken
 
-from apps_sirae.contratos_pae.models import Contrato
-from apps_sirae.instituciones.models import Institucion, SupervisorInstitucion
-from apps_sirae.sedes.models import Sede
 from apps_sirae.usuarios.api.password_reset import PasswordResetService
 from apps_sirae.usuarios.models import PasswordResetCode, Usuario
 from apps_sirae.roles.models import Rol
+from apps_sirae.contratos_pae.models import Contrato
+from apps_sirae.instituciones.models import Institucion
+from apps_sirae.sedes.models import Sede
 
 
 class UsuarioCompatibilityTests(TestCase):
@@ -407,24 +408,41 @@ class EmailPasswordLoginTests(TestCase):
         self.assertIn('instituciones_supervisor', usuario)
         self.assertIn('sede_nombre', usuario)
 
-    def test_login_includes_contract_institutions_without_duplicates(self):
+    def test_login_identifies_superuser_without_role_as_super_administrator(self):
+        self.user.rol = None
+        self.user.is_superuser = True
+        self.user.is_staff = True
+        self.user.save(update_fields=['rol', 'is_superuser', 'is_staff'])
+
+        response = self.client.post(
+            reverse('login'),
+            {
+                'correo': self.user.correo,
+                'password': 'secure-password-42',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['usuario']['rol'], 'Super Administrador')
+        self.assertTrue(response.data['usuario']['is_superuser'])
+        self.assertEqual(
+            AccessToken(response.data['access'])['rol'],
+            'Super Administrador',
+        )
+
+    def test_login_includes_sedes_from_supervisor_contracts(self):
         institucion = Institucion.objects.create(
-            nombre_institucion='Institución de prueba',
-            nit='900123456',
+            nombre_institucion='Institución por contrato',
+            nit='CONTRATO-LOGIN-001',
         )
-        Sede.objects.create(
+        sede = Sede.objects.create(
             id_institucion=institucion,
-            nombre_sede='Sede principal',
-            codigo_dane='123456',
-            direccion='Calle 1',
-        )
-        SupervisorInstitucion.objects.create(
-            id_supervisor=self.user,
-            id_institucion=institucion,
+            nombre_sede='Sede asignada por contrato',
         )
         Contrato.objects.create(
-            id_institucion=institucion,
             id_usuario_supervisor=self.user,
+            id_institucion=institucion,
         )
 
         response = self.client.post(
@@ -440,7 +458,7 @@ class EmailPasswordLoginTests(TestCase):
         instituciones = response.data['usuario']['instituciones_supervisor']
         self.assertEqual(len(instituciones), 1)
         self.assertEqual(instituciones[0]['id_institucion'], institucion.id_institucion)
-        self.assertEqual(instituciones[0]['sedes'][0]['nombre_sede'], 'Sede principal')
+        self.assertEqual(instituciones[0]['sedes'][0]['id_sede'], sede.id_sede)
 
     def test_login_rejects_an_incorrect_password(self):
         response = self.client.post(
