@@ -136,6 +136,7 @@ class Command(BaseCommand):
 
                 # Solo la cuenta Administrador puede entrar al panel Django.
                 usuario.is_staff = correo == "admin@sirae.com"
+                usuario.is_superuser = correo == "admin@sirae.com"
 
                 if correo in passwords:
                     usuario.set_password(passwords[correo])
