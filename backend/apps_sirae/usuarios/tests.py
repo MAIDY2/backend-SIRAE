@@ -1,3 +1,4 @@
+
 import re
 from unittest.mock import patch
 
@@ -7,10 +8,14 @@ from django.core import mail
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import AccessToken
 
 from apps_sirae.usuarios.api.password_reset import PasswordResetService
 from apps_sirae.usuarios.models import PasswordResetCode, Usuario
 from apps_sirae.roles.models import Rol
+from apps_sirae.contratos_pae.models import Contrato
+from apps_sirae.instituciones.models import Institucion
+from apps_sirae.sedes.models import Sede
 
 
 class UsuarioCompatibilityTests(TestCase):
@@ -99,7 +104,9 @@ class PasswordRecoveryApiTests(TestCase):
         EMAIL_HOST_PASSWORD='',
     )
     @patch('apps_sirae.usuarios.api.password_reset.send_mail')
-    def test_production_without_smtp_credentials_does_not_claim_email_was_sent(self, send_mail):
+    def test_production_without_smtp_credentials_does_not_claim_email_was_sent(
+        self, send_mail
+    ):
         response = self.client.post(
             reverse('recuperar-password'),
             {'correo': self.usuario.correo},
@@ -107,7 +114,10 @@ class PasswordRecoveryApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 503)
-        self.assertIn('servicio de correo no está configurado', response.data['error'])
+        self.assertIn(
+            'servicio de correo no está configurado',
+            response.data['error'],
+        )
         send_mail.assert_not_called()
         self.assertFalse(
             PasswordResetCode.objects.filter(usuario=self.usuario).exists()
@@ -118,7 +128,9 @@ class PasswordRecoveryApiTests(TestCase):
         EMAIL_BACKEND='django.core.mail.backends.console.EmailBackend',
     )
     @patch('apps_sirae.usuarios.api.password_reset.send_mail')
-    def test_production_console_backend_does_not_claim_email_was_sent(self, send_mail):
+    def test_production_console_backend_does_not_claim_email_was_sent(
+        self, send_mail
+    ):
         response = self.client.post(
             reverse('recuperar-password'),
             {'correo': self.usuario.correo},
@@ -140,7 +152,9 @@ class PasswordRecoveryApiTests(TestCase):
         PASSWORD_RESET_EXPOSE_CODE_EMAILS={'reset@example.com'},
     )
     @patch('apps_sirae.usuarios.api.password_reset.send_mail')
-    def test_production_demo_account_receives_code_without_smtp(self, send_mail):
+    def test_production_demo_account_receives_code_without_smtp(
+        self, send_mail
+    ):
         response = self.client.post(
             reverse('recuperar-password'),
             {'correo': self.usuario.correo},
@@ -160,7 +174,9 @@ class PasswordRecoveryApiTests(TestCase):
         PASSWORD_RESET_EXPOSE_CODE_EMAILS={'other@example.com'},
     )
     @patch('apps_sirae.usuarios.api.password_reset.send_mail')
-    def test_production_does_not_expose_code_for_unlisted_account(self, send_mail):
+    def test_production_does_not_expose_code_for_unlisted_account(
+        self, send_mail
+    ):
         response = self.client.post(
             reverse('recuperar-password'),
             {'correo': self.usuario.correo},
@@ -173,11 +189,13 @@ class PasswordRecoveryApiTests(TestCase):
 
     def test_confirm_recovery_changes_password_and_invalidates_token(self):
         token = PasswordResetService.generar_token(self.usuario)
+
         validation = self.client.post(
             reverse('password-reset-validar-token'),
             {'token': token},
             format='json',
         )
+
         self.assertEqual(validation.status_code, 200)
         self.assertTrue(validation.data['valido'])
 
@@ -193,18 +211,20 @@ class PasswordRecoveryApiTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.usuario.refresh_from_db()
-        self.assertTrue(check_password('new-password-123', self.usuario.password))
-        self.assertEqual(
-            self.client.post(
-                reverse('password-reset-validar-token'),
-                {'token': token},
-                format='json',
-            ).status_code,
-            400,
+        self.assertTrue(
+            check_password('new-password-123', self.usuario.password)
         )
+
+        validation_again = self.client.post(
+            reverse('password-reset-validar-token'),
+            {'token': token},
+            format='json',
+        )
+        self.assertEqual(validation_again.status_code, 400)
 
     def test_authenticated_password_change_checks_current_password(self):
         self.client.force_authenticate(user=self.usuario)
+
         response = self.client.post(
             reverse('cambiar-password'),
             {
@@ -217,7 +237,9 @@ class PasswordRecoveryApiTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.usuario.refresh_from_db()
-        self.assertTrue(check_password('another-password-123', self.usuario.password))
+        self.assertTrue(
+            check_password('another-password-123', self.usuario.password)
+        )
 
 
 class UsuarioLoginBehaviorTests(TestCase):
@@ -235,18 +257,27 @@ class UsuarioLoginBehaviorTests(TestCase):
     def test_login_accepts_email_and_password(self):
         response = self.client.post(
             reverse("login"),
-            {"correo": self.usuario.correo.upper(), "password": "Safe-Passphrase-2026!"},
+            {
+                "correo": self.usuario.correo.upper(),
+                "password": "Safe-Passphrase-2026!",
+            },
             format="json",
         )
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("access", response.data)
-        self.assertEqual(response.data["usuario"]["correo"], self.usuario.correo)
+        self.assertEqual(
+            response.data["usuario"]["correo"],
+            self.usuario.correo,
+        )
 
     def test_login_rejects_wrong_password(self):
         response = self.client.post(
             reverse("login"),
-            {"correo": self.usuario.correo, "password": "incorrect-password"},
+            {
+                "correo": self.usuario.correo,
+                "password": "incorrect-password",
+            },
             format="json",
         )
 
@@ -254,25 +285,38 @@ class UsuarioLoginBehaviorTests(TestCase):
 
 
 class UsuarioSeedCommandTests(TestCase):
-    @patch("apps_sirae.usuarios.management.commands.crear_usuario_prueba.getpass.getpass")
-    def test_seed_creates_accounts_and_does_not_reset_existing_passwords(self, get_password):
+    @patch(
+        "apps_sirae.usuarios.management.commands.crear_usuario_prueba.getpass.getpass"
+    )
+    def test_seed_creates_accounts_and_does_not_reset_existing_passwords(
+        self, get_password
+    ):
         get_password.return_value = "Unique-Safe-Passphrase-2026!"
 
         call_command("crear_usuario_prueba")
 
         self.assertEqual(Usuario.objects.count(), 4)
         self.assertEqual(get_password.call_count, 8)
+
         usuario = Usuario.objects.get(correo="admin@sirae.com")
-        self.assertTrue(usuario.check_password("Unique-Safe-Passphrase-2026!"))
+        self.assertTrue(
+            usuario.check_password("Unique-Safe-Passphrase-2026!")
+        )
 
         call_command("crear_usuario_prueba")
 
         self.assertEqual(get_password.call_count, 8)
         usuario.refresh_from_db()
-        self.assertTrue(usuario.check_password("Unique-Safe-Passphrase-2026!"))
+        self.assertTrue(
+            usuario.check_password("Unique-Safe-Passphrase-2026!")
+        )
 
-    @patch("apps_sirae.usuarios.management.commands.crear_usuario_prueba.getpass.getpass")
-    def test_seed_only_resets_existing_passwords_when_requested(self, get_password):
+    @patch(
+        "apps_sirae.usuarios.management.commands.crear_usuario_prueba.getpass.getpass"
+    )
+    def test_seed_only_resets_existing_passwords_when_requested(
+        self, get_password
+    ):
         Usuario.objects.create_user(
             correo="admin@sirae.com",
             nombre="Old",
@@ -281,12 +325,18 @@ class UsuarioSeedCommandTests(TestCase):
             tipo_documento="CC",
             numero_documento="RESET001",
         )
+
         get_password.return_value = "Replacement-Safe-Passphrase-2026!"
 
-        call_command("crear_usuario_prueba", "--reset-existing-passwords")
+        call_command(
+            "crear_usuario_prueba",
+            "--reset-existing-passwords",
+        )
 
         usuario = Usuario.objects.get(correo="admin@sirae.com")
-        self.assertTrue(usuario.check_password("Replacement-Safe-Passphrase-2026!"))
+        self.assertTrue(
+            usuario.check_password("Replacement-Safe-Passphrase-2026!")
+        )
         self.assertEqual(get_password.call_count, 8)
 
     @patch.dict(
@@ -312,7 +362,9 @@ class UsuarioSeedCommandTests(TestCase):
 class EmailPasswordLoginTests(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.role = Rol.objects.create(nombre=Rol.NombreRol.SUPERVISOR)
+        self.role = Rol.objects.create(
+            nombre=Rol.NombreRol.SUPERVISOR
+        )
         self.user = Usuario.objects.create_user(
             correo='supervisor@example.com',
             nombre='Ana',
@@ -336,19 +388,77 @@ class EmailPasswordLoginTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.data['access'])
         self.assertTrue(response.data['refresh'])
-        self.assertEqual(
-            response.data['usuario'],
+
+        usuario = response.data['usuario']
+
+        self.assertEqual(usuario['id_usuario'], self.user.id_usuario)
+        self.assertEqual(usuario['nombre'], 'Ana')
+        self.assertEqual(usuario['apellido'], 'Pérez')
+        self.assertEqual(usuario['correo'], 'supervisor@example.com')
+        self.assertEqual(usuario['numero_documento'], '123456789')
+        self.assertEqual(usuario['rol'], 'supervisor')
+        self.assertFalse(usuario['is_superuser'])
+        self.assertFalse(usuario['debe_cambiar_password'])
+
+        # El serializador puede incluir información de institución y sede.
+        self.assertIn('id_institucion', usuario)
+        self.assertIn('id_sede', usuario)
+        self.assertIn('institucion', usuario)
+        self.assertIn('institucion_nombre', usuario)
+        self.assertIn('instituciones_supervisor', usuario)
+        self.assertIn('sede_nombre', usuario)
+
+    def test_login_identifies_superuser_without_role_as_super_administrator(self):
+        self.user.rol = None
+        self.user.is_superuser = True
+        self.user.is_staff = True
+        self.user.save(update_fields=['rol', 'is_superuser', 'is_staff'])
+
+        response = self.client.post(
+            reverse('login'),
             {
-                'id_usuario': self.user.id_usuario,
-                'nombre': 'Ana',
-                'apellido': 'Pérez',
-                'correo': 'supervisor@example.com',
-                'numero_documento': '123456789',
-                'rol': 'supervisor',
-                'is_superuser': False,
-                'debe_cambiar_password': False,
+                'correo': self.user.correo,
+                'password': 'secure-password-42',
             },
+            format='json',
         )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['usuario']['rol'], 'Super Administrador')
+        self.assertTrue(response.data['usuario']['is_superuser'])
+        self.assertEqual(
+            AccessToken(response.data['access'])['rol'],
+            'Super Administrador',
+        )
+
+    def test_login_includes_sedes_from_supervisor_contracts(self):
+        institucion = Institucion.objects.create(
+            nombre_institucion='Institución por contrato',
+            nit='CONTRATO-LOGIN-001',
+        )
+        sede = Sede.objects.create(
+            id_institucion=institucion,
+            nombre_sede='Sede asignada por contrato',
+        )
+        Contrato.objects.create(
+            id_usuario_supervisor=self.user,
+            id_institucion=institucion,
+        )
+
+        response = self.client.post(
+            reverse('login'),
+            {
+                'correo': self.user.correo,
+                'password': 'secure-password-42',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        instituciones = response.data['usuario']['instituciones_supervisor']
+        self.assertEqual(len(instituciones), 1)
+        self.assertEqual(instituciones[0]['id_institucion'], institucion.id_institucion)
+        self.assertEqual(instituciones[0]['sedes'][0]['id_sede'], sede.id_sede)
 
     def test_login_rejects_an_incorrect_password(self):
         response = self.client.post(
@@ -383,10 +493,12 @@ class PasswordRecoveryCodeTests(TestCase):
 
     @override_settings(
         DEBUG=True,
-        EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend",
+        EMAIL_BACKEND='django.core.mail.backends.console.EmailBackend',
     )
     @patch("apps_sirae.usuarios.api.password_reset.send_mail")
-    def test_local_console_backend_returns_the_code_for_development(self, send_mail):
+    def test_local_console_backend_returns_the_code_for_development(
+        self, send_mail
+    ):
         response = self.client.post(
             reverse("recuperar-password"),
             {"correo": self.user.correo},
@@ -406,19 +518,26 @@ class PasswordRecoveryCodeTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         send_mail.assert_called_once()
+
         codigo = re.search(
             r"código para recuperar la contraseña es: (\d{6})",
             send_mail.call_args.kwargs["message"],
         )
         self.assertIsNotNone(codigo)
+
         recuperacion = PasswordResetCode.objects.get(usuario=self.user)
-        self.assertNotEqual(recuperacion.codigo_hash, codigo.group(1))
+        self.assertNotEqual(
+            recuperacion.codigo_hash,
+            codigo.group(1),
+        )
 
     @patch(
         "apps_sirae.usuarios.api.password_reset.send_mail",
         side_effect=OSError("mail server unavailable"),
     )
-    def test_email_failure_returns_error_and_removes_recovery_code(self, send_mail):
+    def test_email_failure_returns_error_and_removes_recovery_code(
+        self, send_mail
+    ):
         response = self.client.post(
             reverse("recuperar-password"),
             {"correo": self.user.correo},
@@ -427,16 +546,22 @@ class PasswordRecoveryCodeTests(TestCase):
 
         self.assertEqual(response.status_code, 503)
         self.assertIn("No fue posible enviar", response.data["error"])
-        self.assertFalse(PasswordResetCode.objects.filter(usuario=self.user).exists())
+        self.assertFalse(
+            PasswordResetCode.objects.filter(usuario=self.user).exists()
+        )
 
     @patch("apps_sirae.usuarios.api.password_reset.send_mail")
-    def test_unknown_email_gets_same_response_and_does_not_send_email(self, send_mail):
+    def test_unknown_email_gets_same_response_and_does_not_send_email(
+        self, send_mail
+    ):
         registered = self.client.post(
             reverse("recuperar-password"),
             {"correo": self.user.correo},
             format="json",
         )
+
         send_mail.reset_mock()
+
         unknown = self.client.post(
             reverse("recuperar-password"),
             {"correo": "unknown@example.com"},
@@ -454,6 +579,7 @@ class PasswordRecoveryCodeTests(TestCase):
             {"correo": self.user.correo},
             format="json",
         )
+
         codigo = re.search(
             r"código para recuperar la contraseña es: (\d{6})",
             send_mail.call_args.kwargs["message"],
@@ -472,8 +598,12 @@ class PasswordRecoveryCodeTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.user.refresh_from_db()
-        self.assertTrue(self.user.check_password("New-Safe-Password-2026!"))
-        self.assertFalse(PasswordResetCode.objects.filter(usuario=self.user).exists())
+        self.assertTrue(
+            self.user.check_password("New-Safe-Password-2026!")
+        )
+        self.assertFalse(
+            PasswordResetCode.objects.filter(usuario=self.user).exists()
+        )
 
     @patch("apps_sirae.usuarios.api.password_reset.send_mail")
     def test_five_wrong_codes_invalidate_the_recovery_code(self, send_mail):
@@ -496,6 +626,10 @@ class PasswordRecoveryCodeTests(TestCase):
             )
             self.assertEqual(response.status_code, 400)
 
-        self.assertFalse(PasswordResetCode.objects.filter(usuario=self.user).exists())
+        self.assertFalse(
+            PasswordResetCode.objects.filter(usuario=self.user).exists()
+        )
         self.user.refresh_from_db()
-        self.assertTrue(self.user.check_password("Original-Safe-Password-2026!"))
+        self.assertTrue(
+            self.user.check_password("Original-Safe-Password-2026!")
+        )
