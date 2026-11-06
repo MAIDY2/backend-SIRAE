@@ -1,3 +1,4 @@
+
 import getpass
 import os
 
@@ -36,8 +37,12 @@ class Command(BaseCommand):
             ("JefaManipuladoras", "Gestión de manipuladoras"),
             ("Manipuladora", "Gestión de procesos asignados"),
         ]
+
         for nombre, descripcion in roles:
-            Rol.objects.get_or_create(nombre=nombre, defaults={"descripcion": descripcion})
+            Rol.objects.get_or_create(
+                nombre=nombre,
+                defaults={"descripcion": descripcion},
+            )
 
         cuentas = [
             ("admin@sirae.com", "Administrador", "Sistema", "Administrador", "RENDER001"),
@@ -45,6 +50,7 @@ class Command(BaseCommand):
             ("jefe@sirae.com", "Jefa", "Manipuladoras", "JefaManipuladoras", "RENDER003"),
             ("manipuladora@sirae.com", "Manipuladora", "PAE", "Manipuladora", "RENDER004"),
         ]
+
         password_envs = {
             "admin@sirae.com": "SIRAE_ADMIN_PASSWORD",
             "supervisor@sirae.com": "SIRAE_SUPERVISOR_PASSWORD",
@@ -53,9 +59,16 @@ class Command(BaseCommand):
         }
 
         passwords = {}
+        usuarios_existentes = {}
+
         for correo, nombre, apellido, nombre_rol, documento in cuentas:
-            usuario = Usuario.objects.filter(correo__iexact=correo).first()
+            usuario = Usuario.objects.filter(
+                correo__iexact=correo
+            ).first()
+
             creado = usuario is None
+            usuarios_existentes[correo] = creado
+
             if usuario is None:
                 usuario = Usuario(
                     correo=correo,
@@ -68,47 +81,75 @@ class Command(BaseCommand):
                 usuario.nombre = nombre
                 usuario.apellido = apellido
 
-            configurar_password = creado or options["reset_existing_passwords"]
+            configurar_password = (
+                creado or options["reset_existing_passwords"]
+            )
+
             if configurar_password:
                 if options["non_interactive"]:
                     password_env = password_envs[correo]
                     password = os.environ.get(password_env)
+
                     if not password:
                         raise CommandError(
                             f"Falta configurar la variable secreta {password_env}."
                         )
                 else:
-                    password = getpass.getpass(f"Nueva contraseña para {correo}: ")
-                    confirmacion = getpass.getpass(f"Confirma la contraseña para {correo}: ")
+                    password = getpass.getpass(
+                        f"Nueva contraseña para {correo}: "
+                    )
+                    confirmacion = getpass.getpass(
+                        f"Confirma la contraseña para {correo}: "
+                    )
+
                     if not password or password != confirmacion:
-                        raise CommandError(f"La contraseña para {correo} está vacía o no coincide.")
+                        raise CommandError(
+                            f"La contraseña para {correo} está vacía o no coincide."
+                        )
+
                 try:
                     validate_password(password, user=usuario)
                 except ValidationError as exc:
                     raise CommandError(
-                        f"La contraseña configurada para {correo} no cumple los requisitos: {exc}"
+                        f"La contraseña configurada para {correo} "
+                        f"no cumple los requisitos: {exc}"
                     ) from exc
+
                 passwords[correo] = password
 
-        for correo, nombre, apellido, nombre_rol, documento in cuentas:
-            usuario, _ = Usuario.objects.get_or_create(
-                correo=correo,
-                defaults={
-                    "nombre": nombre,
-                    "apellido": apellido,
-                    "tipo_documento": "CC",
-                    "numero_documento": documento,
-                },
-            )
-            usuario.nombre = nombre
-            usuario.apellido = apellido
-            usuario.rol = Rol.objects.get(nombre=nombre_rol)
-            usuario.is_active = True
-            if correo in passwords:
-                usuario.set_password(passwords[correo])
+        with transaction.atomic():
+            for correo, nombre, apellido, nombre_rol, documento in cuentas:
+                usuario, _ = Usuario.objects.get_or_create(
+                    correo=correo,
+                    defaults={
+                        "nombre": nombre,
+                        "apellido": apellido,
+                        "tipo_documento": "CC",
+                        "numero_documento": documento,
+                    },
+                )
 
-            with transaction.atomic():
+                usuario.nombre = nombre
+                usuario.apellido = apellido
+                usuario.rol = Rol.objects.get(nombre=nombre_rol)
+                usuario.is_active = True
+
+                # Solo la cuenta Administrador puede entrar al panel Django.
+                usuario.is_staff = correo == "admin@sirae.com"
+
+                if correo in passwords:
+                    usuario.set_password(passwords[correo])
+
                 usuario.save()
 
-            accion = "creada" if creado else "actualizada"
-            self.stdout.write(self.style.SUCCESS(f"Cuenta {accion}: {correo} - Rol: {nombre_rol}"))
+                accion = (
+                    "creada"
+                    if usuarios_existentes[correo]
+                    else "actualizada"
+                )
+
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        f"Cuenta {accion}: {correo} - Rol: {nombre_rol}"
+                    )
+                )
