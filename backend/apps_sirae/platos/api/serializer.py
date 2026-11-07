@@ -16,4 +16,7 @@ class PlatoSerializer(serializers.ModelSerializer):
         ]
 
     def get_imagen(self, obj):
-        return obj.imagen.url if obj.imagen else None
+
+        if obj.imagen:
+            return obj.imagen.url
+        return None
