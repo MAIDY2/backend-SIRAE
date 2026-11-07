@@ -44,7 +44,9 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
+    "cloudinary_storage",
     "django.contrib.staticfiles",
+    "cloudinary",
 
     "rest_framework",
     "rest_framework_simplejwt",
@@ -227,3 +229,9 @@ EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
 
 sys.path.insert(0, str(BASE_DIR / "apps_sirae"))
 CORS_ALLOW_ALL_ORIGINS = False
+CLOUDINARY_STORAGE = {"CLOUD_NAME": os.getenv("CLOUDINARY_CLOUD_NAME"), "API_KEY": os.getenv("CLOUDINARY_API_KEY"), "API_SECRET": os.getenv("CLOUDINARY_API_SECRET")}
+STORAGES = {"default": {"BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage"}, "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"}}
+DATA_UPLOAD_MAX_MEMORY_SIZE = FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
+if not DEBUG and not all(CLOUDINARY_STORAGE.values()): raise ImproperlyConfigured("Faltan variables CLOUDINARY_*")
+if not DEBUG and not all(CLOUDINARY_STORAGE.values()): raise ImproperlyConfigured("Faltan variables CLOUDINARY_*")
+if not DEBUG and not all(CLOUDINARY_STORAGE.values()): raise ImproperlyConfigured("Faltan variables CLOUDINARY_*")
