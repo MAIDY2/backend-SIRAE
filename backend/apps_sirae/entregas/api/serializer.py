@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from apps_sirae.ingredientes.models import Ingrediente
 from apps_sirae.tipos_mercado.models import TipoMercado
+from apps_sirae.sedes.models import Sede
 
 from apps_sirae.entregas.models import Entrega
 
@@ -66,6 +67,18 @@ class EntregaSerializer(serializers.ModelSerializer):
                         attrs['id_tipo_mercado'] = tm.id_tipo_mercado
             except Ingrediente.DoesNotExist:
                 pass
+        id_sede = attrs.get('id_sede') or getattr(self.instance, 'id_sede', None)
+        id_inst = attrs.get('id_institucion') or getattr(self.instance, 'id_institucion', None)
+        if id_sede and id_inst:
+            inst_id_val = id_inst.pk if hasattr(id_inst, 'pk') else id_inst
+            sede_inst_val = getattr(id_sede, 'id_institucion_id', None)
+            if sede_inst_val is None and hasattr(id_sede, 'pk'):
+                sede_inst_val = Sede.objects.filter(pk=id_sede.pk).values_list('id_institucion_id', flat=True).first()
+            if sede_inst_val and sede_inst_val != inst_id_val:
+                raise serializers.ValidationError(
+                    {'id_sede': 'La sede seleccionada no pertenece a la institución receptora.'}
+                )
+
         return super().validate(attrs)
 
     def get_ingrediente_nombre(self, entrega):

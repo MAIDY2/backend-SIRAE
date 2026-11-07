@@ -26,17 +26,30 @@ class entregasApiViewset(viewsets.ModelViewSet):
 
         # Filtro según rol autenticado
         if user and user.is_authenticated:
-            if (
-                hasattr(user, 'es_administrador')
-                and user.es_administrador()
-                and user.id_institucion_id
-            ):
+            if hasattr(user, 'es_administrador') and user.es_administrador():
+                if not user.id_institucion_id:
+                    return qs.none()
+
                 from django.db.models import Q
 
-                qs = qs.filter(
-                    Q(id_institucion_id=user.id_institucion_id) |
-                    Q(id_sede__id_institucion_id=user.id_institucion_id)
-                )
+                # Verificar si la institución del administrador maneja sedes activas
+                tiene_sedes = Sede.objects.filter(
+                    id_institucion_id=user.id_institucion_id,
+                    estado='ACTIVO'
+                ).exists()
+
+                if tiene_sedes:
+                    # Si maneja sedes: entregas directas a la institución o a sus sedes propias
+                    qs = qs.filter(
+                        Q(id_sede__isnull=True, id_institucion_id=user.id_institucion_id) |
+                        Q(id_sede__id_institucion_id=user.id_institucion_id)
+                    )
+                else:
+                    # Institución sin sedes: únicamente entregas dirigidas a la institución sin sede asociada
+                    qs = qs.filter(
+                        id_institucion_id=user.id_institucion_id,
+                        id_sede__isnull=True
+                    )
 
             elif hasattr(user, 'es_supervisor') and user.es_supervisor():
                 from django.db.models import Q
@@ -50,7 +63,7 @@ class entregasApiViewset(viewsets.ModelViewSet):
 
                 qs = qs.filter(
                     Q(id_usuario_supervisor=user.id_usuario) |
-                    Q(id_institucion_id__in=colegios_ids) |
+                    Q(id_institucion_id__in=colegios_ids, id_sede__isnull=True) |
                     Q(id_sede__id_institucion_id__in=colegios_ids)
                 )
 
