@@ -3,7 +3,10 @@ import sys
 from pathlib import Path
 from datetime import timedelta
 
-import cloudinary
+try:
+    import cloudinary
+except ImportError:
+    cloudinary = None
 import dj_database_url
 from dotenv import load_dotenv
 from django.core.exceptions import ImproperlyConfigured
@@ -15,6 +18,30 @@ load_dotenv(BASE_DIR / ".env")
 
 DEBUG = os.getenv("DEBUG", "False").strip().lower() in {
     "1", "true", "yes", "on"
+}
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "console": {
+            "format": "{levelname} {name}: {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "console",
+        },
+    },
+    "loggers": {
+        "django.request": {
+            "handlers": ["console"],
+            "level": "ERROR",
+            "propagate": False,
+        },
+    },
 }
 
 SECRET_KEY = os.getenv("SECRET_KEY", "").strip()
@@ -133,7 +160,16 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+if 'test' in sys.argv:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': ':memory:',
+        }
+    }
+    DATABASE_URL = ''
+else:
+    DATABASE_URL = os.getenv('DATABASE_URL', '').strip()
 
 if DATABASE_URL:
     DATABASES = {
@@ -316,7 +352,8 @@ SWAGGER_SETTINGS = {
     "USE_SESSION_AUTH": False,
 }
 
-cloudinary.config(
+if cloudinary:
+    cloudinary.config(
     cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME", "tu_cloud_name"),
     api_key=os.getenv("CLOUDINARY_API_KEY", "tu_api_key"),
     api_secret=os.getenv("CLOUDINARY_API_SECRET", "tu_api_secret"),
