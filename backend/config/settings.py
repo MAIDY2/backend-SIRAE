@@ -20,6 +20,23 @@ DEBUG = os.getenv("DEBUG", "False").strip().lower() in {
     "1", "true", "yes", "on"
 }
 
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+        },
+    },
+    "loggers": {
+        "django.request": {
+            "handlers": ["console"],
+            "level": "ERROR",
+            "propagate": False,
+        },
+    },
+}
+
 SECRET_KEY = os.getenv("SECRET_KEY", "").strip()
 
 if not SECRET_KEY:
