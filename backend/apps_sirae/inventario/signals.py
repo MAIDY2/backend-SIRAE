@@ -24,18 +24,50 @@ def sumar_al_inventario(sender, instance, created, **kwargs):
                 else instance.id_ingrediente
             )
             id_sede = getattr(instance, 'id_sede', None)
+            sede_obj = id_sede if hasattr(id_sede, 'id_sede') else None
+            sede_id = sede_obj.id_sede if sede_obj else id_sede
 
-            inventario, _ = Inventario.objects.get_or_create(
-                id_ingrediente=id_ing,
-                id_sede=id_sede,
-                defaults={
-                    'cantidad_actual': Decimal('0.00'),
-                    'stock_minimo': Decimal('0.00'),
-                    'id_unidad_medida': getattr(instance, 'id_unidad_medida', 1)
-                }
-            )
-            inventario.cantidad_actual += Decimal(str(instance.cantidad or 0))
-            inventario.save()
+            id_inst = getattr(instance, 'id_institucion', None)
+            if not id_inst and sede_obj and getattr(sede_obj, 'id_institucion', None):
+                id_inst = sede_obj.id_institucion
+
+            cant = Decimal(str(instance.cantidad or 0))
+
+            filtro = {'id_ingrediente': id_ing}
+            if sede_id is not None:
+                filtro['id_sede_id'] = sede_id
+            else:
+                filtro['id_sede__isnull'] = True
+
+            # Buscar si ya existe registro para este ingrediente y sede
+            registros = list(Inventario.objects.filter(**filtro).order_by('id_inventario'))
+
+            if registros:
+                inventario = registros[0]
+                inventario.cantidad_actual = (inventario.cantidad_actual or Decimal('0.00')) + cant
+                if id_inst and not inventario.id_institucion_id:
+                    inventario.id_institucion = id_inst
+                inventario.save()
+
+                # Consolidar duplicados previos si existían
+                if len(registros) > 1:
+                    for dup in registros[1:]:
+                        inventario.cantidad_actual += (dup.cantidad_actual or Decimal('0.00'))
+                        dup.delete()
+                    inventario.save()
+            else:
+                inventario = Inventario.objects.create(
+                    id_ingrediente=id_ing,
+                    id_sede_id=sede_id,
+                    id_institucion=id_inst,
+                    cantidad_actual=cant,
+                    stock_minimo=Decimal('0.00'),
+                    id_unidad_medida=(
+                        getattr(instance, 'id_unidad_medida_id', None)
+                        or getattr(instance, 'id_unidad_medida', 1)
+                        or 1
+                    )
+                )
 
             # Si es una ENTREGA realizada por el supervisor, descontar del Inventario Central y del Inventario Global
             if sender == Entrega:
@@ -43,16 +75,16 @@ def sumar_al_inventario(sender, instance, created, **kwargs):
                 if inv_central:
                     inv_central.cantidad_disponible = max(
                         Decimal('0.000'),
-                        Decimal(str(inv_central.cantidad_disponible)) - Decimal(str(instance.cantidad or 0))
+                        Decimal(str(inv_central.cantidad_disponible)) - cant
                     )
                     inv_central.save(update_fields=['cantidad_disponible', 'fecha_ultima_actualizacion'])
 
-                if id_sede is not None:
+                if sede_id is not None:
                     inv_global = Inventario.objects.filter(id_ingrediente=id_ing, id_sede__isnull=True).first()
                     if inv_global:
                         inv_global.cantidad_actual = max(
                             Decimal('0.00'),
-                            Decimal(str(inv_global.cantidad_actual or 0)) - Decimal(str(instance.cantidad or 0))
+                            Decimal(str(inv_global.cantidad_actual or 0)) - cant
                         )
                         inv_global.save(update_fields=['cantidad_actual'])
 
@@ -67,8 +99,20 @@ def restar_del_inventario(sender, instance, created, **kwargs):
                 if hasattr(instance.id_ingrediente, 'id_ingrediente')
                 else instance.id_ingrediente
             )
+            id_sede = getattr(instance, 'id_sede', None)
+            sede_id = id_sede.id_sede if hasattr(id_sede, 'id_sede') else id_sede
 
-            inventario = Inventario.objects.filter(id_ingrediente=id_ing).first()
+            filtro = {'id_ingrediente': id_ing}
+            if sede_id is not None:
+                filtro['id_sede_id'] = sede_id
+
+            inventario = Inventario.objects.filter(**filtro).first()
+            if not inventario and sede_id is not None:
+                inventario = Inventario.objects.filter(id_ingrediente=id_ing).first()
+
             if inventario:
-                inventario.cantidad_actual -= Decimal(str(instance.cantidad or 0))
-                inventario.save()
+                inventario.cantidad_actual = max(
+                    Decimal('0.00'),
+                    (inventario.cantidad_actual or Decimal('0.00')) - Decimal(str(instance.cantidad or 0))
+                )
+                inventario.save()

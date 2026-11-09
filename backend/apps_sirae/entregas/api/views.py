@@ -503,28 +503,38 @@ class entregasApiViewset(viewsets.ModelViewSet):
             entrega.fecha_recepcion = timezone.now()
             entrega.save()
 
-            # Mantiene la lógica original de recepción.
-            if cant_recibida > 0:
-                inv = Inventario.objects.filter(
-                    id_ingrediente=entrega.id_ingrediente,
-                    id_institucion=entrega.id_institucion,
-                    id_sede=entrega.id_sede
-                ).first()
+            # Ajuste de inventario en recepción consolidada sin duplicar registros
+            sede_id = getattr(entrega, 'id_sede_id', None) or (entrega.id_sede.id_sede if hasattr(entrega.id_sede, 'id_sede') else entrega.id_sede)
+            filtro_inv = {'id_ingrediente': entrega.id_ingrediente}
+            if sede_id is not None:
+                filtro_inv['id_sede_id'] = sede_id
+            else:
+                filtro_inv['id_sede__isnull'] = True
 
-                if not inv:
+            registros = list(Inventario.objects.filter(**filtro_inv).order_by('id_inventario'))
+            if registros:
+                inv = registros[0]
+                if len(registros) > 1:
+                    for dup in registros[1:]:
+                        inv.cantidad_actual = (inv.cantidad_actual or Decimal('0.00')) + (dup.cantidad_actual or Decimal('0.00'))
+                        dup.delete()
+                    inv.save()
+
+                # Si se rechazó producto, descontar la diferencia rechazada de la cantidad pre-cargada
+                diferencia_rechazada = Decimal(str(entrega.cantidad or 0)) - cant_recibida
+                if diferencia_rechazada > 0:
+                    inv.cantidad_actual = max(Decimal('0.00'), (inv.cantidad_actual or Decimal('0.00')) - diferencia_rechazada)
+                    inv.save()
+            else:
+                if cant_recibida > 0:
                     Inventario.objects.create(
                         id_ingrediente=entrega.id_ingrediente,
                         id_institucion=entrega.id_institucion,
-                        id_sede=entrega.id_sede,
+                        id_sede_id=sede_id,
                         cantidad_actual=cant_recibida,
                         stock_minimo=Decimal('0.00'),
                         id_unidad_medida=1
                     )
-                else:
-                    inv.cantidad_actual = (
-                        inv.cantidad_actual or Decimal('0.00')
-                    ) + cant_recibida
-                    inv.save()
 
         serializer = self.get_serializer(entrega)
 
