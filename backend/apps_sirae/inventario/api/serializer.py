@@ -16,6 +16,7 @@ class InventarioSerializer(serializers.ModelSerializer):
             'id_inventario',
             'id_sede',
             'sede_nombre',
+            'id_institucion',
             'id_ingrediente',
             'ingrediente_nombre',
             'categoria_nombre',

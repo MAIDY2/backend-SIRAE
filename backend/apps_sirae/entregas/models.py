@@ -52,6 +52,7 @@ class Entrega(models.Model):
         related_name='entregas_recibidas'
     )
     fecha_recepcion = models.DateTimeField(null=True, blank=True)
+    inventario_preacreditado = models.BooleanField(default=False)
 
     class Meta:
         db_table = 'entregas'

@@ -169,5 +169,143 @@ class EntregaTestCase(TestCase):
         self.assertEqual(inv_c.cantidad_disponible, Decimal('70.000'))
 
         # Verificar que el Inventario de la sede tiene 30
-        inv_sede = Inventario.objects.get(id_sede=sede, id_ingrediente=self.ingrediente.id_ingrediente)
-        self.assertEqual(inv_sede.cantidad_actual, Decimal('30.000'))
+        self.assertFalse(
+            Inventario.objects.filter(
+                id_sede=sede,
+                id_ingrediente=self.ingrediente.id_ingrediente
+            ).exists()
+        )
+
+    def test_confirm_reception_adds_to_institution_inventory(self):
+        from decimal import Decimal
+        from apps_sirae.instituciones.models import Institucion
+        from apps_sirae.inventario.models import Inventario
+
+        institucion = Institucion.objects.create(
+            nombre_institucion='Institución receptora',
+            nit='900123456'
+        )
+        otra_institucion = Institucion.objects.create(
+            nombre_institucion='Otra institución',
+            nit='900654321'
+        )
+        Inventario.objects.create(
+            id_ingrediente=self.ingrediente.id_ingrediente,
+            id_institucion=institucion,
+            cantidad_actual=Decimal('15.00'),
+            stock_minimo=Decimal('0.00'),
+            id_unidad_medida=1
+        )
+        Inventario.objects.create(
+            id_ingrediente=self.ingrediente.id_ingrediente,
+            id_institucion=otra_institucion,
+            cantidad_actual=Decimal('40.00'),
+            stock_minimo=Decimal('0.00'),
+            id_unidad_medida=1
+        )
+        entrega = Entrega.objects.create(
+            id_institucion=institucion,
+            id_ingrediente=self.ingrediente.id_ingrediente,
+            id_usuario_supervisor=17,
+            id_tipo_mercado=self.tipo_mercado.id_tipo_mercado,
+            fecha_entrega='2026-11-08',
+            fecha_vencimiento='2027-02-06',
+            cantidad=Decimal('10.00'),
+            estado='EN_TRANSITO'
+        )
+        administrador = Usuario.objects.create(
+            correo='admin-recepcion@example.com',
+            nombre='Admin',
+            apellido='Receptor',
+            tipo_documento='CC',
+            numero_documento='987654321',
+            rol=Rol.objects.create(nombre=Rol.NombreRol.ADMINISTRADOR),
+            id_institucion=institucion
+        )
+        self.client.force_authenticate(user=administrador)
+
+        response = self.client.post(
+            f'/api/entregas/{entrega.id_entrega}/confirmar-recepcion/',
+            {
+                'cantidad_recibida': '8.00',
+                'cantidad_rechazada': '2.00',
+                'motivo_rechazo': 'Producto dañado',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            Inventario.objects.get(
+                id_ingrediente=self.ingrediente.id_ingrediente,
+                id_institucion=institucion,
+                id_sede__isnull=True
+            ).cantidad_actual,
+            Decimal('23.00')
+        )
+        self.assertEqual(
+            Inventario.objects.get(
+                id_ingrediente=self.ingrediente.id_ingrediente,
+                id_institucion=otra_institucion,
+                id_sede__isnull=True
+            ).cantidad_actual,
+            Decimal('40.00')
+        )
+
+    def test_confirm_legacy_precredited_delivery_only_removes_rejected_amount(self):
+        from decimal import Decimal
+        from apps_sirae.instituciones.models import Institucion
+        from apps_sirae.inventario.models import Inventario
+
+        institucion = Institucion.objects.create(
+            nombre_institucion='Institución histórica',
+            nit='900111222'
+        )
+        Inventario.objects.create(
+            id_ingrediente=self.ingrediente.id_ingrediente,
+            id_institucion=institucion,
+            cantidad_actual=Decimal('25.00'),
+            stock_minimo=Decimal('0.00'),
+            id_unidad_medida=1
+        )
+        entrega = Entrega.objects.create(
+            id_institucion=institucion,
+            id_ingrediente=self.ingrediente.id_ingrediente,
+            id_usuario_supervisor=17,
+            id_tipo_mercado=self.tipo_mercado.id_tipo_mercado,
+            fecha_entrega='2026-11-08',
+            fecha_vencimiento='2027-02-06',
+            cantidad=Decimal('10.00'),
+            estado='EN_TRANSITO',
+            inventario_preacreditado=True
+        )
+        administrador = Usuario.objects.create(
+            correo='admin-historico@example.com',
+            nombre='Admin',
+            apellido='Receptor',
+            tipo_documento='CC',
+            numero_documento='987654322',
+            rol=Rol.objects.create(nombre=Rol.NombreRol.ADMINISTRADOR),
+            id_institucion=institucion
+        )
+        self.client.force_authenticate(user=administrador)
+
+        response = self.client.post(
+            f'/api/entregas/{entrega.id_entrega}/confirmar-recepcion/',
+            {
+                'cantidad_recibida': '8.00',
+                'cantidad_rechazada': '2.00',
+                'motivo_rechazo': 'Producto dañado',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            Inventario.objects.get(
+                id_ingrediente=self.ingrediente.id_ingrediente,
+                id_institucion=institucion,
+                id_sede__isnull=True
+            ).cantidad_actual,
+            Decimal('23.00')
+        )
