@@ -14,25 +14,34 @@ class InventarioApiViewSet(ModelViewSet):
     queryset = Inventario.objects.all().order_by('id_inventario')
 
     def get_queryset(self):
-        # Consolidar duplicados para que la lista siempre muestre un solo registro acumulado por ingrediente y sede
         self._consolidar_duplicados_existentes()
         queryset = Inventario.objects.all().order_by('id_inventario')
         sede_id = self.request.query_params.get('id_sede') or self.request.query_params.get('sede')
+        institucion_id = self.request.query_params.get('id_institucion')
         if sede_id:
             queryset = queryset.filter(id_sede=sede_id)
+        if institucion_id:
+            queryset = queryset.filter(id_institucion_id=institucion_id)
         return queryset
 
     def _consolidar_duplicados_existentes(self):
         try:
             duplicados = (
-                Inventario.objects.values('id_ingrediente', 'id_sede')
+                Inventario.objects.values(
+                    'id_ingrediente', 'id_institucion_id', 'id_sede'
+                )
                 .annotate(total=Count('id_inventario'))
                 .filter(total__gt=1)
             )
             for dup in duplicados:
                 ing_id = dup['id_ingrediente']
+                inst_id = dup['id_institucion_id']
                 s_id = dup['id_sede']
                 filtro = {'id_ingrediente': ing_id}
+                if inst_id is not None:
+                    filtro['id_institucion_id'] = inst_id
+                else:
+                    filtro['id_institucion__isnull'] = True
                 if s_id is not None:
                     filtro['id_sede_id'] = s_id
                 else:
@@ -57,13 +66,17 @@ class InventarioApiViewSet(ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         id_ingrediente = serializer.validated_data.get('id_ingrediente')
+        id_institucion = serializer.validated_data.get('id_institucion')
         id_sede = serializer.validated_data.get('id_sede')
         cantidad = Decimal(str(serializer.validated_data.get('cantidad_actual') or 0))
         stock_minimo = serializer.validated_data.get('stock_minimo')
         id_unidad_medida = serializer.validated_data.get('id_unidad_medida')
 
-        # Buscar si ya existe este ingrediente para esta sede en el inventario
         filtro = {'id_ingrediente': id_ingrediente}
+        if id_institucion is not None:
+            filtro['id_institucion'] = id_institucion
+        else:
+            filtro['id_institucion__isnull'] = True
         if id_sede is not None:
             filtro['id_sede'] = id_sede
         else:
@@ -92,7 +105,6 @@ class InventarioApiViewSet(ModelViewSet):
             response_serializer = self.get_serializer(inventario_existente)
             return Response(response_serializer.data, status=status.HTTP_200_OK)
 
-        # Si no existe, creamos el primer registro para este ingrediente en esta sede
         self.perform_create(serializer)
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
