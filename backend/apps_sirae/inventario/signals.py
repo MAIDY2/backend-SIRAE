@@ -3,18 +3,15 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.db import transaction
 
-# Importaciones de los modelos con sus nombres exactos
 from apps_sirae.inventario.models import Inventario
-from apps_sirae.entradas_inventario.models import EntradaInventario
-from apps_sirae.salidas_inventario.models import SalidaInventario
-from apps_sirae.entregas.models import Entrega  
+from apps_sirae.entregas.models import Entrega
 from apps_sirae.facturas_compra.models import InventarioCentral
 
 
-# 1. Al registrar una ENTRADA o ENTREGA -> SUMAR AL INVENTARIO DE LA SEDE
-@receiver(post_save, sender=EntradaInventario)
+# Las entradas y salidas ajustan inventario en sus vistas; solo las entregas
+# necesitan este ajuste al crearse.
 @receiver(post_save, sender=Entrega)
-def sumar_al_inventario(sender, instance, created, **kwargs):
+def sumar_entrega_al_inventario(sender, instance, created, **kwargs):
     if created:
         with transaction.atomic():
             # Soporta si id_ingrediente es un IntegerField o una ForeignKey
@@ -87,32 +84,3 @@ def sumar_al_inventario(sender, instance, created, **kwargs):
                             Decimal(str(inv_global.cantidad_actual or 0)) - cant
                         )
                         inv_global.save(update_fields=['cantidad_actual'])
-
-
-# 2. Al registrar una SALIDA -> RESTAR DEL INVENTARIO
-@receiver(post_save, sender=SalidaInventario)
-def restar_del_inventario(sender, instance, created, **kwargs):
-    if created:
-        with transaction.atomic():
-            id_ing = (
-                instance.id_ingrediente.id_ingrediente
-                if hasattr(instance.id_ingrediente, 'id_ingrediente')
-                else instance.id_ingrediente
-            )
-            id_sede = getattr(instance, 'id_sede', None)
-            sede_id = id_sede.id_sede if hasattr(id_sede, 'id_sede') else id_sede
-
-            filtro = {'id_ingrediente': id_ing}
-            if sede_id is not None:
-                filtro['id_sede_id'] = sede_id
-
-            inventario = Inventario.objects.filter(**filtro).first()
-            if not inventario and sede_id is not None:
-                inventario = Inventario.objects.filter(id_ingrediente=id_ing).first()
-
-            if inventario:
-                inventario.cantidad_actual = max(
-                    Decimal('0.00'),
-                    (inventario.cantidad_actual or Decimal('0.00')) - Decimal(str(instance.cantidad or 0))
-                )
-                inventario.save()
