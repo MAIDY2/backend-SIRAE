@@ -73,11 +73,16 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    # Cloudinary Apps
+    "cloudinary_storage",
+    "cloudinary",
+    # Rest Framework & Third-party
     "rest_framework",
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
     "drf_yasg",
     "corsheaders",
+    # Aplicaciones SIRAE
     "apps_sirae.roles",
     "apps_sirae.usuarios",
     "apps_sirae.instituciones",
@@ -219,8 +224,9 @@ USE_TZ = True
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
+# Configuración de Cloudinary para almacenamiento multimedia persistente
 MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
+DEFAULT_FILE_STORAGE = "cloudinary_storage.storage.MediaCloudinaryStorage"
 
 BREVO_API_KEY = os.getenv("BREVO_API_KEY", "").strip()
 
@@ -293,6 +299,8 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
     ),
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 100,
 }
 
 CORS_ALLOW_ALL_ORIGINS = os.getenv(
