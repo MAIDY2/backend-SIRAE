@@ -3,7 +3,10 @@ import sys
 from pathlib import Path
 from datetime import timedelta
 
-import cloudinary
+try:
+    import cloudinary
+except ImportError:
+    cloudinary = None
 import dj_database_url
 from dotenv import load_dotenv
 from django.core.exceptions import ImproperlyConfigured
@@ -15,6 +18,23 @@ load_dotenv(BASE_DIR / ".env")
 
 DEBUG = os.getenv("DEBUG", "False").strip().lower() in {
     "1", "true", "yes", "on"
+}
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+        },
+    },
+    "loggers": {
+        "django.request": {
+            "handlers": ["console"],
+            "level": "ERROR",
+            "propagate": False,
+        },
+    },
 }
 
 SECRET_KEY = os.getenv("SECRET_KEY", "").strip()
@@ -53,11 +73,16 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    # Cloudinary Apps
+    "cloudinary_storage",
+    "cloudinary",
+    # Rest Framework & Third-party
     "rest_framework",
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
     "drf_yasg",
     "corsheaders",
+    # Aplicaciones SIRAE
     "apps_sirae.roles",
     "apps_sirae.usuarios",
     "apps_sirae.instituciones",
@@ -133,7 +158,16 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+if 'test' in sys.argv:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': ':memory:',
+        }
+    }
+    DATABASE_URL = ''
+else:
+    DATABASE_URL = os.getenv('DATABASE_URL', '').strip()
 
 if DATABASE_URL:
     DATABASES = {
@@ -190,8 +224,9 @@ USE_TZ = True
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
+# Configuración de Cloudinary para almacenamiento multimedia persistente
 MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
+DEFAULT_FILE_STORAGE = "cloudinary_storage.storage.MediaCloudinaryStorage"
 
 BREVO_API_KEY = os.getenv("BREVO_API_KEY", "").strip()
 
@@ -237,7 +272,7 @@ EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
 
 FRONTEND_URL = os.getenv(
     "FRONTEND_URL",
-    "http://localhost:5173",
+    "http://localhost:4200",
 )
 
 PASSWORD_RESET_EXPOSE_CODE = (
@@ -264,6 +299,8 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
     ),
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 100,
 }
 
 CORS_ALLOW_ALL_ORIGINS = os.getenv(
@@ -316,7 +353,8 @@ SWAGGER_SETTINGS = {
     "USE_SESSION_AUTH": False,
 }
 
-cloudinary.config(
+if cloudinary:
+    cloudinary.config(
     cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME", "tu_cloud_name"),
     api_key=os.getenv("CLOUDINARY_API_KEY", "tu_api_key"),
     api_secret=os.getenv("CLOUDINARY_API_SECRET", "tu_api_secret"),

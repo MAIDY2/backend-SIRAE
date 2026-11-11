@@ -1,4 +1,3 @@
-
 from django.urls import include, path
 
 from apps_sirae.ia_sugerencias.views import sugerencias_recetas_ia
@@ -62,6 +61,16 @@ urlpatterns = [
         'auth/confirmar-recuperacion-password/',
         ConfirmarCodigoRecuperacionPasswordView.as_view(),
         name='confirmar-recuperacion-password',
+    ),
+    path(
+        'auth/password-reset/',
+        SolicitarRecuperacionPasswordView.as_view(),
+        name='password-reset',
+    ),
+    path(
+        'auth/password-reset/solicitar/',
+        SolicitarRecuperacionPasswordView.as_view(),
+        name='password-reset-solicitar',
     ),
     path(
         'auth/password-reset/validar-token/',

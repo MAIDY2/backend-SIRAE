@@ -14,8 +14,7 @@ from apps_sirae.receta_componente.models import RecetaComponente
 from apps_sirae.unidades_medida.models import UnidadMedida
 
 
-# Cada preparación indica los ingredientes que necesita.
-# Solo se ofrece cuando todos están disponibles.
+
 RECETAS = [
     {
         "nombre": "Arroz con lentejas y zanahoria",

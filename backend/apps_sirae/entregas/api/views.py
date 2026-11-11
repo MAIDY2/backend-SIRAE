@@ -11,6 +11,7 @@ from apps_sirae.usuarios.permissions import IsSupervisorOrAdminRole
 from apps_sirae.sedes.models import Sede
 from apps_sirae.sede_jornada.models import SedeJornada
 from apps_sirae.gramage.models import Gramage
+from apps_sirae.ingredientes.models import Ingrediente
 from apps_sirae.inventario.models import Inventario
 from apps_sirae.facturas_compra.models import InventarioCentral
 
@@ -506,6 +507,33 @@ class entregasApiViewset(viewsets.ModelViewSet):
         from django.utils import timezone
 
         with transaction.atomic():
+            entrega = Entrega.objects.select_for_update().get(pk=entrega.pk)
+            if entrega.estado in {
+                'RECIBIDA',
+                'CON_NOVEDAD',
+                'RECHAZADA'
+            }:
+                return Response(
+                    {
+                        'error': (
+                            'Esta entrega ya fue procesada anteriormente '
+                            f'con estado: {entrega.estado}.'
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if cant_recibida + cant_rechazada > Decimal(str(entrega.cantidad)):
+                return Response(
+                    {
+                        'error': (
+                            'La cantidad recibida y rechazada no puede '
+                            'superar la cantidad despachada.'
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
             entrega.estado = nuevo_estado
             entrega.cantidad_recibida = cant_recibida
             entrega.cantidad_rechazada = cant_rechazada
@@ -514,30 +542,67 @@ class entregasApiViewset(viewsets.ModelViewSet):
                 request.user if request.user.is_authenticated else None
             )
             entrega.fecha_recepcion = timezone.now()
-            entrega.save()
-
-            # Mantiene la lógica original de recepción.
-            if cant_recibida > 0:
-                inv = Inventario.objects.filter(
-                    id_ingrediente=entrega.id_ingrediente,
-                    id_institucion=entrega.id_institucion,
-                    id_sede=entrega.id_sede
+            sede_id = entrega.id_sede_id
+            institucion_id = entrega.id_institucion_id
+            if institucion_id is None and sede_id is not None:
+                institucion_id = Sede.objects.filter(pk=sede_id).values_list(
+                    'id_institucion_id', flat=True
                 ).first()
 
-                if not inv:
-                    Inventario.objects.create(
-                        id_ingrediente=entrega.id_ingrediente,
-                        id_institucion=entrega.id_institucion,
-                        id_sede=entrega.id_sede,
-                        cantidad_actual=cant_recibida,
-                        stock_minimo=Decimal('0.00'),
-                        id_unidad_medida=1
-                    )
+            filtro_inv = {'id_ingrediente': entrega.id_ingrediente}
+            if sede_id is not None:
+                filtro_inv['id_sede_id'] = sede_id
+            else:
+                filtro_inv['id_sede__isnull'] = True
+
+            if not entrega.inventario_preacreditado:
+                if institucion_id is not None:
+                    filtro_inv['id_institucion_id'] = institucion_id
+                else:
+                    filtro_inv['id_institucion__isnull'] = True
+
+            registros = list(
+                Inventario.objects.select_for_update()
+                .filter(**filtro_inv)
+                .order_by('id_inventario')
+            )
+            if registros:
+                inv = registros[0]
+                if len(registros) > 1:
+                    for dup in registros[1:]:
+                        inv.cantidad_actual = (inv.cantidad_actual or Decimal('0.00')) + (dup.cantidad_actual or Decimal('0.00'))
+                        dup.delete()
+                    inv.save()
+
+                if entrega.inventario_preacreditado:
+                    diferencia_rechazada = Decimal(str(entrega.cantidad or 0)) - cant_recibida
+                    if diferencia_rechazada > 0:
+                        inv.cantidad_actual = max(
+                            Decimal('0.00'),
+                            (inv.cantidad_actual or Decimal('0.00')) - diferencia_rechazada
+                        )
                 else:
                     inv.cantidad_actual = (
-                        inv.cantidad_actual or Decimal('0.00')
-                    ) + cant_recibida
+                        Decimal(str(inv.cantidad_actual or 0)) + cant_recibida
+                    )
+                if cant_recibida > 0 or entrega.inventario_preacreditado:
                     inv.save()
+            else:
+                if cant_recibida > 0:
+                    unidad_id = Ingrediente.objects.filter(
+                        pk=entrega.id_ingrediente
+                    ).values_list('id_unidad_medida_id', flat=True).first() or 1
+                    Inventario.objects.create(
+                        id_ingrediente=entrega.id_ingrediente,
+                        id_institucion_id=institucion_id,
+                        id_sede_id=sede_id,
+                        cantidad_actual=cant_recibida,
+                        stock_minimo=Decimal('0.00'),
+                        id_unidad_medida=unidad_id
+                    )
+
+            entrega.inventario_preacreditado = False
+            entrega.save()
 
         serializer = self.get_serializer(entrega)
 
