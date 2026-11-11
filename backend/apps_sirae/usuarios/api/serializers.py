@@ -176,24 +176,10 @@ def instituciones_asignadas_del_supervisor(usuario):
     if not usuario.es_supervisor():
         return []
 
-    from apps_sirae.contratos_pae.models import Contrato
+    from apps_sirae.instituciones.models import Institucion
+    from apps_sirae.usuarios.alcance import obtener_ids_instituciones_supervisor
 
-    institucion_ids = set(
-        usuario.instituciones_asignadas.values_list(
-            'id_institucion_id',
-            flat=True
-        )
-    )
-
-    institucion_ids.update(
-        Contrato.objects.filter(
-            id_usuario_supervisor=usuario,
-            id_institucion__isnull=False
-        ).values_list('id_institucion_id', flat=True)
-    )
-
-    if usuario.id_institucion_id:
-        institucion_ids.add(usuario.id_institucion_id)
+    institucion_ids = obtener_ids_instituciones_supervisor(usuario)
 
     if not institucion_ids:
         return []
@@ -335,6 +321,11 @@ class UsuarioSerializer(serializers.ModelSerializer):
         source='id_sede.nombre_sede',
         read_only=True
     )
+    jornada_nombre = serializers.CharField(
+        source='id_jornada.nombre_jornada',
+        read_only=True,
+        default=None
+    )
     instituciones_supervisor = serializers.SerializerMethodField()
     instituciones_ids = serializers.ListField(
         child=serializers.IntegerField(),
@@ -370,6 +361,8 @@ class UsuarioSerializer(serializers.ModelSerializer):
             'institucion_nombre',
             'id_sede',
             'sede_nombre',
+            'id_jornada',
+            'jornada_nombre',
             'instituciones_supervisor',
             'instituciones_ids',
             'password',
@@ -732,6 +725,10 @@ class UsuarioSerializer(serializers.ModelSerializer):
         id_sede = attrs.get('id_sede') if 'id_sede' in attrs else (
             self.instance.id_sede if self.instance else None
         )
+        if id_inst and id_sede and id_sede.id_institucion_id != id_inst.id_institucion:
+            raise serializers.ValidationError({
+                'id_sede': 'La sede seleccionada no pertenece a la institución asignada.'
+            })
 
         is_active_final = attrs.get(
             'is_active',
@@ -1069,6 +1066,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             if user.id_institucion else None
         )
         token['id_sede'] = user.id_sede_id
+        token['id_jornada'] = user.id_jornada_id
 
         return token
 
@@ -1088,7 +1086,8 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             usuario = Usuario.objects.select_related(
                 'rol',
                 'id_institucion',
-                'id_sede'
+                'id_sede',
+                'id_jornada',
             ).get(correo__iexact=correo)
         except Usuario.DoesNotExist:
             bloqueado_cache = cache.get(lock_cache_key)
@@ -1193,6 +1192,10 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             usuario.id_sede.nombre_sede
             if usuario.id_sede else None
         )
+        jornada_nombre = (
+            usuario.id_jornada.nombre_jornada
+            if usuario.id_jornada else None
+        )
 
         instituciones_sup = instituciones_asignadas_del_supervisor(
             usuario
@@ -1218,6 +1221,8 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 'institucion_nombre': inst_nombre,
                 'id_sede': usuario.id_sede_id,
                 'sede_nombre': sede_nombre,
+                'id_jornada': usuario.id_jornada_id,
+                'jornada_nombre': jornada_nombre,
                 'instituciones_supervisor': instituciones_sup,
                 'is_superuser': bool(usuario.is_superuser),
                 'debe_cambiar_password': bool(

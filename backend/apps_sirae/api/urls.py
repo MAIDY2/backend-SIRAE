@@ -13,6 +13,7 @@ from apps_sirae.preparacion_asignada.api.router import (
 from apps_sirae.preparacion_asignada.api.views import PreparacionAsignadaApiViewSet
 
 from apps_sirae.asistencia_diaria.api.router import router_asistencia_diaria
+from apps_sirae.asistencia_diaria.views import CalculoRacionesPorGradoView
 from apps_sirae.menus.api.router import router_menus
 from apps_sirae.entregas.api.router import router_entregas
 from apps_sirae.entradas_inventario.api.router import router_entradas_inventario
@@ -122,6 +123,16 @@ urlpatterns = [
 
     # Asistencia, menús y entregas
     path('', include(router_asistencia_diaria.urls)),
+    path(
+        'asistencia_diaria/calculo/',
+        CalculoRacionesPorGradoView.as_view(),
+        name='asistencia-diaria-calculo-legacy',
+    ),
+    path(
+        'asistencia-diaria/calculo/',
+        CalculoRacionesPorGradoView.as_view(),
+        name='asistencia-diaria-calculo',
+    ),
     path('', include(router_menus.urls)),
     path('', include(router_entregas.urls)),
 

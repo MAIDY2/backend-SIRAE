@@ -26,9 +26,25 @@ class ContratoSerializer(serializers.ModelSerializer):
             "id_jornada",
             "jornada_nombre",
             "cupos",
+            "periodicidad_perecederos",
+            "dias_cobertura_perecederos",
+            "periodicidad_no_perecederos",
+            "dias_cobertura_no_perecederos",
             "id_usuario_supervisor",
             "supervisor_nombre",
         ]
+
+    def validate(self, attrs):
+        dias_defecto = Contrato.DIAS_POR_PERIODICIDAD
+        for per_field, dias_field in (
+            ('periodicidad_perecederos', 'dias_cobertura_perecederos'),
+            ('periodicidad_no_perecederos', 'dias_cobertura_no_perecederos'),
+        ):
+            if per_field in attrs and dias_field not in attrs:
+                clave = (attrs.get(per_field) or '').upper()
+                if clave in dias_defecto:
+                    attrs[dias_field] = dias_defecto[clave]
+        return super().validate(attrs)
 
     def get_supervisor_nombre(self, obj):
         if obj.id_usuario_supervisor:
