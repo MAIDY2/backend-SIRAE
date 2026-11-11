@@ -7,6 +7,7 @@ from apps_sirae.usuarios.api.views import (
     LoginView,
     LogoutView,
     RegistroView,
+    ValidarSesionActivaView,
 )
 
 
@@ -32,5 +33,15 @@ urlpatterns = [
         'auth/token/verify/',
         TokenVerifyView.as_view(),
         name='token_verify'
+    ),
+    path(
+        'auth/verify/',
+        ValidarSesionActivaView.as_view(),
+        name='auth_verify'
+    ),
+    path(
+        'auth/validar-sesion/',
+        ValidarSesionActivaView.as_view(),
+        name='auth_validar_sesion'
     ),
 ]

@@ -19,9 +19,11 @@ from apps_sirae.usuarios.models import AuditoriaUsuario, Usuario
 from apps_sirae.usuarios.permissions import UsuarioConsultationAndScopePermission
 from apps_sirae.usuarios.api.serializers import (
     UsuarioSerializer,
+    UsuarioPerfilPropioSerializer,
     CustomTokenObtainPairSerializer,
     CustomTokenRefreshSerializer,
     revocar_sesiones_activas_usuario,
+    instituciones_asignadas_del_supervisor,
 )
 from apps_sirae.usuarios.api.password_reset import (
     ConfirmarCodigoRecuperacionPasswordView,
@@ -342,6 +344,55 @@ class UsuarioViewSet(viewsets.ModelViewSet):
         ]
         return Response(data, status=status.HTTP_200_OK)
 
+    @action(detail=False, methods=['get', 'put', 'patch'], url_path='me')
+    def me(self, request):
+        """
+        Criterios 1, 4 y 5: Visualización y Edición de Datos Propios del Perfil (Autogestión).
+        GET: Retorna los datos actuales del perfil del usuario autenticado.
+        PUT / PATCH: Permite al usuario común actualizar sus propios datos personales autorizados
+                     (nombre, apellido), aplicando validaciones y rechazando/ignorando campos protegidos.
+        """
+        user = request.user
+        if not (user and user.is_authenticated):
+            raise PermissionDenied('No autenticado.')
+        if not user.is_active:
+            raise PermissionDenied('Tu cuenta se encuentra inactiva o sin autorización vigente.')
+
+        if request.method == 'GET':
+            serializer = UsuarioPerfilPropioSerializer(user)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        # Criterio 5: Restricción estricta de campos protegidos
+        serializer = UsuarioPerfilPropioSerializer(
+            user,
+            data=request.data,
+            partial=(request.method == 'PATCH'),
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        # Registro de auditoría de autogestión de perfil
+        try:
+            x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR') if hasattr(request, 'META') else None
+            ip_cliente = (
+                x_forwarded_for.split(',')[0].strip()
+                if x_forwarded_for
+                else (request.META.get('REMOTE_ADDR') if hasattr(request, 'META') else None)
+            )
+            AuditoriaUsuario.objects.create(
+                usuario_afectado=user,
+                usuario_actor=user,
+                accion='EDICION_PERFIL',
+                estado_anterior='Activo',
+                estado_nuevo='Activo',
+                detalle=f"Autogestión de perfil: usuario actualizó sus datos personales (nombre: {user.nombre}, apellido: {user.apellido}).",
+                ip_address=ip_cliente,
+            )
+        except Exception:
+            pass
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
     def perform_create(self, serializer):
         user = self.request.user
         if not (user.es_super_administrador() or user.is_superuser or user.es_administrador()):
@@ -352,7 +403,13 @@ class UsuarioViewSet(viewsets.ModelViewSet):
         user = self.request.user
         instance = self.get_object()
         if not (user.es_super_administrador() or user.is_superuser):
-            if user.es_administrador():
+            if instance.id_usuario == user.id_usuario:
+                # El usuario está modificando su propio perfil desde la ruta de detalle:
+                # Criterio 5: Bloquear estrictamente cualquier intento de alterar campos protegidos
+                campos_restringidos = {'rol', 'is_active', 'estado', 'id_institucion', 'id_sede', 'correo', 'email'}
+                if any(campo in self.request.data for campo in campos_restringidos):
+                    raise PermissionDenied('No tienes autorización para modificar tu propio rol, estado, correo o asignaciones institucionales.')
+            elif user.es_administrador():
                 if (
                     not user.id_institucion_id
                     or instance.id_institucion_id != user.id_institucion_id
@@ -532,6 +589,68 @@ class LogoutView(APIView):
             {'detail': 'Se requiere un token válido para cerrar la sesión.'},
             status=status.HTTP_400_BAD_REQUEST,
         )
+
+
+class ValidarSesionActivaView(APIView):
+    """
+    Criterios 1, 3, 4 y 5: Validación activa y comprobación de vigencia del token contra el backend.
+    Endpoint `/api/auth/verify/` y `/api/auth/validar-sesion/`.
+    Comprueba que el token JWT sea válido, no revocado y vigente, y que el usuario se encuentre activo.
+    Retorna el estado de validez y la información de usuario estrictamente sanitizada (Cero contraseñas).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if not user or not user.is_authenticated or not user.is_active:
+            return Response(
+                {
+                    'valido': False,
+                    'detail': 'La sesión ha expirado, fue revocada o la cuenta se encuentra inactiva.',
+                },
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        rol_cliente = CustomTokenObtainPairSerializer._rol_para_cliente(user)
+        inst_nombre = (
+            user.id_institucion.nombre_institucion
+            if user.id_institucion else None
+        )
+        instituciones_sup = instituciones_asignadas_del_supervisor(user)
+        if not inst_nombre and instituciones_sup:
+            inst_nombre = instituciones_sup[0]['nombre_institucion']
+
+        sede_nombre = user.id_sede.nombre_sede if user.id_sede else None
+
+        return Response(
+            {
+                'valido': True,
+                'usuario': {
+                    'id_usuario': user.id_usuario,
+                    'nombre': user.nombre,
+                    'apellido': user.apellido,
+                    'correo': user.correo,
+                    'numero_documento': user.numero_documento,
+                    'rol': rol_cliente,
+                    'estado': 'Activo' if user.is_active else 'Inactivo',
+                    'is_active': bool(user.is_active),
+                    'id_institucion': user.id_institucion_id,
+                    'institucion': inst_nombre,
+                    'institucion_nombre': inst_nombre,
+                    'id_sede': user.id_sede_id,
+                    'sede_nombre': sede_nombre,
+                    'instituciones_supervisor': instituciones_sup,
+                    'is_superuser': bool(user.is_superuser),
+                    'debe_cambiar_password': bool(
+                        getattr(user, 'debe_cambiar_password', False)
+                    ),
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        return self.get(request)
 
 
 RecuperarPasswordView = SolicitarCodigoRecuperacionPasswordView

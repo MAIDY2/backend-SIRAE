@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone as dt_timezone
+import re
 import secrets
 import string
 import unicodedata
@@ -226,6 +227,101 @@ def instituciones_asignadas_del_supervisor(usuario):
         }
         for institucion in instituciones
     ]
+
+
+class UsuarioPerfilPropioSerializer(serializers.ModelSerializer):
+    """
+    Criterios 1, 4 y 5: Serializer exclusivo para la autogestión de perfil propio.
+    Permite únicamente la modificación de datos personales autorizados (nombre, apellido)
+    con validaciones de formato robustas (mínimo 2 caracteres, solo letras y espacios).
+    Bloquea de forma terminante la modificación de campos protegidos:
+    rol, estado (is_active), sede, correo institucional, institución, documento, horario o vigencia.
+    Cualquier intento de alteración de estos campos es estrictamente ignorado o rechazado.
+    """
+    CAMPOS_PROTEGIDOS = {
+        'rol', 'id_rol', 'is_active', 'estado', 'id_institucion', 'institucion',
+        'id_sede', 'sede', 'correo', 'email', 'tipo_documento', 'numero_documento',
+        'is_staff', 'is_superuser', 'debe_cambiar_password', 'bloqueado_hasta',
+        'intentos_fallidos_login', 'creado_por', 'fecha_creacion', 'fecha_actualizacion',
+        'horario', 'turno', 'vigencia_contrato', 'contrato',
+    }
+
+    nombre_completo = serializers.CharField(read_only=True)
+    rol_nombre = serializers.SerializerMethodField(read_only=True)
+    institucion_nombre = serializers.SerializerMethodField(read_only=True)
+    sede_nombre = serializers.SerializerMethodField(read_only=True)
+    instituciones_supervisor = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = Usuario
+        fields = [
+            'id_usuario',
+            'nombre',
+            'apellido',
+            'nombre_completo',
+            'correo',
+            'tipo_documento',
+            'numero_documento',
+            'rol_nombre',
+            'id_institucion',
+            'institucion_nombre',
+            'id_sede',
+            'sede_nombre',
+            'instituciones_supervisor',
+            'is_active',
+            'is_superuser',
+            'debe_cambiar_password',
+        ]
+        read_only_fields = [
+            'id_usuario',
+            'nombre_completo',
+            'correo',
+            'tipo_documento',
+            'numero_documento',
+            'rol_nombre',
+            'id_institucion',
+            'institucion_nombre',
+            'id_sede',
+            'sede_nombre',
+            'instituciones_supervisor',
+            'is_active',
+            'is_superuser',
+            'debe_cambiar_password',
+        ]
+
+    def get_rol_nombre(self, obj):
+        return CustomTokenObtainPairSerializer._rol_para_cliente(obj)
+
+    def get_institucion_nombre(self, obj):
+        return obj.id_institucion.nombre_institucion if obj.id_institucion else None
+
+    def get_sede_nombre(self, obj):
+        return obj.id_sede.nombre_sede if obj.id_sede else None
+
+    def get_instituciones_supervisor(self, obj):
+        return instituciones_asignadas_del_supervisor(obj)
+
+    def validate_nombre(self, value):
+        val = (value or '').strip()
+        if len(val) < 2:
+            raise serializers.ValidationError('El nombre debe tener al menos 2 caracteres.')
+        if not re.match(r'^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\.\-]+$', val):
+            raise serializers.ValidationError('El nombre contiene caracteres inválidos. Solo se permiten letras y espacios.')
+        return val
+
+    def validate_apellido(self, value):
+        val = (value or '').strip()
+        if len(val) < 2:
+            raise serializers.ValidationError('El apellido debe tener al menos 2 caracteres.')
+        if not re.match(r'^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\.\-]+$', val):
+            raise serializers.ValidationError('El apellido contiene caracteres inválidos. Solo se permiten letras y espacios.')
+        return val
+
+    def validate(self, attrs):
+        # Criterio 5: Restricción estricta de campos protegidos
+        for campo in self.CAMPOS_PROTEGIDOS:
+            attrs.pop(campo, None)
+        return attrs
 
 
 class UsuarioSerializer(serializers.ModelSerializer):

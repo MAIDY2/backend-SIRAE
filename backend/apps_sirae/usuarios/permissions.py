@@ -214,6 +214,10 @@ class UsuarioConsultationAndScopePermission(BasePermission):
         if not (user and user.is_authenticated):
             return False
 
+        # Autogestión de perfil propio: cualquier usuario autenticado y activo puede gestionar su perfil
+        if getattr(view, 'action', '') == 'me':
+            return bool(user.is_active)
+
         if request.method in SAFE_METHODS:
             return True
 
@@ -230,6 +234,10 @@ class UsuarioConsultationAndScopePermission(BasePermission):
         user = getattr(request, 'user', None)
         if not (user and user.is_authenticated):
             return False
+
+        # Autogestión de perfil propio
+        if getattr(view, 'action', '') == 'me':
+            return bool(user.is_active and obj.id_usuario == user.id_usuario)
 
         # Criterio 5: El Superadministrador tiene visibilidad total sin restricciones
         if user.es_super_administrador() or user.is_superuser:

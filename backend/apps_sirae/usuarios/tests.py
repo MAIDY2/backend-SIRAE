@@ -2168,4 +2168,241 @@ class ActivacionDesactivacionUsuariosTests(TestCase):
         self.assertEqual(aud_react.estado_nuevo, "Activo")
 
 
+class ConservacionSeguraSesionBackendTests(TestCase):
+    """
+    Auditoría y Pruebas Unitarias/Integración de Conservación y Persistencia de Sesión:
+    Criterios 1, 3, 4 y 5 en Backend Django REST Framework.
+    """
+    def setUp(self):
+        self.client = APIClient()
+        self.rol_admin = Rol.objects.create(nombre="Administrador")
+        self.institucion = Institucion.objects.create(nombre_institucion="Colegio Prueba PAE")
+        self.usuario = Usuario.objects.create_user(
+            correo="auditoria.sesion@sirae.com",
+            nombre="Auditor",
+            apellido="Seguridad",
+            password="Password-Seguro-2026!",
+            tipo_documento="CC",
+            numero_documento="99881122",
+            rol=self.rol_admin,
+            id_institucion=self.institucion,
+            is_active=True,
+        )
+        login_resp = self.client.post(
+            "/api/auth/login/",
+            {"correo": "auditoria.sesion@sirae.com", "password": "Password-Seguro-2026!"},
+            format="json",
+        )
+        self.assertEqual(login_resp.status_code, 200)
+        self.access_token = login_resp.data["access"]
+        self.refresh_token = login_resp.data["refresh"]
+
+    def test_criterio_1_y_3_validacion_activa_con_backend_auth_verify(self):
+        """
+        Criterios 1 y 3: Endpoint /api/auth/verify/ valida token activo y devuelve
+        datos mínimos indispensables sin exponer credenciales.
+        """
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.access_token}")
+        response = self.client.get("/api/auth/verify/")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data.get("valido"))
+        usuario_data = response.data.get("usuario", {})
+        self.assertEqual(usuario_data.get("correo"), "auditoria.sesion@sirae.com")
+        self.assertEqual(usuario_data.get("rol"), "Administrador")
+        self.assertEqual(usuario_data.get("institucion_nombre"), "Colegio Prueba PAE")
+        self.assertTrue(usuario_data.get("is_active"))
+
+    def test_criterio_3_endpoint_usuarios_me(self):
+        """
+        Criterio 3: Endpoint /api/usuarios/me/ valida token activo y devuelve perfil autenticado.
+        """
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.access_token}")
+        response = self.client.get("/api/usuarios/me/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data.get("correo"), "auditoria.sesion@sirae.com")
+        self.assertEqual(response.data.get("id_usuario"), self.usuario.id_usuario)
+
+    def test_criterio_4_manejo_sesiones_invalidas_token_inexistente_o_invalido(self):
+        """
+        Criterio 4: Si no hay token o es inválido, el backend rechaza con 401 Unauthorized.
+        """
+        self.client.credentials()  # Sin token
+        response = self.client.get("/api/auth/verify/")
+        self.assertEqual(response.status_code, 401)
+
+        self.client.credentials(HTTP_AUTHORIZATION="Bearer token-invalido-o-expirado")
+        response_bad = self.client.get("/api/auth/verify/")
+        self.assertEqual(response_bad.status_code, 401)
+
+    def test_criterio_4_manejo_sesiones_usuario_desactivado(self):
+        """
+        Criterio 4: Si la cuenta es desactivada en el backend, la validación activa rechaza la sesión.
+        """
+        self.usuario.is_active = False
+        self.usuario.save(update_fields=["is_active"])
+
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.access_token}")
+        response = self.client.get("/api/auth/verify/")
+        self.assertIn(response.status_code, [401, 403])
+
+        response_me = self.client.get("/api/usuarios/me/")
+        self.assertIn(response_me.status_code, [401, 403])
+
+    def test_criterio_5_cero_contrasenas_en_texto_plano_en_respuestas(self):
+        """
+        Criterio 5: Bajo ninguna circunstancia los endpoints de auth/sesión retornan
+        contraseñas o hashes en la respuesta al cliente.
+        """
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.access_token}")
+        response_verify = self.client.get("/api/auth/verify/")
+        self.assertEqual(response_verify.status_code, 200)
+        user_dict = response_verify.data.get("usuario", {})
+        self.assertNotIn("password", user_dict)
+        self.assertNotIn("clave", user_dict)
+        self.assertNotIn("contrasena", user_dict)
+
+        response_me = self.client.get("/api/usuarios/me/")
+        self.assertEqual(response_me.status_code, 200)
+        self.assertNotIn("password", response_me.data)
+        self.assertNotIn("clave", response_me.data)
+        self.assertNotIn("contrasena", response_me.data)
+
+
+class EdicionPerfilPropioBackendTests(TestCase):
+    """
+    Auditoría y Pruebas de los Criterios de Aceptación para:
+    Edición de Datos Propios del Perfil (Autogestión) en Django REST Framework.
+    """
+    def setUp(self):
+        self.client = APIClient()
+        self.rol_supervisor = Rol.objects.create(nombre="Supervisor")
+        self.rol_superadmin = Rol.objects.create(nombre="Super Administrador")
+        self.institucion = Institucion.objects.create(nombre_institucion="Colegio San José PAE")
+        self.sede = Sede.objects.create(nombre_sede="Sede Primaria", id_institucion=self.institucion)
+
+        self.usuario = Usuario.objects.create_user(
+            correo="supervisor.perfil@sirae.com",
+            nombre="Santiago",
+            apellido="Acosta",
+            password="SecurePass2026!",
+            tipo_documento="CC",
+            numero_documento="77665544",
+            rol=self.rol_supervisor,
+            id_institucion=self.institucion,
+            id_sede=self.sede,
+            is_active=True,
+        )
+
+        login_resp = self.client.post(
+            "/api/auth/login/",
+            {"correo": "supervisor.perfil@sirae.com", "password": "SecurePass2026!"},
+            format="json",
+        )
+        self.assertEqual(login_resp.status_code, 200)
+        self.token = login_resp.data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
+
+    def test_criterio_1_visualizacion_datos_actuales_me(self):
+        """
+        Criterio 1: Visualización clara de los datos actuales del usuario autenticado vía /api/usuarios/me/.
+        """
+        response = self.client.get("/api/usuarios/me/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["nombre"], "Santiago")
+        self.assertEqual(response.data["apellido"], "Acosta")
+        self.assertEqual(response.data["correo"], "supervisor.perfil@sirae.com")
+        self.assertEqual(response.data["rol_nombre"], "Supervisor")
+        self.assertEqual(response.data["institucion_nombre"], "Colegio San José PAE")
+        self.assertEqual(response.data["sede_nombre"], "Sede Primaria")
+        self.assertTrue(response.data["is_active"])
+
+    def test_criterio_2_y_4_actualizacion_exitosa_datos_modificables(self):
+        """
+        Criterios 2 y 4: Actualización permitida de campos autorizados (nombre, apellido)
+        con validación previa robusta.
+        """
+        response = self.client.patch(
+            "/api/usuarios/me/",
+            {
+                "nombre": "Santiago Alejandro",
+                "apellido": "Acosta Barrera",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["nombre"], "Santiago Alejandro")
+        self.assertEqual(response.data["apellido"], "Acosta Barrera")
+
+        self.usuario.refresh_from_db()
+        self.assertEqual(self.usuario.nombre, "Santiago Alejandro")
+        self.assertEqual(self.usuario.apellido, "Acosta Barrera")
+
+    def test_criterio_4_validacion_formato_nombres_invalidos(self):
+        """
+        Criterio 4: Rechazo ante nombres o apellidos muy cortos o con caracteres no permitidos.
+        """
+        response_corto = self.client.patch(
+            "/api/usuarios/me/",
+            {"nombre": "A"},
+            format="json",
+        )
+        self.assertEqual(response_corto.status_code, 400)
+        self.assertIn("nombre", response_corto.data)
+
+        response_invalido = self.client.patch(
+            "/api/usuarios/me/",
+            {"nombre": "Santiago123@#!"},
+            format="json",
+        )
+        self.assertEqual(response_invalido.status_code, 400)
+        self.assertIn("nombre", response_invalido.data)
+
+    def test_criterio_5_restriccion_estricta_de_campos_protegidos(self):
+        """
+        Criterio 5: Impedir de forma terminante que un usuario modifique por autogestión su propio rol,
+        estado de cuenta, sede, correo institucional o asignaciones. El backend ignora o neutraliza estos campos.
+        """
+        payload_malicioso = {
+            "nombre": "Santiago Verificado",
+            "apellido": "Acosta",
+            "rol": self.rol_superadmin.id_rol,
+            "id_rol": self.rol_superadmin.id_rol,
+            "is_active": False,
+            "estado": "Inactivo",
+            "correo": "atacante@evil.com",
+            "email": "atacante@evil.com",
+            "is_superuser": True,
+            "is_staff": True,
+            "id_institucion": 9999,
+            "id_sede": 8888,
+        }
+
+        response = self.client.patch("/api/usuarios/me/", payload_malicioso, format="json")
+        self.assertEqual(response.status_code, 200)
+
+        self.usuario.refresh_from_db()
+        # Nombre permitido sí se actualizó
+        self.assertEqual(self.usuario.nombre, "Santiago Verificado")
+        # Campos protegidos se mantuvieron intactos
+        self.assertEqual(self.usuario.rol.nombre, "Supervisor")
+        self.assertTrue(self.usuario.is_active)
+        self.assertFalse(self.usuario.is_superuser)
+        self.assertEqual(self.usuario.correo, "supervisor.perfil@sirae.com")
+        self.assertEqual(self.usuario.id_institucion_id, self.institucion.id_institucion)
+        self.assertEqual(self.usuario.id_sede_id, self.sede.id_sede)
+
+    def test_criterio_6_usuario_no_autenticado_rechazado(self):
+        """
+        Criterio 6: Sin autenticación no se permite consultar ni editar el perfil.
+        """
+        self.client.credentials()  # Sin token
+        resp_get = self.client.get("/api/usuarios/me/")
+        self.assertEqual(resp_get.status_code, 401)
+
+        resp_patch = self.client.patch("/api/usuarios/me/", {"nombre": "Test"}, format="json")
+        self.assertEqual(resp_patch.status_code, 401)
+
+
+
+
 
