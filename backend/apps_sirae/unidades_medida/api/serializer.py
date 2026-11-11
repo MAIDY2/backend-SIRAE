@@ -2,7 +2,6 @@ from decimal import Decimal
 from rest_framework import serializers
 from ..models import EquivalenciaUnidad, UnidadMedida
 
-
 class UnidadMedidaSerializer(serializers.ModelSerializer):
     class Meta:
         model = UnidadMedida
