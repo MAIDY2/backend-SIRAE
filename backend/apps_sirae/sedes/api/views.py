@@ -78,20 +78,23 @@ class SedeViewSet(viewsets.ModelViewSet):
         sede_jornadas = list(
             SedeJornada.objects.filter(id_sede=sede)
             .select_related('id_jornada')
-            .prefetch_related('grados__id_grado')
+            .prefetch_related('grados_atendidos__id_grado')
             .order_by('id_jornada__nombre_jornada')
         )
 
         jornada_por_id = {}
         for sj in sede_jornadas:
-            # Grados con sus cupos guardados en BD
+            # Grados activos con sus cupos guardados en BD
             grados_guardados = [
                 {
                     'id_grado': g.id_grado_id,
                     'nombre_grado': g.id_grado.nombre_grado,
                     'cupos': g.cupos,
                 }
-                for g in sj.grados.all().select_related('id_grado').order_by('id_grado__nombre_grado')
+                for g in sorted(
+                    (item for item in sj.grados_atendidos.all() if item.estado == 'ACTIVO'),
+                    key=lambda item: (item.id_grado.nombre_grado or '').lower(),
+                )
             ]
             jornada_por_id[sj.id_jornada_id] = {
                 'id_jornada': sj.id_jornada_id,
