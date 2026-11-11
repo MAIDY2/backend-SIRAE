@@ -355,9 +355,42 @@ class ReportesSIR170a173Tests(TestCase):
         self.assertEqual(planilla_db.id_plantilla_version.numero_version, 1)
 
     def test_sir171_generacion_real_pendientes_borrador_y_no_duplicados(self):
+        # Por defecto solo existen los 2 formatos oficiales de papel (Remisión e Inventario)
+        self.client.force_authenticate(user=self.superadmin)
+        tpls_base = self.client.get('/api/reportes/plantillas/').data
+        tpl_items = tpls_base['results'] if isinstance(tpls_base, dict) and 'results' in tpls_base else tpls_base
+        self.assertEqual({t['codigo'] for t in tpl_items}, {'PAE-FMT-REMISION', 'PAE-FMT-INVENTARIO'})
+
+        # Crear y publicar plantillas dinámicas SIR-170 para validar trazabilidad CONSUMO y ASISTENCIA
+        r_tpl_cons = self.client.post('/api/reportes/plantillas/', {
+            'codigo': 'PAE-TEST-CONSUMO',
+            'nombre': 'Balance de Consumo Test',
+            'categoria_proceso': 'CONSUMO',
+            'roles_autorizados': ['SuperAdministrador', 'supervisor'],
+            'esquema': {
+                'campos': [{'codigo': 'contrato', 'etiqueta': 'Contrato', 'origen': 'AUTOMATICO', 'fuente_sirae': 'contrato.numero_cor'}],
+                'tablas': [{'codigo': 'tabla_consumo', 'titulo': 'Consumo', 'fuente_sirae': 'consumo', 'columnas': [{'codigo': 'alimento', 'etiqueta': 'Alimento'}]}],
+            },
+        }, format='json')
+        self.assertEqual(r_tpl_cons.status_code, 201, r_tpl_cons.data)
+        self.client.post(f"/api/reportes/plantillas/{r_tpl_cons.data['id_plantilla']}/publicar/", {}, format='json')
+
+        r_tpl_asist = self.client.post('/api/reportes/plantillas/', {
+            'codigo': 'PAE-TEST-ASISTENCIA',
+            'nombre': 'Asistencia Test',
+            'categoria_proceso': 'ASISTENCIA',
+            'roles_autorizados': ['SuperAdministrador'],
+            'esquema': {
+                'campos': [{'codigo': 'contrato_cor', 'etiqueta': 'Contrato PAE', 'origen': 'AUTOMATICO', 'fuente_sirae': 'contrato.numero_cor', 'requerido': True}],
+                'tablas': [{'codigo': 'tabla_asistencia', 'titulo': 'Asistencia', 'fuente_sirae': 'asistencia', 'columnas': [{'codigo': 'grado', 'etiqueta': 'Grado'}]}],
+            },
+        }, format='json')
+        self.assertEqual(r_tpl_asist.status_code, 201, r_tpl_asist.data)
+        self.client.post(f"/api/reportes/plantillas/{r_tpl_asist.data['id_plantilla']}/publicar/", {}, format='json')
+
         self.client.force_authenticate(user=self.supervisor_a)
 
-        # Generar planilla oficial de CONSUMO para Sede A1 -> trae datos reales de BD
+        # Generar planilla de CONSUMO para Sede A1 -> trae datos reales de BD
         r_gen = self.client.post('/api/reportes/planillas/generar/', {
             'categoria_proceso': 'CONSUMO',
             'id_institucion': self.inst_a.id_institucion,
@@ -404,21 +437,42 @@ class ReportesSIR170a173Tests(TestCase):
 
     def test_sir172_consulta_aislamiento_por_rol_y_descarga(self):
         self.client.force_authenticate(user=self.superadmin)
+        plantillas_sa = self.client.get('/api/reportes/plantillas/').data
+        tpl_sa_items = plantillas_sa['results'] if isinstance(plantillas_sa, dict) and 'results' in plantillas_sa else plantillas_sa
+        self.assertEqual({t['codigo'] for t in tpl_sa_items}, {'PAE-FMT-REMISION', 'PAE-FMT-INVENTARIO'})
+
+        # INVENTARIO (Control de Entrada y Salida de Alimentos) es compartido en sede/institución
         r_a1 = self.client.post('/api/reportes/planillas/generar/', {
-            'categoria_proceso': 'REMISION',
+            'categoria_proceso': 'INVENTARIO',
             'id_institucion': self.inst_a.id_institucion,
             'id_sede': self.sede_a1.id_sede,
             'id_jornada': self.jornada_am.id_jornada,
             'periodo': '2026-05',
         }, format='json').data['planilla']['id_planilla']
         r_a2 = self.client.post('/api/reportes/planillas/generar/', {
-            'categoria_proceso': 'REMISION',
+            'categoria_proceso': 'INVENTARIO',
             'id_institucion': self.inst_a.id_institucion,
             'id_sede': self.sede_a2.id_sede,
             'id_jornada': self.jornada_am.id_jornada,
             'periodo': '2026-05',
         }, format='json').data['planilla']['id_planilla']
         r_b1 = self.client.post('/api/reportes/planillas/generar/', {
+            'categoria_proceso': 'INVENTARIO',
+            'id_institucion': self.inst_b.id_institucion,
+            'id_sede': self.sede_b1.id_sede,
+            'id_jornada': self.jornada_am.id_jornada,
+            'periodo': '2026-05',
+        }, format='json').data['planilla']['id_planilla']
+
+        # REMISION es exclusiva de Supervisor y SuperAdmin
+        r_rem_a1 = self.client.post('/api/reportes/planillas/generar/', {
+            'categoria_proceso': 'REMISION',
+            'id_institucion': self.inst_a.id_institucion,
+            'id_sede': self.sede_a1.id_sede,
+            'id_jornada': self.jornada_am.id_jornada,
+            'periodo': '2026-05',
+        }, format='json').data['planilla']['id_planilla']
+        r_rem_b1 = self.client.post('/api/reportes/planillas/generar/', {
             'categoria_proceso': 'REMISION',
             'id_institucion': self.inst_b.id_institucion,
             'id_sede': self.sede_b1.id_sede,
@@ -426,40 +480,65 @@ class ReportesSIR170a173Tests(TestCase):
             'periodo': '2026-05',
         }, format='json').data['planilla']['id_planilla']
 
-        # Superadmin ve las 3
+        # Superadmin ve todas (5)
         resp_sa = self.client.get('/api/reportes/planillas/').data
         items_sa = resp_sa['results'] if isinstance(resp_sa, dict) and 'results' in resp_sa else resp_sa
-        self.assertEqual(len(items_sa), 3)
+        self.assertEqual(len(items_sa), 5)
 
-        # Supervisor A solo ve inst A (r_a1 y r_a2), nunca r_b1
+        # Supervisor A solo ve sus formatos y planillas en Inst A (REMISION + INVENTARIO), nunca B
         self.client.force_authenticate(user=self.supervisor_a)
+        plantillas_sup = self.client.get('/api/reportes/plantillas/').data
+        tpl_sup_items = plantillas_sup['results'] if isinstance(plantillas_sup, dict) and 'results' in plantillas_sup else plantillas_sup
+        self.assertEqual({t['codigo'] for t in tpl_sup_items}, {'PAE-FMT-REMISION', 'PAE-FMT-INVENTARIO'})
+
         resp_sup = self.client.get('/api/reportes/planillas/').data
         items_sup = resp_sup['results'] if isinstance(resp_sup, dict) and 'results' in resp_sup else resp_sup
         ids_sup = {p['id_planilla'] for p in items_sup}
-        self.assertEqual(ids_sup, {r_a1, r_a2})
+        self.assertEqual(ids_sup, {r_a1, r_a2, r_rem_a1})
         self.assertEqual(self.client.get(f'/api/reportes/planillas/{r_b1}/').status_code, 404)
+        self.assertEqual(self.client.get(f'/api/reportes/planillas/{r_rem_b1}/').status_code, 404)
 
-        # Administrador A solo ve inst A
+        # Administrador A solo ve INVENTARIO en Inst A, nunca REMISION ni B
         self.client.force_authenticate(user=self.admin_a)
+        plantillas_adm = self.client.get('/api/reportes/plantillas/').data
+        tpl_adm_items = plantillas_adm['results'] if isinstance(plantillas_adm, dict) and 'results' in plantillas_adm else plantillas_adm
+        self.assertEqual({t['codigo'] for t in tpl_adm_items}, {'PAE-FMT-INVENTARIO'})
+
         resp_adm = self.client.get('/api/reportes/planillas/').data
         items_adm = resp_adm['results'] if isinstance(resp_adm, dict) and 'results' in resp_adm else resp_adm
         ids_adm = {p['id_planilla'] for p in items_adm}
         self.assertEqual(ids_adm, {r_a1, r_a2})
+        self.assertEqual(self.client.get(f'/api/reportes/planillas/{r_rem_a1}/').status_code, 404)
 
-        # Jefa A1 solo ve Sede A1 (r_a1)
+        # Jefa A1 solo ve INVENTARIO en Sede A1, nunca REMISION ni A2
         self.client.force_authenticate(user=self.jefa_a1_am)
+        plantillas_jefa = self.client.get('/api/reportes/plantillas/').data
+        tpl_jefa_items = plantillas_jefa['results'] if isinstance(plantillas_jefa, dict) and 'results' in plantillas_jefa else plantillas_jefa
+        self.assertEqual({t['codigo'] for t in tpl_jefa_items}, {'PAE-FMT-INVENTARIO'})
+
         resp_jefa = self.client.get('/api/reportes/planillas/').data
         items_jefa = resp_jefa['results'] if isinstance(resp_jefa, dict) and 'results' in resp_jefa else resp_jefa
         ids_jefa = {p['id_planilla'] for p in items_jefa}
         self.assertEqual(ids_jefa, {r_a1})
 
+        # Ni Jefa ni Administrador pueden generar planilla de REMISION (es del Supervisor)
+        for usr in (self.jefa_a1_am, self.admin_a):
+            self.client.force_authenticate(user=usr)
+            r_forb = self.client.post('/api/reportes/planillas/generar/', {
+                'categoria_proceso': 'REMISION',
+                'id_institucion': self.inst_a.id_institucion,
+                'id_sede': self.sede_a1.id_sede,
+                'periodo': '2026-06',
+            }, format='json')
+            self.assertEqual(r_forb.status_code, 400)
+
         # Descarga CSV real
+        self.client.force_authenticate(user=self.supervisor_a)
         r_csv = self.client.get(f'/api/reportes/planillas/{r_a1}/descargar/?formato=csv')
         self.assertEqual(r_csv.status_code, 200)
         self.assertIn('IE Real Norte', r_csv.content.decode('utf-8'))
 
         # Cierre operativo impide ediciones posteriores
-        self.client.force_authenticate(user=self.supervisor_a)
         r_val = self.client.post(f'/api/reportes/planillas/{r_a1}/actualizar/', {
             'observaciones': 'Verificado conforme contra bodega',
             'estado': 'CERRADO',
@@ -470,10 +549,23 @@ class ReportesSIR170a173Tests(TestCase):
         self.assertEqual(r_lock.status_code, 400)
 
     def test_sir173_reportes_consolidados_reales_y_seguridad_alcance(self):
-        # Supervisor A solo consulta su institución A (sin mezclar los 80kg de Institución B)
+        # Supervisor A solo consulta su institución A (sin mezclar los 80kg de Institución B) y sus tipos de reporte
         self.client.force_authenticate(user=self.supervisor_a)
         r_rep = self.client.get('/api/reportes/consolidados/?tipo_reporte=CONSUMO_ALIMENTOS')
         self.assertEqual(r_rep.status_code, 200, r_rep.data)
+        codigos_sup = {t['codigo'] for t in r_rep.data['tipos_disponibles']}
+        self.assertEqual(
+            codigos_sup,
+            {
+                'RESUMEN_GENERAL',
+                'CONTRATOS_CUPOS',
+                'GRAMAJES_PROYECTADOS',
+                'PROGRAMACION_ENTREGAS',
+                'RECEPCIONES_DIFERENCIAS',
+                'CONSUMO_ALIMENTOS',
+                'NOVEDADES_INCONSISTENCIAS',
+            },
+        )
         res = r_rep.data['resumen_ejecutivo']
         self.assertEqual(res['instituciones_autorizadas'], 1)
         self.assertEqual(res['sedes_autorizadas'], 2)
@@ -486,6 +578,10 @@ class ReportesSIR170a173Tests(TestCase):
         self.assertEqual(res['productos_bajo_minimo'], 1)
         self.assertEqual(res['asistencia_acumulada'], 95)
         self.assertTrue(bool(r_rep.data['fecha_actualizacion']))
+
+        # Supervisor no puede consultar un reporte exclusivo de Administración (ASISTENCIA_GRADOS)
+        r_sup_forb_tipo = self.client.get('/api/reportes/consolidados/?tipo_reporte=ASISTENCIA_GRADOS')
+        self.assertEqual(r_sup_forb_tipo.status_code, 403)
 
         # Al filtrar estrictamente a Sede A1 reporta exactamente 50kg
         r_sede = self.client.get(f'/api/reportes/consolidados/?tipo_reporte=CONSUMO_ALIMENTOS&id_sede={self.sede_a1.id_sede}')
@@ -507,3 +603,22 @@ class ReportesSIR170a173Tests(TestCase):
         r_csv = self.client.get('/api/reportes/consolidados/?tipo_reporte=RECEPCIONES_DIFERENCIAS&formato=csv')
         self.assertEqual(r_csv.status_code, 200)
         self.assertIn('Arroz Integral Real', r_csv.content.decode('utf-8'))
+
+        # Administrador A solo accede a sus reportes institucionales (bloqueado para CONTRATOS_CUPOS)
+        self.client.force_authenticate(user=self.admin_a)
+        r_adm = self.client.get('/api/reportes/consolidados/?tipo_reporte=INVENTARIO_CONSOLIDADO')
+        self.assertEqual(r_adm.status_code, 200)
+        codigos_adm = {t['codigo'] for t in r_adm.data['tipos_disponibles']}
+        self.assertNotIn('CONTRATOS_CUPOS', codigos_adm)
+        self.assertIn('ASISTENCIA_GRADOS', codigos_adm)
+        self.assertEqual(self.client.get('/api/reportes/consolidados/?tipo_reporte=CONTRATOS_CUPOS').status_code, 403)
+
+        # Jefa de manipuladoras no tiene acceso a reportes consolidados (solo planillas de comedor)
+        self.client.force_authenticate(user=self.jefa_a1_am)
+        self.assertEqual(self.client.get('/api/reportes/consolidados/').status_code, 403)
+
+        # SuperAdministrador ve los 11 reportes maestros
+        self.client.force_authenticate(user=self.superadmin)
+        r_sa = self.client.get('/api/reportes/consolidados/?tipo_reporte=RESUMEN_GENERAL')
+        self.assertEqual(r_sa.status_code, 200)
+        self.assertEqual(len(r_sa.data['tipos_disponibles']), 11)

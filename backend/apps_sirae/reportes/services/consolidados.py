@@ -1,6 +1,8 @@
 import csv
 import io
 
+from rest_framework.exceptions import PermissionDenied
+
 from apps_sirae.reportes.models import PlanillaGenerada
 from apps_sirae.reportes.services.catalogo_fuentes import usuario_rol_canonico
 from apps_sirae.reportes.services.generador_planillas import _parse_fecha
@@ -9,18 +11,85 @@ from apps_sirae.usuarios.alcance import describir_alcance_usuario
 
 
 TIPOS_REPORTE_CONSOLIDADO = [
-    {'codigo': 'RESUMEN_GENERAL', 'nombre': 'Resumen ejecutivo consolidado PAE'},
-    {'codigo': 'CONTRATOS_CUPOS', 'nombre': 'Contratos, cupos, sedes y jornadas'},
-    {'codigo': 'GRAMAJES_PROYECTADOS', 'nombre': 'Gramajes y proyección de abastecimiento'},
-    {'codigo': 'PROGRAMACION_ENTREGAS', 'nombre': 'Programación HU5 y entregas despachadas'},
-    {'codigo': 'RECEPCIONES_DIFERENCIAS', 'nombre': 'Recepciones, rechazos y diferencias'},
-    {'codigo': 'INVENTARIO_CONSOLIDADO', 'nombre': 'Inventario actual y alertas de stock mínimo'},
-    {'codigo': 'MOVIMIENTOS_KARDEX', 'nombre': 'Movimientos kárdex (entradas y salidas)'},
-    {'codigo': 'MENUS_PREPARACIONES', 'nombre': 'Menús, platos y preparaciones asignadas'},
-    {'codigo': 'ASISTENCIA_GRADOS', 'nombre': 'Asistencia diaria por grado y cobertura'},
-    {'codigo': 'CONSUMO_ALIMENTOS', 'nombre': 'Consumo real vs programado, despachado y recibido'},
-    {'codigo': 'NOVEDADES_INCONSISTENCIAS', 'nombre': 'Novedades, rechazos e inconsistencias'},
+    {
+        'codigo': 'RESUMEN_GENERAL',
+        'nombre': 'Resumen general de la operación',
+        'descripcion': 'Vista general con totales de entregas, inventarios, asistencia y consumo.',
+        'roles_autorizados': ['SuperAdministrador', 'supervisor', 'Administrador'],
+    },
+    {
+        'codigo': 'CONTRATOS_CUPOS',
+        'nombre': 'Contratos y cupos asignados',
+        'descripcion': 'Contratos activos, operador asignado y cupos por sede y jornada.',
+        'roles_autorizados': ['SuperAdministrador', 'supervisor'],
+    },
+    {
+        'codigo': 'GRAMAJES_PROYECTADOS',
+        'nombre': 'Gramajes y alimentos proyectados',
+        'descripcion': 'Cantidades proyectadas de alimentos según cupos, gramajes y cobertura.',
+        'roles_autorizados': ['SuperAdministrador', 'supervisor'],
+    },
+    {
+        'codigo': 'PROGRAMACION_ENTREGAS',
+        'nombre': 'Programación y entregas despachadas',
+        'descripcion': 'Control de mercados programados y entregas despachadas hacia cada sede.',
+        'roles_autorizados': ['SuperAdministrador', 'supervisor'],
+    },
+    {
+        'codigo': 'RECEPCIONES_DIFERENCIAS',
+        'nombre': 'Recepciones y diferencias de entrega',
+        'descripcion': 'Comparativo entre lo despachado, lo recibido en sede y los rechazos o diferencias.',
+        'roles_autorizados': ['SuperAdministrador', 'supervisor', 'Administrador'],
+    },
+    {
+        'codigo': 'INVENTARIO_CONSOLIDADO',
+        'nombre': 'Inventario actual y stock mínimo',
+        'descripcion': 'Existencias actuales por producto en bodega y alertas de stock bajo.',
+        'roles_autorizados': ['SuperAdministrador', 'Administrador'],
+    },
+    {
+        'codigo': 'MOVIMIENTOS_KARDEX',
+        'nombre': 'Entradas y salidas de inventario (Kárdex)',
+        'descripcion': 'Historial de entradas por recepción y salidas registradas hacia cocina.',
+        'roles_autorizados': ['SuperAdministrador', 'Administrador'],
+    },
+    {
+        'codigo': 'MENUS_PREPARACIONES',
+        'nombre': 'Menús y preparaciones del comedor',
+        'descripcion': 'Platos, porciones y preparaciones ejecutadas por jornada en la institución.',
+        'roles_autorizados': ['SuperAdministrador', 'Administrador'],
+    },
+    {
+        'codigo': 'ASISTENCIA_GRADOS',
+        'nombre': 'Asistencia diaria por grado',
+        'descripcion': 'Cobertura de estudiantes atendidos por grado escolar frente a cupos.',
+        'roles_autorizados': ['SuperAdministrador', 'Administrador'],
+    },
+    {
+        'codigo': 'CONSUMO_ALIMENTOS',
+        'nombre': 'Consumo real vs programado y recibido',
+        'descripcion': 'Comparativo entre lo programado, despachado, recibido y consumido por producto.',
+        'roles_autorizados': ['SuperAdministrador', 'supervisor', 'Administrador'],
+    },
+    {
+        'codigo': 'NOVEDADES_INCONSISTENCIAS',
+        'nombre': 'Novedades e inconsistencias',
+        'descripcion': 'Alertas de entregas rechazadas, diferencias, stock bajo o planillas pendientes.',
+        'roles_autorizados': ['SuperAdministrador', 'supervisor', 'Administrador'],
+    },
 ]
+
+
+def obtener_tipos_reporte_para_usuario(usuario) -> list[dict]:
+    """Devuelve únicamente los tipos de reporte consolidado habilitados para el rol del usuario."""
+    rol = usuario_rol_canonico(usuario)
+    if rol == 'SuperAdministrador':
+        return [dict(item) for item in TIPOS_REPORTE_CONSOLIDADO]
+    return [
+        dict(item)
+        for item in TIPOS_REPORTE_CONSOLIDADO
+        if rol in (item.get('roles_autorizados') or [])
+    ]
 
 
 def _construir_filas_contratos_cupos(datos: dict) -> list[dict]:
@@ -118,10 +187,25 @@ def _construir_filas_novedades(datos: dict, planillas_qs) -> list[dict]:
 def generar_reporte_consolidado(usuario, params: dict | None = None) -> dict:
     """
     SIR-173: Genera reportes operativos consolidados con datos 100% reales de SIRAE,
-    acotados estrictamente a las instituciones/sedes/jornadas permitidas al usuario.
+    acotados estrictamente a las instituciones/sedes/jornadas y reportes permitidos al rol.
     """
     params = params or {}
-    tipo = (params.get('tipo_reporte') or 'RESUMEN_GENERAL').strip().upper()
+    tipos_disponibles = obtener_tipos_reporte_para_usuario(usuario)
+    if not tipos_disponibles:
+        raise PermissionDenied(
+            "Tu rol operativo únicamente gestiona planillas de comedor y no tiene acceso a reportes consolidados."
+        )
+
+    codigos_permitidos = {t['codigo'] for t in tipos_disponibles}
+    tipo_solicitado = (params.get('tipo_reporte') or '').strip().upper()
+    if tipo_solicitado:
+        if tipo_solicitado not in codigos_permitidos:
+            raise PermissionDenied(
+                f"Tu rol no está autorizado para consultar el reporte '{tipo_solicitado}'."
+            )
+        tipo = tipo_solicitado
+    else:
+        tipo = tipos_disponibles[0]['codigo']
     id_inst = params.get('id_institucion') or None
     id_sede = params.get('id_sede') or None
     id_jornada = params.get('id_jornada') or None
@@ -206,7 +290,7 @@ def generar_reporte_consolidado(usuario, params: dict | None = None) -> dict:
 
     return {
         'tipo_reporte': tipo,
-        'tipos_disponibles': TIPOS_REPORTE_CONSOLIDADO,
+        'tipos_disponibles': tipos_disponibles,
         'filtros_aplicados': {
             'id_institucion': id_inst,
             'id_sede': id_sede,

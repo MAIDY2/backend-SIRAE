@@ -113,9 +113,15 @@ class PlantillaOficialViewSet(viewsets.ModelViewSet):
         solo_activas = self.request.query_params.get('activa')
         search = (self.request.query_params.get('search') or '').strip()
 
+        incluir_inactivas = (self.request.query_params.get('incluir_inactivas') or '').strip().lower()
+
         if categoria:
             qs = qs.filter(categoria_proceso=categoria)
         if solo_activas in {'true', '1', 'ACTIVA'}:
+            qs = qs.filter(activa=True)
+        elif solo_activas in {'false', '0', 'INACTIVA'}:
+            qs = qs.filter(activa=False)
+        elif self.action == 'list' and incluir_inactivas not in {'true', '1'}:
             qs = qs.filter(activa=True)
         if search:
             qs = qs.filter(Q(nombre__icontains=search) | Q(codigo__icontains=search) | Q(descripcion__icontains=search))
