@@ -418,23 +418,30 @@ def aplicar_conversiones_y_formulas_filas(
     return filas_procesadas, totales, advertencias
 
 
+CODIGOS_PLANTILLAS_RETIRADAS_BASE = (
+    'PAE-FMT-RECEPCION',
+    'PAE-FMT-ASISTENCIA',
+    'PAE-FMT-PREPARACION',
+    'PAE-FMT-CONSUMO',
+)
+
+
 def construir_plantillas_oficiales_base() -> list[dict]:
     """
-    Retorna definiciones ESTRUCTURALES de las plantillas oficiales PAE
-    (sin datos operativos quemados: cero instituciones, municipios, fechas ni productos ficticios).
-    Cada columna y campo está enlazado a su fuente real en SIRAE.
+    Retorna únicamente las 2 plantillas oficiales reales del PAE proporcionadas en los formatos físicos
+    (Remisión de Víveres e Insumos y Control de Entrada y Salida / Kárdex), enlazadas a fuentes reales de SIRAE.
     """
     return [
         {
             'codigo': 'PAE-FMT-REMISION',
-            'nombre': 'Planilla Oficial de Remisión de Víveres e Insumos',
-            'descripcion': 'Formato oficial para programar y controlar el despacho de alimentos según contrato, gramajes HU5 y cupos por sede.',
+            'nombre': 'Remisión de Víveres e Insumos por Comedor Escolar',
+            'descripcion': 'Planilla del Supervisor para programar y controlar el despacho de víveres por sede asignada.',
             'categoria_proceso': 'REMISION',
-            'finalidad': 'Documentar el abastecimiento programado vs despachado por sede, jornada y periodo.',
-            'roles_autorizados': ['SuperAdministrador', 'supervisor', 'Administrador', 'JefaManipuladoras'],
+            'finalidad': 'Documentar los alimentos programados y despachados hacia cada sede escolar según contrato y cupos.',
+            'roles_autorizados': ['SuperAdministrador', 'supervisor'],
             'esquema': {
                 'encabezado': {
-                    'titulo': 'REMISIÓN DE VÍVERES E INSUMOS POR SEDE ESCOLAR',
+                    'titulo': 'REMISIÓN DE VÍVERES E INSUMOS POR COMEDOR ESCOLAR',
                     'subtitulo': 'PROGRAMA DE ALIMENTACIÓN ESCOLAR - SIRAE',
                     'codigo_formato': 'PAE-FMT-REMISION',
                 },
@@ -463,7 +470,7 @@ def construir_plantillas_oficiales_base() -> list[dict]:
                             {'codigo': 'nombre_ingrediente', 'etiqueta': 'Producto / Ingrediente', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'fuente_sirae': 'ABASTECIMIENTO_CALCULO', 'campo_fuente': 'nombre_ingrediente'},
                             {'codigo': 'tipo_conservacion', 'etiqueta': 'Clasificación', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'fuente_sirae': 'ABASTECIMIENTO_CALCULO', 'campo_fuente': 'tipo_conservacion'},
                             {'codigo': 'unidad', 'etiqueta': 'Unidad', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'fuente_sirae': 'ABASTECIMIENTO_CALCULO', 'campo_fuente': 'unidad'},
-                            {'codigo': 'cantidad_programada', 'etiqueta': 'Cant. Programada (HU5)', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'fuente_sirae': 'ABASTECIMIENTO_CALCULO', 'campo_fuente': 'cantidad_programada', 'calcular_total': True},
+                            {'codigo': 'cantidad_programada', 'etiqueta': 'Cant. Programada', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'fuente_sirae': 'ABASTECIMIENTO_CALCULO', 'campo_fuente': 'cantidad_programada', 'calcular_total': True},
                             {'codigo': 'cantidad_despachada', 'etiqueta': 'Cant. Despachada', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'fuente_sirae': 'ENTREGAS', 'campo_fuente': 'cantidad_despachada', 'calcular_total': True},
                             {'codigo': 'cantidad_recibida', 'etiqueta': 'Cant. Recibida', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'fuente_sirae': 'RECEPCIONES', 'campo_fuente': 'cantidad_recibida', 'calcular_total': True},
                             {'codigo': 'diferencia_despacho', 'etiqueta': 'Diferencia Despacho vs Programado', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'formula': 'cantidad_despachada - cantidad_programada', 'calcular_total': True},
@@ -478,64 +485,16 @@ def construir_plantillas_oficiales_base() -> list[dict]:
             },
         },
         {
-            'codigo': 'PAE-FMT-RECEPCION',
-            'nombre': 'Acta de Recepción y Verificación de Alimentos en Sede',
-            'descripcion': 'Consolidado oficial de entregas despachadas, cantidades recibidas, rechazadas y novedades en comedor.',
-            'categoria_proceso': 'RECEPCION',
-            'finalidad': 'Verificar conformidad entre lo despachado y lo recibido en la institución/sede.',
-            'roles_autorizados': ['SuperAdministrador', 'supervisor', 'Administrador', 'JefaManipuladoras'],
-            'esquema': {
-                'encabezado': {
-                    'titulo': 'ACTA OFICIAL DE RECEPCIÓN Y VERIFICACIÓN DE ALIMENTOS',
-                    'subtitulo': 'CONTROL DE CALIDAD Y CONFORMIDAD PAE - SIRAE',
-                    'codigo_formato': 'PAE-FMT-RECEPCION',
-                },
-                'secciones': [
-                    {'codigo': 'SEC_SEDE', 'titulo': 'Información de Sede y Responsables de Recepción', 'orden': 1, 'origen': 'AUTOMATICO', 'fuente_sirae': 'SEDE'},
-                    {'codigo': 'SEC_DETALLE_RECEPCION', 'titulo': 'Detalle de Productos Recibidos, Rechazados y Novedades', 'orden': 2, 'origen': 'AUTOMATICO', 'fuente_sirae': 'RECEPCIONES'},
-                    {'codigo': 'SEC_CIERRE', 'titulo': 'Observaciones de Recepción', 'orden': 3, 'origen': 'MANUAL', 'fuente_sirae': 'FIRMAS_USUARIOS'},
-                ],
-                'campos': [
-                    {'codigo': 'institucion_nombre', 'etiqueta': 'Institución educativa', 'seccion': 'SEC_SEDE', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'fuente_sirae': 'INSTITUCION', 'campo_fuente': 'nombre_institucion', 'requerido': True},
-                    {'codigo': 'sede_nombre', 'etiqueta': 'Sede receptora', 'seccion': 'SEC_SEDE', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'fuente_sirae': 'SEDE', 'campo_fuente': 'nombre_sede', 'requerido': True},
-                    {'codigo': 'supervisor_nombre', 'etiqueta': 'Supervisor asignado', 'seccion': 'SEC_SEDE', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'fuente_sirae': 'FIRMAS_USUARIOS', 'campo_fuente': 'supervisor_nombre', 'requerido': False},
-                    {'codigo': 'observaciones_recepcion', 'etiqueta': 'Observaciones generales de calidad/temperatura', 'seccion': 'SEC_CIERRE', 'tipo': 'TEXTO', 'origen': 'MANUAL', 'fuente_sirae': '', 'campo_fuente': '', 'requerido': False},
-                ],
-                'tablas': [
-                    {
-                        'codigo': 'TABLA_RECEPCIONES',
-                        'titulo': 'Registro Detallado de Entregas y Recepciones',
-                        'seccion': 'SEC_DETALLE_RECEPCION',
-                        'fuente_sirae': 'RECEPCIONES',
-                        'columnas': [
-                            {'codigo': 'fecha_entrega', 'etiqueta': 'Fecha Entrega', 'tipo': 'FECHA', 'origen': 'AUTOMATICO', 'campo_fuente': 'fecha_entrega'},
-                            {'codigo': 'documento_entrega', 'etiqueta': 'Doc. Entrega', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'campo_fuente': 'documento_entrega'},
-                            {'codigo': 'nombre_ingrediente', 'etiqueta': 'Alimento / Producto', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'campo_fuente': 'nombre_ingrediente'},
-                            {'codigo': 'unidad', 'etiqueta': 'Unidad', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'campo_fuente': 'unidad'},
-                            {'codigo': 'cantidad_despachada', 'etiqueta': 'Despachado', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'campo_fuente': 'cantidad_despachada', 'calcular_total': True},
-                            {'codigo': 'cantidad_recibida', 'etiqueta': 'Recibido Conforme', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'campo_fuente': 'cantidad_recibida', 'calcular_total': True},
-                            {'codigo': 'cantidad_rechazada', 'etiqueta': 'Rechazado', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'campo_fuente': 'cantidad_rechazada', 'calcular_total': True},
-                            {'codigo': 'diferencia_recepcion', 'etiqueta': 'Faltante / Sobrante', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'formula': 'cantidad_recibida - cantidad_despachada', 'calcular_total': True},
-                            {'codigo': 'estado', 'etiqueta': 'Estado Recepción', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'campo_fuente': 'estado'},
-                            {'codigo': 'motivo_rechazo', 'etiqueta': 'Motivo / Novedad', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'campo_fuente': 'motivo_rechazo'},
-                        ],
-                        'formulas': [],
-                        'conversiones_unidad': [],
-                    }
-                ],
-            },
-        },
-        {
             'codigo': 'PAE-FMT-INVENTARIO',
-            'nombre': 'Planilla Oficial de Control de Inventario y Kárdex',
-            'descripcion': 'Consolidado real de existencias en bodega de sede, entradas, salidas a cocina y stock mínimo.',
+            'nombre': 'Control de Entrada y Salida de Alimentos',
+            'descripcion': 'Planilla mensual de entradas, salidas de cocina y saldo del mes (diligenciada en comedor y verificada por Supervisor de campo).',
             'categoria_proceso': 'INVENTARIO',
-            'finalidad': 'Controlar existencias disponibles, movimientos de almacén y alertas de desabastecimiento.',
-            'roles_autorizados': ['SuperAdministrador', 'supervisor', 'Administrador', 'JefaManipuladoras'],
+            'finalidad': 'Registrar las entradas, salidas diarias y saldo mensual de alimentos en la sede escolar.',
+            'roles_autorizados': ['SuperAdministrador', 'supervisor', 'Administrador', 'JefaManipuladoras', 'Manipuladora'],
             'esquema': {
                 'encabezado': {
-                    'titulo': 'CONTROL DE INVENTARIO Y MOVIMIENTOS KÁRDEX POR SEDE',
-                    'subtitulo': 'ALMACÉN ESCOLAR PAE - SIRAE',
+                    'titulo': 'CONTROL DE ENTRADA Y SALIDA DE ALIMENTOS',
+                    'subtitulo': 'PROGRAMA DE ALIMENTACIÓN ESCOLAR PAE - SIRAE',
                     'codigo_formato': 'PAE-FMT-INVENTARIO',
                 },
                 'secciones': [
@@ -544,22 +503,22 @@ def construir_plantillas_oficiales_base() -> list[dict]:
                 ],
                 'campos': [
                     {'codigo': 'institucion_nombre', 'etiqueta': 'Institución educativa', 'seccion': 'SEC_SALDOS', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'fuente_sirae': 'INSTITUCION', 'campo_fuente': 'nombre_institucion', 'requerido': True},
-                    {'codigo': 'sede_nombre', 'etiqueta': 'Sede / Almacén', 'seccion': 'SEC_SALDOS', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'fuente_sirae': 'SEDE', 'campo_fuente': 'nombre_sede', 'requerido': True},
-                    {'codigo': 'verificacion_fisica', 'etiqueta': 'Observación de conteo físico en bodega', 'seccion': 'SEC_SALDOS', 'tipo': 'TEXTO', 'origen': 'MANUAL', 'fuente_sirae': '', 'campo_fuente': '', 'requerido': False},
+                    {'codigo': 'sede_nombre', 'etiqueta': 'Sede educativa', 'seccion': 'SEC_SALDOS', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'fuente_sirae': 'SEDE', 'campo_fuente': 'nombre_sede', 'requerido': True},
+                    {'codigo': 'verificacion_fisica', 'etiqueta': 'Verificación en comedor / supervisor de campo', 'seccion': 'SEC_SALDOS', 'tipo': 'TEXTO', 'origen': 'MANUAL', 'fuente_sirae': '', 'campo_fuente': '', 'requerido': False},
                 ],
                 'tablas': [
                     {
                         'codigo': 'TABLA_INVENTARIO_SALDOS',
-                        'titulo': 'Saldos y Balance de Almacén por Producto',
+                        'titulo': 'Control de Entradas, Salidas y Saldo del Mes',
                         'seccion': 'SEC_SALDOS',
                         'fuente_sirae': 'INVENTARIO',
                         'columnas': [
-                            {'codigo': 'nombre_ingrediente', 'etiqueta': 'Producto', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'campo_fuente': 'nombre_ingrediente'},
+                            {'codigo': 'nombre_ingrediente', 'etiqueta': 'Alimento', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'campo_fuente': 'nombre_ingrediente'},
                             {'codigo': 'categoria', 'etiqueta': 'Categoría', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'campo_fuente': 'categoria'},
-                            {'codigo': 'unidad', 'etiqueta': 'Unidad', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'campo_fuente': 'unidad'},
-                            {'codigo': 'total_entradas', 'etiqueta': 'Entradas Periodo', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'campo_fuente': 'total_entradas', 'calcular_total': True},
-                            {'codigo': 'total_salidas', 'etiqueta': 'Salidas Cocina', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'campo_fuente': 'total_salidas', 'calcular_total': True},
-                            {'codigo': 'cantidad_actual', 'etiqueta': 'Saldo Actual', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'campo_fuente': 'cantidad_actual', 'calcular_total': True},
+                            {'codigo': 'unidad', 'etiqueta': 'Unidad de medida', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'campo_fuente': 'unidad'},
+                            {'codigo': 'total_entradas', 'etiqueta': 'Entrada', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'campo_fuente': 'total_entradas', 'calcular_total': True},
+                            {'codigo': 'total_salidas', 'etiqueta': 'Total Salidas', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'campo_fuente': 'total_salidas', 'calcular_total': True},
+                            {'codigo': 'cantidad_actual', 'etiqueta': 'Saldo del Mes', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'campo_fuente': 'cantidad_actual', 'calcular_total': True},
                             {'codigo': 'stock_minimo', 'etiqueta': 'Stock Mínimo', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'campo_fuente': 'stock_minimo', 'calcular_total': True},
                             {'codigo': 'estado_stock', 'etiqueta': 'Estado Stock', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'campo_fuente': 'estado_stock'},
                         ],
@@ -569,129 +528,13 @@ def construir_plantillas_oficiales_base() -> list[dict]:
                 ],
             },
         },
-        {
-            'codigo': 'PAE-FMT-ASISTENCIA',
-            'nombre': 'Planilla Oficial de Asistencia Diaria por Grados',
-            'descripcion': 'Seguimiento diario de niños presentes por grado escolar frente a cupos autorizados en la sede.',
-            'categoria_proceso': 'ASISTENCIA',
-            'finalidad': 'Garantizar trazabilidad real entre beneficiarios matriculados, asistentes y raciones servidas.',
-            'roles_autorizados': ['SuperAdministrador', 'supervisor', 'Administrador', 'JefaManipuladoras'],
-            'esquema': {
-                'encabezado': {
-                    'titulo': 'CONTROL DE ASISTENCIA DIARIA DE BENEFICIARIOS',
-                    'subtitulo': 'COBERTURA ESCOLAR PAE - SIRAE',
-                    'codigo_formato': 'PAE-FMT-ASISTENCIA',
-                },
-                'secciones': [
-                    {'codigo': 'SEC_ASISTENCIA_DET', 'titulo': 'Asistencia Registrada por Fecha y Grado', 'orden': 1, 'origen': 'AUTOMATICO', 'fuente_sirae': 'ASISTENCIA'},
-                ],
-                'campos': [
-                    {'codigo': 'institucion_nombre', 'etiqueta': 'Institución educativa', 'seccion': 'SEC_ASISTENCIA_DET', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'fuente_sirae': 'INSTITUCION', 'campo_fuente': 'nombre_institucion', 'requerido': True},
-                    {'codigo': 'sede_nombre', 'etiqueta': 'Sede escolar', 'seccion': 'SEC_ASISTENCIA_DET', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'fuente_sirae': 'SEDE', 'campo_fuente': 'nombre_sede', 'requerido': True},
-                    {'codigo': 'jefa_cocina_nombre', 'etiqueta': 'Jefa de manipuladoras', 'seccion': 'SEC_ASISTENCIA_DET', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'fuente_sirae': 'FIRMAS_USUARIOS', 'campo_fuente': 'jefa_cocina_nombre', 'requerido': False},
-                ],
-                'tablas': [
-                    {
-                        'codigo': 'TABLA_ASISTENCIA',
-                        'titulo': 'Consolidado de Asistencia por Fecha y Grado',
-                        'seccion': 'SEC_ASISTENCIA_DET',
-                        'fuente_sirae': 'ASISTENCIA',
-                        'columnas': [
-                            {'codigo': 'fecha', 'etiqueta': 'Fecha', 'tipo': 'FECHA', 'origen': 'AUTOMATICO', 'campo_fuente': 'fecha'},
-                            {'codigo': 'nombre_grado', 'etiqueta': 'Grado Escolar', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'campo_fuente': 'nombre_grado'},
-                            {'codigo': 'cupos_grado', 'etiqueta': 'Cupos Asignados', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'campo_fuente': 'cupos_grado', 'calcular_total': True},
-                            {'codigo': 'ninos_presentes', 'etiqueta': 'Niños Presentes', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'campo_fuente': 'ninos_presentes', 'calcular_total': True},
-                            {'codigo': 'diferencia_ausentismo', 'etiqueta': 'Cupos No Asistidos', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'formula': 'cupos_grado - ninos_presentes', 'calcular_total': True},
-                            {'codigo': 'porcentaje_asistencia', 'etiqueta': '% Cobertura', 'tipo': 'PORCENTAJE', 'origen': 'AUTOMATICO', 'formula': '(ninos_presentes / cupos_grado) * 100'},
-                        ],
-                        'formulas': [],
-                        'conversiones_unidad': [],
-                    }
-                ],
-            },
-        },
-        {
-            'codigo': 'PAE-FMT-PREPARACION',
-            'nombre': 'Planilla Oficial de Preparación de Alimentos y Minutas',
-            'descripcion': 'Consolidado de menús programados, platos, porciones y cumplimiento de preparaciones en cocina.',
-            'categoria_proceso': 'PREPARACION',
-            'finalidad': 'Registrar la ejecución de minutas, platos y asignaciones de cocina por fecha y jornada.',
-            'roles_autorizados': ['SuperAdministrador', 'supervisor', 'Administrador', 'JefaManipuladoras'],
-            'esquema': {
-                'encabezado': {
-                    'titulo': 'CONTROL DE PREPARACIÓN DE ALIMENTOS Y MINUTAS DIARIAS',
-                    'subtitulo': 'OPERACIÓN DE COCINA ESCOLAR - SIRAE',
-                    'codigo_formato': 'PAE-FMT-PREPARACION',
-                },
-                'secciones': [
-                    {'codigo': 'SEC_PREPARACIONES', 'titulo': 'Ejecución de Minutas y Preparaciones', 'orden': 1, 'origen': 'AUTOMATICO', 'fuente_sirae': 'PREPARACIONES'},
-                ],
-                'campos': [
-                    {'codigo': 'institucion_nombre', 'etiqueta': 'Institución educativa', 'seccion': 'SEC_PREPARACIONES', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'fuente_sirae': 'INSTITUCION', 'campo_fuente': 'nombre_institucion', 'requerido': True},
-                    {'codigo': 'sede_nombre', 'etiqueta': 'Sede escolar', 'seccion': 'SEC_PREPARACIONES', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'fuente_sirae': 'SEDE', 'campo_fuente': 'nombre_sede', 'requerido': True},
-                    {'codigo': 'observaciones_cocina', 'etiqueta': 'Observaciones de preparación en sitio', 'seccion': 'SEC_PREPARACIONES', 'tipo': 'TEXTO', 'origen': 'MANUAL', 'fuente_sirae': '', 'campo_fuente': '', 'requerido': False},
-                ],
-                'tablas': [
-                    {
-                        'codigo': 'TABLA_PREPARACIONES',
-                        'titulo': 'Detalle de Platos y Preparaciones Programadas',
-                        'seccion': 'SEC_PREPARACIONES',
-                        'fuente_sirae': 'PREPARACIONES',
-                        'columnas': [
-                            {'codigo': 'fecha', 'etiqueta': 'Fecha', 'tipo': 'FECHA', 'origen': 'AUTOMATICO', 'campo_fuente': 'fecha'},
-                            {'codigo': 'nombre_jornada', 'etiqueta': 'Jornada', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'campo_fuente': 'nombre_jornada'},
-                            {'codigo': 'nombre_plato', 'etiqueta': 'Plato / Preparación', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'campo_fuente': 'nombre_plato'},
-                            {'codigo': 'ninos_presentes', 'etiqueta': 'Raciones Menú', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'campo_fuente': 'ninos_presentes', 'calcular_total': True},
-                            {'codigo': 'nombre_turno', 'etiqueta': 'Turno', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'campo_fuente': 'nombre_turno'},
-                            {'codigo': 'responsable_cocina', 'etiqueta': 'Responsable', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'campo_fuente': 'responsable_cocina'},
-                            {'codigo': 'estado_preparacion', 'etiqueta': 'Estado', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'campo_fuente': 'estado_preparacion'},
-                        ],
-                        'formulas': [],
-                        'conversiones_unidad': [],
-                    }
-                ],
-            },
-        },
-        {
-            'codigo': 'PAE-FMT-CONSUMO',
-            'nombre': 'Balance Consolidado de Consumo: Programado vs Despachado vs Recibido vs Consumido',
-            'descripcion': 'Comparativo integral de la cadena alimentaria desde el cálculo HU5 hasta el consumo efectivo en cocina.',
-            'categoria_proceso': 'CONSUMO',
-            'finalidad': 'Evidenciar desviaciones entre programación contractual, despacho, recepción y consumo real.',
-            'roles_autorizados': ['SuperAdministrador', 'supervisor', 'Administrador', 'JefaManipuladoras'],
-            'esquema': {
-                'encabezado': {
-                    'titulo': 'BALANCE CONSOLIDADO DE CONSUMO Y EJECUCIÓN ALIMENTARIA',
-                    'subtitulo': 'TRAZABILIDAD INTEGRAL PAE - SIRAE',
-                    'codigo_formato': 'PAE-FMT-CONSUMO',
-                },
-                'secciones': [
-                    {'codigo': 'SEC_BALANCE', 'titulo': 'Comparativo Programado vs Despachado vs Recibido vs Consumido', 'orden': 1, 'origen': 'AUTOMATICO', 'fuente_sirae': 'CONSUMO'},
-                ],
-                'campos': [
-                    {'codigo': 'institucion_nombre', 'etiqueta': 'Institución educativa', 'seccion': 'SEC_BALANCE', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'fuente_sirae': 'INSTITUCION', 'campo_fuente': 'nombre_institucion', 'requerido': True},
-                    {'codigo': 'sede_nombre', 'etiqueta': 'Sede escolar', 'seccion': 'SEC_BALANCE', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'fuente_sirae': 'SEDE', 'campo_fuente': 'nombre_sede', 'requerido': True},
-                    {'codigo': 'conclusiones_balance', 'etiqueta': 'Análisis y observaciones del balance', 'seccion': 'SEC_BALANCE', 'tipo': 'TEXTO', 'origen': 'MANUAL', 'fuente_sirae': '', 'campo_fuente': '', 'requerido': False},
-                ],
-                'tablas': [
-                    {
-                        'codigo': 'TABLA_CONSUMO',
-                        'titulo': 'Comparativo por Producto / Ingrediente',
-                        'seccion': 'SEC_BALANCE',
-                        'fuente_sirae': 'CONSUMO',
-                        'columnas': [
-                            {'codigo': 'nombre_ingrediente', 'etiqueta': 'Producto', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'campo_fuente': 'nombre_ingrediente'},
-                            {'codigo': 'unidad', 'etiqueta': 'Unidad', 'tipo': 'TEXTO', 'origen': 'AUTOMATICO', 'campo_fuente': 'unidad'},
-                            {'codigo': 'cantidad_programada', 'etiqueta': 'Programado', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'campo_fuente': 'cantidad_programada', 'calcular_total': True},
-                            {'codigo': 'cantidad_despachada', 'etiqueta': 'Despachado', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'campo_fuente': 'cantidad_despachada', 'calcular_total': True},
-                            {'codigo': 'cantidad_recibida', 'etiqueta': 'Recibido', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'campo_fuente': 'cantidad_recibida', 'calcular_total': True},
-                            {'codigo': 'cantidad_consumida', 'etiqueta': 'Consumido', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'campo_fuente': 'cantidad_consumida', 'calcular_total': True},
-                            {'codigo': 'saldo_remanente', 'etiqueta': 'Recibido - Consumido', 'tipo': 'NUMERO', 'origen': 'AUTOMATICO', 'formula': 'cantidad_recibida - cantidad_consumida', 'calcular_total': True},
-                        ],
-                        'formulas': [],
-                        'conversiones_unidad': [],
-                    }
-                ],
-            },
-        },
     ]
+
+
+def roles_por_plantilla_base_map() -> dict[str, list[str]]:
+    """Mapa canonico codigo -> roles_autorizados para las plantillas base oficiales."""
+    return {
+        tpl['codigo']: normalizar_roles_lista(tpl.get('roles_autorizados'))
+        for tpl in construir_plantillas_oficiales_base()
+    }
+

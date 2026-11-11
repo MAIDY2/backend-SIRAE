@@ -297,10 +297,18 @@ def obtener_version_publicada_para_proceso(
     if id_plantilla:
         plantilla = PlantillaOficial.objects.filter(id_plantilla=id_plantilla, activa=True).first()
     elif categoria_proceso:
-        plantilla = (
-            PlantillaOficial.objects.filter(categoria_proceso=categoria_proceso.strip().upper(), activa=True)
+        candidatas = list(
+            PlantillaOficial.objects.filter(
+                categoria_proceso=categoria_proceso.strip().upper(),
+                activa=True,
+            )
+            .prefetch_related('versiones')
             .order_by('id_plantilla')
-            .first()
+        )
+        autorizadas = [p for p in candidatas if usuario_autorizado_para_plantilla(usuario, p)]
+        plantilla = next(
+            (p for p in autorizadas if p.versiones.filter(estado='PUBLICADA').exists()),
+            autorizadas[0] if autorizadas else (candidatas[0] if candidatas else None),
         )
     else:
         raise ValidationError("Debe indicar una plantilla oficial o un proceso del PAE.")
