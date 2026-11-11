@@ -27,31 +27,45 @@ class SedeJornada(models.Model):
 
 
 class SedeJornadaGrado(models.Model):
-    """Distribución de cupos por grado dentro de una jornada de sede."""
+    """Distribución de cupos y estado por grado dentro de una jornada de sede."""
+
+    ESTADOS = [
+        ('ACTIVO', 'Activo'),
+        ('INACTIVO', 'Inactivo'),
+    ]
 
     id_sede_jornada_grado = models.AutoField(primary_key=True)
     id_sede_jornada = models.ForeignKey(
         SedeJornada,
         on_delete=models.CASCADE,
         db_column='id_sede_jornada',
-        related_name='grados',
+        related_name='grados_atendidos',
     )
     id_grado = models.ForeignKey(
         Grados,
         on_delete=models.PROTECT,
         db_column='id_grado',
-        related_name='cupos_por_sede_jornada',
+        related_name='sede_jornadas_atencion',
     )
     cupos = models.PositiveIntegerField(default=0)
+    estado = models.CharField(
+        max_length=20,
+        choices=ESTADOS,
+        default='ACTIVO',
+    )
 
     class Meta:
         db_table = 'sede_jornada_grado'
+        ordering = ['id_grado__id_grado']
         constraints = [
             models.UniqueConstraint(
                 fields=('id_sede_jornada', 'id_grado'),
                 name='unique_grado_per_sede_jornada',
             ),
         ]
+
+    def __str__(self):
+        return f'{self.id_sede_jornada} - {self.id_grado} ({self.estado})'
 
 
 class HistorialConfiguracionSede(models.Model):

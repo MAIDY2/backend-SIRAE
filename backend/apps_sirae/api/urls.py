@@ -168,6 +168,9 @@ urlpatterns = [
     # Facturas de compra
     path('', include(router_facturas_compra.urls)),
 
+    # Reportes, plantillas oficiales y planillas auto-diligenciadas (SIR-170..SIR-173)
+    path('', include('apps_sirae.reportes.api.urls')),
+
     # Inteligencia artificial: sugerencias de recetas con el inventario
     path(
         'ia/sugerencias-recetas/',

@@ -1,5 +1,5 @@
 from django.db import transaction
-from django.db.models import Max, Sum
+from django.db.models import Max, Q, Sum
 from rest_framework.exceptions import ValidationError
 
 from apps_sirae.asistencia_diaria.models import AsistenciaDiaria
@@ -60,15 +60,15 @@ def _tiene_secciones_asociadas(sede, jornada_id):
     return ContratoSeccionMenu.objects.filter(
         id_contrato__id_sede_id=sede.id_sede,
     ).filter(
-        models.Q(id_contrato__id_jornada_id=jornada_id)
-        | models.Q(id_seccion__id_jornada_id=jornada_id)
+        Q(id_contrato__id_jornada_id=jornada_id)
+        | Q(id_seccion__id_jornada_id=jornada_id)
     ).exists()
 
 
 def _snapshot(sede):
     configuraciones = SedeJornada.objects.filter(
         id_sede=sede,
-    ).select_related('id_jornada').prefetch_related('grados__id_grado')
+    ).select_related('id_jornada').prefetch_related('grados_atendidos__id_grado')
     return [
         {
             'id_jornada': configuracion.id_jornada_id,
@@ -80,7 +80,10 @@ def _snapshot(sede):
                     'nombre_grado': asignacion.id_grado.nombre_grado,
                     'cupos': asignacion.cupos,
                 }
-                for asignacion in configuracion.grados.all().order_by('id_grado_id')
+                for asignacion in sorted(
+                    (a for a in configuracion.grados_atendidos.all() if a.estado == 'ACTIVO'),
+                    key=lambda item: item.id_grado_id,
+                )
             ],
         }
         for configuracion in configuraciones.order_by('id_jornada__nombre_jornada')
@@ -123,9 +126,17 @@ def guardar_configuracion_sede(sede, usuario, jornadas):
             if grado_id in grado_ids:
                 raise ValidationError({'grados': 'No se permiten grados repetidos en una jornada.'})
             grado_ids.add(grado_id)
+            estado_raw = grado_item.get('estado')
+            estado_normalizado = None
+            if estado_raw is not None and str(estado_raw).strip() != '':
+                estado_normalizado = str(estado_raw).strip().upper()
+                if estado_normalizado not in {'ACTIVO', 'INACTIVO'}:
+                    raise ValidationError({'estado': 'El estado del grado debe ser ACTIVO o INACTIVO.'})
+
             grados_normalizados.append({
                 'id_grado': grado_id,
                 'cupos': _cupos_no_negativos(grado_item.get('cupos', 0), 'cupos'),
+                'estado': estado_normalizado,
             })
 
         if sum(grado['cupos'] for grado in grados_normalizados) > cupos:
@@ -162,7 +173,7 @@ def guardar_configuracion_sede(sede, usuario, jornadas):
             item.id_jornada_id: item
             for item in SedeJornada.objects.select_for_update()
             .filter(id_sede=sede_bloqueada)
-            .prefetch_related('grados')
+            .prefetch_related('grados_atendidos')
         }
         antes = _snapshot(sede_bloqueada)
         total_sede = sum(item['cupos'] for item in jornadas_normalizadas)
@@ -194,10 +205,11 @@ def guardar_configuracion_sede(sede, usuario, jornadas):
             cupos_contrato = _contratos_sede(sede_bloqueada, jornada_id).aggregate(
                 total=Sum('cupos'),
             )['total'] or 0
-            tiene_cupos_grado = configuracion.grados.filter(cupos__gt=0).exists()
+            tiene_cupos_grado = configuracion.grados_atendidos.filter(estado='ACTIVO', cupos__gt=0).exists()
             tiene_asistencia = any(
                 _asistencia_maxima(sede_bloqueada, asignacion.id_grado_id) > 0
-                for asignacion in configuracion.grados.all()
+                for asignacion in configuracion.grados_atendidos.all()
+                if asignacion.estado == 'ACTIVO'
             )
             if (
                 configuracion.cupos > 0
@@ -220,9 +232,14 @@ def guardar_configuracion_sede(sede, usuario, jornadas):
             cupos_grados = {grado['id_grado']: grado['cupos'] for grado in item['grados']}
             grados_actuales = {
                 asignacion.id_grado_id: asignacion
-                for asignacion in actual.grados.all()
+                for asignacion in actual.grados_atendidos.all()
             } if actual else {}
-            for grado_id in set(grados_actuales) | set(cupos_grados):
+            grados_activos_actuales = {
+                grado_id
+                for grado_id, asignacion in grados_actuales.items()
+                if asignacion.estado == 'ACTIVO'
+            }
+            for grado_id in grados_activos_actuales | set(cupos_grados):
                 cupos_nuevos = cupos_grados.get(grado_id, 0)
                 asistencia_maxima = _asistencia_maxima(sede_bloqueada, grado_id)
                 if cupos_nuevos < asistencia_maxima:
@@ -248,13 +265,27 @@ def guardar_configuracion_sede(sede, usuario, jornadas):
                 id_jornada_id=jornada_id,
                 defaults={'cupos': item['cupos']},
             )
+            grados_activos_o_conservados = set()
             for grado in item['grados']:
-                SedeJornadaGrado.objects.update_or_create(
-                    id_sede_jornada=configuracion,
-                    id_grado_id=grado['id_grado'],
-                    defaults={'cupos': grado['cupos']},
-                )
-            configuracion.grados.exclude(id_grado_id__in=cupos_grados).delete()
+                estado_objetivo = grado['estado']
+                if estado_objetivo is None:
+                    estado_objetivo = 'ACTIVO' if grado['cupos'] > 0 else 'INACTIVO'
+
+                if estado_objetivo == 'ACTIVO' or grado['id_grado'] in grados_actuales:
+                    SedeJornadaGrado.objects.update_or_create(
+                        id_sede_jornada=configuracion,
+                        id_grado_id=grado['id_grado'],
+                        defaults={
+                            'cupos': 0 if estado_objetivo == 'INACTIVO' else grado['cupos'],
+                            'estado': estado_objetivo,
+                        },
+                    )
+                    if estado_objetivo == 'ACTIVO':
+                        grados_activos_o_conservados.add(grado['id_grado'])
+
+            configuracion.grados_atendidos.exclude(
+                id_grado_id__in=grados_activos_o_conservados
+            ).update(estado='INACTIVO', cupos=0)
 
         if retiradas:
             SedeJornada.objects.filter(

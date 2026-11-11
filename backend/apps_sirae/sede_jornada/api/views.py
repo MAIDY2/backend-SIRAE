@@ -13,7 +13,7 @@ class SedeJornadaViewSet(viewsets.ModelViewSet):
         'id_sede',
         'id_sede__id_institucion',
         'id_jornada',
-    ).prefetch_related('grados__id_grado__id_grupo_gramaje').all()
+    ).prefetch_related('grados_atendidos__id_grado__id_grupo_gramaje').all()
     serializer_class = SedeJornadaSerializer
     permission_classes = [IsSuperAdminOrReadOnly]
 

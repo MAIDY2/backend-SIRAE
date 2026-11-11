@@ -41,7 +41,7 @@ class SedeJornadaSerializer(serializers.ModelSerializer):
         ]
 
     def get_grados_atendidos(self, obj):
-        relaciones = list(obj.grados.select_related('id_grado__id_grupo_gramaje').all())
+        relaciones = list(obj.grados_atendidos.select_related('id_grado__id_grupo_gramaje').all())
         return [
             {
                 'id_sede_jornada_grado': rel.id_sede_jornada_grado,
