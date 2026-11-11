@@ -98,6 +98,7 @@ INSTALLED_APPS = [
     "apps_sirae.contratos_seccion_menu",
     "apps_sirae.entregas",
     "apps_sirae.notificaciones",
+    "apps_sirae.mensajes",
     "apps_sirae.inventario",
     "apps_sirae.entradas_inventario",
     "apps_sirae.salidas_inventario",
