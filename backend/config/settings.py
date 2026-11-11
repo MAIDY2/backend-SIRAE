@@ -115,6 +115,7 @@ INSTALLED_APPS = [
     "apps_sirae.pasospreparacion",
     "apps_sirae.preparacion_asignada",
     "apps_sirae.gramage",
+    "apps_sirae.reportes",
 ]
 
 AUTH_USER_MODEL = "usuarios.Usuario"
