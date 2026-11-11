@@ -272,7 +272,7 @@ EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
 
 FRONTEND_URL = os.getenv(
     "FRONTEND_URL",
-    "http://localhost:5173",
+    "http://localhost:4200",
 )
 
 PASSWORD_RESET_EXPOSE_CODE = (

@@ -24,6 +24,8 @@ services:
         sync: false
       - key: CSRF_TRUSTED_ORIGINS
         sync: false
+      - key: BREVO_API_KEY
+        sync: false
       - key: EMAIL_BACKEND
         value: "django.core.mail.backends.smtp.EmailBackend"
       - key: EMAIL_HOST

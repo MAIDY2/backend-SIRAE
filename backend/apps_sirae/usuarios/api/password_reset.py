@@ -84,7 +84,9 @@ class SolicitarCodigoRecuperacionPasswordView(APIView):
         )
 
     def post(self, request):
-        correo = request.data.get("correo", "")
+        correo = request.data.get("correo")
+        if correo is None:
+            correo = request.data.get("email", "")
         if not isinstance(correo, str) or not correo.strip():
             return Response(
                 {"error": "Debes proporcionar un correo electrónico válido."},
@@ -139,7 +141,8 @@ class SolicitarCodigoRecuperacionPasswordView(APIView):
             codigo_existente = PasswordResetCode.objects.filter(usuario=usuario).first()
             ahora = timezone.now()
             if (
-                codigo_existente is not None
+                not settings.DEBUG
+                and codigo_existente is not None
                 and codigo_existente.creado_en > ahora - self.INTERVALO_SOLICITUD
             ):
                 return self.respuesta_generica()
@@ -198,7 +201,9 @@ class ConfirmarCodigoRecuperacionPasswordView(APIView):
     MAX_INTENTOS = 5
 
     def post(self, request):
-        correo = request.data.get("correo", "")
+        correo = request.data.get("correo")
+        if correo is None:
+            correo = request.data.get("email", "")
         codigo = request.data.get("codigo", "")
         nueva_password = request.data.get("nueva_password", "")
         confirmar_password = request.data.get("confirmar_password", "")
@@ -289,7 +294,8 @@ class ConfirmarCodigoRecuperacionPasswordView(APIView):
                 )
 
             recuperacion.usuario.set_password(nueva_password)
-            recuperacion.usuario.save(update_fields=["password"])
+            recuperacion.usuario.debe_cambiar_password = False
+            recuperacion.usuario.save(update_fields=["password", "debe_cambiar_password"])
             recuperacion.delete()
 
         return Response(
@@ -311,6 +317,14 @@ class SolicitarRecuperacionPasswordView(APIView):
             email = ''
         email = email.strip()
         if not email:
+            return Response(
+                {"error": "Debes proporcionar un correo electrónico válido."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            validate_email(email)
+        except ValidationError:
             return Response(
                 {"error": "Debes proporcionar un correo electrónico válido."},
                 status=status.HTTP_400_BAD_REQUEST
@@ -488,8 +502,9 @@ class ConfirmarRecuperacionPasswordView(APIView):
             return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
 
         # Hashear y actualizar contraseña
-        usuario.password = make_password(nueva_password)
-        usuario.save()
+        usuario.set_password(nueva_password)
+        usuario.debe_cambiar_password = False
+        usuario.save(update_fields=["password", "debe_cambiar_password"])
 
         return Response(
             {
@@ -543,9 +558,9 @@ class CambiarPasswordView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        usuario.password = make_password(nueva_password)
+        usuario.set_password(nueva_password)
         usuario.debe_cambiar_password = False
-        usuario.save()
+        usuario.save(update_fields=["password", "debe_cambiar_password"])
 
         return Response(
             {
