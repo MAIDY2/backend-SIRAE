@@ -42,7 +42,7 @@ class UsuarioPagination(PageNumberPagination):
 
 class UsuarioViewSet(viewsets.ModelViewSet):
     queryset = Usuario.objects.select_related(
-        'rol', 'id_institucion', 'id_sede', 'creado_por'
+        'rol', 'id_institucion', 'id_sede', 'id_jornada', 'creado_por'
     ).order_by('id_usuario')
     serializer_class = UsuarioSerializer
     permission_classes = [IsAuthenticated, UsuarioConsultationAndScopePermission]
@@ -183,7 +183,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
             return Usuario.objects.none()
 
         base_qs = Usuario.objects.select_related(
-            'rol', 'id_institucion', 'id_sede', 'creado_por'
+            'rol', 'id_institucion', 'id_sede', 'id_jornada', 'creado_por'
         ).order_by('id_usuario')
 
         # Criterio 5: El Superadministrador puede consultar y visualizar los usuarios

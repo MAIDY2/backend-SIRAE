@@ -2,8 +2,56 @@ from rest_framework import serializers
 
 from apps_sirae.ingredientes.models import Ingrediente
 from apps_sirae.tipos_mercado.models import TipoMercado
+from apps_sirae.sedes.models import Sede
 
-from apps_sirae.entregas.models import Entrega
+from apps_sirae.entregas.models import CalculoEntrega, Entrega
+
+
+class CalculoEntregaSerializer(serializers.ModelSerializer):
+    institucion_nombre = serializers.CharField(
+        source='id_institucion.nombre_institucion', read_only=True, default=''
+    )
+    sede_nombre = serializers.CharField(
+        source='id_sede.nombre_sede', read_only=True, default=''
+    )
+    contrato_numero = serializers.CharField(
+        source='id_contrato.numero_cor', read_only=True, default=''
+    )
+    jornada_nombre = serializers.CharField(
+        source='id_jornada.nombre_jornada', read_only=True, default=''
+    )
+
+    class Meta:
+        model = CalculoEntrega
+        fields = [
+            'id_calculo',
+            'codigo_documento',
+            'id_institucion',
+            'institucion_nombre',
+            'id_sede',
+            'sede_nombre',
+            'id_contrato',
+            'contrato_numero',
+            'id_jornada',
+            'jornada_nombre',
+            'id_usuario_supervisor',
+            'supervisor_nombre',
+            'fecha_referencia',
+            'periodo_inicio',
+            'periodo_fin',
+            'periodo_descripcion',
+            'dias_perecederos',
+            'dias_no_perecederos',
+            'total_cupos',
+            'autorizacion_exceso',
+            'autorizado_por',
+            'justificacion_exceso',
+            'parametros_snapshot',
+            'consolidado_snapshot',
+            'detalle_grados_snapshot',
+            'alertas_snapshot',
+            'fecha_creacion',
+        ]
 
 
 class EntregaSerializer(serializers.ModelSerializer):
@@ -12,6 +60,7 @@ class EntregaSerializer(serializers.ModelSerializer):
     institucion_nombre = serializers.SerializerMethodField()
     sede_nombre = serializers.SerializerMethodField()
     usuario_receptor_nombre = serializers.SerializerMethodField()
+    contrato_numero = serializers.SerializerMethodField()
 
     class Meta:
         model = Entrega
@@ -21,6 +70,14 @@ class EntregaSerializer(serializers.ModelSerializer):
             'institucion_nombre',
             'id_sede',
             'sede_nombre',
+            'id_contrato',
+            'contrato_numero',
+            'id_calculo_entrega',
+            'documento_entrega',
+            'cantidad_requerida_calculo',
+            'supera_calculo',
+            'autorizado_por',
+            'justificacion_exceso',
             'id_ingrediente',
             'ingrediente_nombre',
             'id_usuario_supervisor',
@@ -45,6 +102,7 @@ class EntregaSerializer(serializers.ModelSerializer):
             'id_usuario_supervisor',
             'id_usuario_receptor',
             'fecha_recepcion',
+            'id_calculo_entrega',
         ]
 
     def validate(self, attrs):
@@ -66,6 +124,18 @@ class EntregaSerializer(serializers.ModelSerializer):
                         attrs['id_tipo_mercado'] = tm.id_tipo_mercado
             except Ingrediente.DoesNotExist:
                 pass
+        id_sede = attrs.get('id_sede') or getattr(self.instance, 'id_sede', None)
+        id_inst = attrs.get('id_institucion') or getattr(self.instance, 'id_institucion', None)
+        if id_sede and id_inst:
+            inst_id_val = id_inst.pk if hasattr(id_inst, 'pk') else id_inst
+            sede_inst_val = getattr(id_sede, 'id_institucion_id', None)
+            if sede_inst_val is None and hasattr(id_sede, 'pk'):
+                sede_inst_val = Sede.objects.filter(pk=id_sede.pk).values_list('id_institucion_id', flat=True).first()
+            if sede_inst_val and sede_inst_val != inst_id_val:
+                raise serializers.ValidationError(
+                    {'id_sede': 'La sede seleccionada no pertenece a la institución receptora.'}
+                )
+
         return super().validate(attrs)
 
     def get_ingrediente_nombre(self, entrega):
@@ -98,3 +168,8 @@ class EntregaSerializer(serializers.ModelSerializer):
         if entrega.id_usuario_receptor:
             return f"{entrega.id_usuario_receptor.nombre} {entrega.id_usuario_receptor.apellido}".strip()
         return None
+
+    def get_contrato_numero(self, entrega):
+        if entrega.id_contrato:
+            return getattr(entrega.id_contrato, 'numero_cor', '') or ''
+        return ''

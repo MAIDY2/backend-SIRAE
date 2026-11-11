@@ -1,5 +1,5 @@
 
-from django.db.models import Q, Sum
+from django.db.models import Sum
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -9,6 +9,7 @@ from .serializers import SedeSerializer
 from apps_sirae.contratos_pae.models import Contrato
 from apps_sirae.contratos_seccion_menu.models import ContratoSeccionMenu
 from apps_sirae.sede_jornada.models import SedeJornada
+from apps_sirae.usuarios.alcance import obtener_sedes_autorizadas
 from apps_sirae.usuarios.permissions import IsAdminRole, IsSuperAdminOrReadOnly
 
 
@@ -18,44 +19,7 @@ class SedeViewSet(viewsets.ModelViewSet):
     permission_classes = [IsSuperAdminOrReadOnly]
 
     def get_queryset(self):
-        queryset = super().get_queryset()
-        usuario = self.request.user
-
-        if usuario.is_authenticated:
-
-            # El Super Administrador puede ver todas las sedes.
-            if usuario.es_super_administrador():
-                pass
-
-            # El Supervisor solamente ve sus sedes asignadas.
-            elif usuario.es_supervisor():
-                filtro = Q(
-                    id_institucion__supervisores_asignados__id_supervisor=usuario
-                )
-
-                # Institución asociada directamente al supervisor.
-                if usuario.id_institucion_id:
-                    filtro |= Q(
-                        id_institucion_id=usuario.id_institucion_id
-                    )
-
-                # Contratos asociados a una institución.
-                filtro |= Q(
-                    id_institucion__contratos__id_usuario_supervisor=usuario
-                )
-
-                # Contratos asociados directamente a una sede.
-                filtro |= Q(
-                    contratos__id_usuario_supervisor=usuario
-                )
-
-                queryset = queryset.filter(filtro).distinct()
-
-            # Administrador regular: solamente su institución.
-            elif usuario.es_administrador():
-                queryset = queryset.filter(
-                    id_institucion_id=usuario.id_institucion_id
-                )
+        queryset = obtener_sedes_autorizadas(self.request.user, super().get_queryset())
 
         # Filtro opcional por institución.
         institucion_id = self.request.query_params.get('id_institucion')

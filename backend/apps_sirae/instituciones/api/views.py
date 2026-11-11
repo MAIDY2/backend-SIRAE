@@ -3,6 +3,7 @@ from rest_framework.response import Response
 
 from ..models import Institucion, SupervisorInstitucion
 from .serializers import InstitucionSerializer, SupervisorInstitucionSerializer
+from apps_sirae.usuarios.alcance import obtener_instituciones_autorizadas
 from apps_sirae.usuarios.permissions import IsSuperAdminOrReadOnly
 
 
@@ -12,61 +13,11 @@ class InstitucionViewSet(viewsets.ModelViewSet):
     permission_classes = [IsSuperAdminOrReadOnly]
 
     def get_queryset(self):
-        user = self.request.user
-
         qs = Institucion.objects.all().prefetch_related(
             'sedes',
             'supervisores_asignados__id_supervisor'
         )
-
-        if not user or not user.is_authenticated:
-            return qs
-
-        # Super Administrador ve todas las instituciones.
-        if user.es_super_administrador():
-            return qs
-
-        # Supervisor ve sus instituciones asignadas.
-        if user.es_supervisor():
-            asignadas_ids = set(
-                user.instituciones_asignadas.values_list(
-                    'id_institucion_id',
-                    flat=True
-                )
-            )
-
-            from apps_sirae.contratos_pae.models import Contrato
-
-            contratos_ids = set(
-                Contrato.objects.filter(
-                    id_usuario_supervisor=user
-                ).values_list(
-                    'id_institucion_id',
-                    flat=True
-                )
-            )
-
-            ids_totales = asignadas_ids.union(
-                {cid for cid in contratos_ids if cid}
-            )
-
-            if user.id_institucion_id:
-                ids_totales.add(user.id_institucion_id)
-
-            if ids_totales:
-                return qs.filter(
-                    id_institucion__in=ids_totales
-                )
-
-            return qs.none()
-
-        # Administrador regular ve su institución.
-        if user.es_administrador() and user.id_institucion_id:
-            return qs.filter(
-                id_institucion=user.id_institucion_id
-            )
-
-        return qs
+        return obtener_instituciones_autorizadas(self.request.user, qs)
 
     def list(self, request, *args, **kwargs):
         # Forzamos una respuesta de lista plana para que Angular no sufra por paginación

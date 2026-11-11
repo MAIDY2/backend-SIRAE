@@ -87,6 +87,16 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
         related_name='usuarios'
     )
 
+    id_jornada = models.ForeignKey(
+        'jornadas.Jornada',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='id_jornada',
+        related_name='usuarios',
+        db_constraint=False
+    )
+
     is_active = models.BooleanField(default=True)
 
     is_staff = models.BooleanField(default=False)
@@ -169,6 +179,10 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
         id_s = kwargs.pop('id_sede', None)
         if id_s is not None and 'id_sede' not in kwargs and 'id_sede_id' not in kwargs:
             kwargs['id_sede_id'] = getattr(id_s, 'id_sede', id_s)
+
+        id_j = kwargs.pop('id_jornada', None)
+        if id_j is not None and 'id_jornada' not in kwargs and 'id_jornada_id' not in kwargs:
+            kwargs['id_jornada_id'] = getattr(id_j, 'id_jornada', id_j)
 
         super().__init__(*args, **kwargs)
 
