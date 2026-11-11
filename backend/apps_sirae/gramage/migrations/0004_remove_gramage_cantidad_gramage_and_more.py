@@ -5,12 +5,78 @@ from django.db import migrations, models
 
 
 def sync_tabla_gramajes(apps, schema_editor):
+    Gramage = apps.get_model('gramage', 'Gramage')
     connection = schema_editor.connection
-    tablas = connection.introspection.table_names()
-    if 'gramajes' not in tablas:
-        from django.apps import apps as global_apps
-        Gramage = global_apps.get_model('gramage', 'Gramage')
-        schema_editor.create_model(Gramage)
+    vendor = connection.vendor
+
+    if vendor == 'postgresql':
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.tables 
+                        WHERE table_name = 'gramage_gramage'
+                    ) AND NOT EXISTS (
+                        SELECT 1 FROM information_schema.tables 
+                        WHERE table_name = 'gramajes'
+                    ) THEN
+                        ALTER TABLE "gramage_gramage" RENAME TO "gramajes";
+                    END IF;
+                END
+                $$;
+            """)
+            cursor.execute("""
+                SELECT 1 FROM information_schema.tables 
+                WHERE table_name = 'gramajes';
+            """)
+            existe_gramajes = cursor.fetchone() is not None
+
+        if not existe_gramajes:
+            schema_editor.create_model(Gramage)
+        else:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'gramajes' AND column_name = 'id_gramage'
+                        ) AND NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'gramajes' AND column_name = 'id_gramaje'
+                        ) THEN
+                            ALTER TABLE "gramajes" RENAME COLUMN "id_gramage" TO "id_gramaje";
+                        END IF;
+
+                        IF EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'gramajes' AND column_name = 'cantidad_gramage'
+                        ) AND NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'gramajes' AND column_name = 'cantidad_gramaje'
+                        ) THEN
+                            ALTER TABLE "gramajes" RENAME COLUMN "cantidad_gramage" TO "cantidad_gramaje";
+                        END IF;
+                    END
+                    $$;
+                """)
+    else:
+        tablas = [t.lower() for t in connection.introspection.table_names()]
+        if 'gramajes' not in tablas and 'gramage_gramage' in tablas:
+            with connection.cursor() as cursor:
+                cursor.execute('ALTER TABLE "gramage_gramage" RENAME TO "gramajes"')
+            tablas = [t.lower() for t in connection.introspection.table_names()]
+
+        if 'gramajes' not in tablas:
+            schema_editor.create_model(Gramage)
+        else:
+            with connection.cursor() as cursor:
+                cols = [col.name.lower() for col in connection.introspection.get_table_description(cursor, 'gramajes')]
+                if 'id_gramage' in cols and 'id_gramaje' not in cols:
+                    cursor.execute('ALTER TABLE "gramajes" RENAME COLUMN "id_gramage" TO "id_gramaje"')
+                if 'cantidad_gramage' in cols and 'cantidad_gramaje' not in cols:
+                    cursor.execute('ALTER TABLE "gramajes" RENAME COLUMN "cantidad_gramage" TO "cantidad_gramaje"')
 
 
 class Migration(migrations.Migration):

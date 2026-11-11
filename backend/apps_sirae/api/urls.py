@@ -19,6 +19,7 @@ from apps_sirae.entregas.api.router import router_entregas
 from apps_sirae.entradas_inventario.api.router import router_entradas_inventario
 from apps_sirae.salidas_inventario.api.router import router_salidas_inventario
 from apps_sirae.notificaciones.api.router import router_notificaciones
+from apps_sirae.mensajes.api.router import router_mensajes
 from apps_sirae.grados.api.router import router_grados
 from apps_sirae.gramage.api.router import router_gramage
 from apps_sirae.inventario.api.router import router_inventario
@@ -141,8 +142,9 @@ urlpatterns = [
     path('', include(router_salidas_inventario.urls)),
     path('', include(router_inventario.urls)),
 
-    # Notificaciones e ingredientes
+    # Notificaciones, mensajes e ingredientes
     path('', include(router_notificaciones.urls)),
+    path('', include(router_mensajes.urls)),
     path('', include(router_ingredientes.urls)),
 
     # Turnos y usuarios por turno

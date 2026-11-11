@@ -20,7 +20,6 @@ from apps_sirae.unidades_medida.services import (
 )
 from apps_sirae.usuarios.permissions import IsSuperAdminOrReadOnly
 
-
 class UnidadMedidaApiViewSet(ModelViewSet):
     serializer_class = UnidadMedidaSerializer
     queryset = UnidadMedida.objects.all().order_by('tipo_magnitud', 'nombre')

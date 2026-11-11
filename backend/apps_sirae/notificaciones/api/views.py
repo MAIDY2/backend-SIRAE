@@ -20,6 +20,7 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
     )
     serializer_class = NotificacionSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = None
 
     def get_queryset(self):
         usuario_id = getattr(self.request.user, 'id_usuario', None)
