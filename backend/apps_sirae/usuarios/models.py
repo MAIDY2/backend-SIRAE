@@ -1,7 +1,9 @@
 import unicodedata
 
+from django.contrib.auth.hashers import identify_hasher
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
+from django.utils import timezone
 
 from apps_sirae.roles.models import Rol
 
@@ -12,7 +14,7 @@ class UsuarioManager(BaseUserManager):
         if not correo:
             raise ValueError('El usuario debe tener un correo electrónico')
 
-        correo = self.normalize_email(correo)
+        correo = self.normalize_email(correo).strip().lower()
 
         user = self.model(
             correo=correo,
@@ -85,6 +87,16 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
         related_name='usuarios'
     )
 
+    id_jornada = models.ForeignKey(
+        'jornadas.Jornada',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='id_jornada',
+        related_name='usuarios',
+        db_constraint=False
+    )
+
     is_active = models.BooleanField(default=True)
 
     is_staff = models.BooleanField(default=False)
@@ -92,6 +104,33 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
     debe_cambiar_password = models.BooleanField(
         default=False,
         help_text="Indica si el usuario está obligado a cambiar su contraseña en el próximo inicio de sesión."
+    )
+
+    intentos_fallidos_login = models.PositiveSmallIntegerField(default=0)
+
+    bloqueado_hasta = models.DateTimeField(null=True, blank=True)
+
+    ultimo_intento_fallido = models.DateTimeField(null=True, blank=True)
+
+    creado_por = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='creado_por',
+        related_name='usuarios_creados',
+        help_text="Usuario (actor) que registró la cuenta en el sistema."
+    )
+
+    fecha_creacion = models.DateTimeField(
+        default=timezone.now,
+        editable=False,
+        help_text="Timestamp exacto en que se creó la cuenta."
+    )
+
+    fecha_actualizacion = models.DateTimeField(
+        auto_now=True,
+        help_text="Timestamp de la última actualización del registro."
     )
 
     objects = UsuarioManager()
@@ -102,6 +141,7 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
 
     class Meta:
         db_table = 'usuarios'
+        ordering = ['id_usuario']
 
     def __init__(self, *args, **kwargs):
         email = kwargs.pop('email', None)
@@ -140,7 +180,72 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
         if id_s is not None and 'id_sede' not in kwargs and 'id_sede_id' not in kwargs:
             kwargs['id_sede_id'] = getattr(id_s, 'id_sede', id_s)
 
+        id_j = kwargs.pop('id_jornada', None)
+        if id_j is not None and 'id_jornada' not in kwargs and 'id_jornada_id' not in kwargs:
+            kwargs['id_jornada_id'] = getattr(id_j, 'id_jornada', id_j)
+
         super().__init__(*args, **kwargs)
+
+    @staticmethod
+    def _es_password_hasheada(valor: str) -> bool:
+        if not valor:
+            return False
+        if valor.startswith('!'):
+            return True
+        try:
+            identify_hasher(valor)
+            return True
+        except Exception:
+            return False
+
+    def save(self, *args, **kwargs):
+        if self.correo:
+            self.correo = self.correo.strip().lower()
+        if self.numero_documento:
+            self.numero_documento = self.numero_documento.strip()
+        if self.password and not self._es_password_hasheada(self.password):
+            self.set_password(self.password)
+        super().save(*args, **kwargs)
+        if self.pk and not self.is_active:
+            self._revocar_tokens_si_inactivo()
+
+    def _revocar_tokens_si_inactivo(self):
+        try:
+            from django.core.cache import cache
+            from rest_framework_simplejwt.token_blacklist.models import (
+                BlacklistedToken,
+                OutstandingToken,
+            )
+
+            ahora_ts = int(timezone.now().timestamp())
+            for outstanding in OutstandingToken.objects.filter(user=self):
+                BlacklistedToken.objects.get_or_create(token=outstanding)
+                if outstanding.jti:
+                    exp_ts = (
+                        int(outstanding.expires_at.timestamp())
+                        if outstanding.expires_at
+                        else (ahora_ts + 86400)
+                    )
+                    ttl = max(60, exp_ts - ahora_ts)
+                    cache.set(f"revoked_jti:{outstanding.jti}", True, timeout=ttl)
+        except Exception:
+            pass
+
+    @property
+    def esta_bloqueado(self) -> bool:
+        return bool(self.bloqueado_hasta and self.bloqueado_hasta > timezone.now())
+
+    @property
+    def estado_actual(self) -> str:
+        if not self.is_active:
+            return 'Inactivo'
+        if self.esta_bloqueado:
+            return 'Bloqueado'
+        return 'Activo'
+
+    @property
+    def creado_en(self):
+        return self.fecha_creacion
 
     @property
     def email(self):
@@ -187,10 +292,19 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
         )
 
     def es_supervisor(self):
-        return self._rol_normalizado() in {'supervisor', 'coordinador', 'coordinador pae'}
+        rol_norm = self._rol_normalizado()
+        return (
+            rol_norm in {'supervisor', 'coordinador', 'coordinador pae', 'supervisor pae'}
+            or 'supervisor' in rol_norm
+            or 'coordinador' in rol_norm
+        )
 
     def es_administrador(self):
-        return self._rol_normalizado() in {'administrador', 'admin'}
+        rol_norm = self._rol_normalizado()
+        return (
+            rol_norm in {'administrador', 'admin', 'administrador institucional'}
+            or ('admin' in rol_norm and 'super' not in rol_norm)
+        )
 
     def es_jefa_manipuladoras(self):
         return self._rol_normalizado() in {'jefamanipuladoras', 'jefa de manipuladoras'}
@@ -200,6 +314,36 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return f"{self.nombre} {self.apellido} - {self.correo}"
+
+
+class AuditoriaUsuario(models.Model):
+    id_auditoria = models.AutoField(primary_key=True)
+    usuario_afectado = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='registros_auditoria',
+    )
+    usuario_actor = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='acciones_auditoria_usuarios',
+    )
+    accion = models.CharField(max_length=50, default='CREACION')
+    estado_anterior = models.CharField(max_length=30, blank=True, default='')
+    estado_nuevo = models.CharField(max_length=30, blank=True, default='')
+    detalle = models.TextField(blank=True, default='')
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'usuarios_auditoria'
+        ordering = ['-creado_en']
+
+    def __str__(self):
+        actor = self.usuario_actor.correo if self.usuario_actor else 'Sistema'
+        return f"[{self.accion}] Usuario: {self.usuario_afectado.correo} por {actor} ({self.creado_en})"
 
 
 class PasswordResetCode(models.Model):
@@ -218,3 +362,26 @@ class PasswordResetCode(models.Model):
 
     def __str__(self):
         return f"Código de recuperación para {self.usuario.correo}"
+
+
+class IntentoAutenticacion(models.Model):
+    correo = models.EmailField(max_length=150)
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='intentos_autenticacion',
+    )
+    exitoso = models.BooleanField(default=False)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    motivo = models.CharField(max_length=120, blank=True, default='')
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'usuarios_intento_autenticacion'
+        ordering = ['-creado_en']
+
+    def __str__(self):
+        estado = 'Exitoso' if self.exitoso else 'Fallido'
+        return f"Intento {estado} ({self.correo}) - {self.creado_en}"

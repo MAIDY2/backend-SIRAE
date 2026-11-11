@@ -16,10 +16,16 @@ class InstitucionSerializer(serializers.ModelSerializer):
 
     def get_administrador_asignado(self, obj):
         from apps_sirae.usuarios.models import Usuario
+        from django.db.models import Q
         admin = Usuario.objects.filter(
             id_institucion=obj,
             is_active=True,
-            rol__nombre__in=['Administrador', 'administrador', 'admin']
+        ).filter(
+            Q(rol__nombre__iexact='Administrador')
+            | Q(rol__nombre__iexact='administrador')
+            | Q(rol__nombre__iexact='admin')
+            | Q(rol__nombre__iexact='Administrador Institucional')
+            | (Q(rol__nombre__icontains='admin') & ~Q(rol__nombre__icontains='super'))
         ).first()
         if admin:
             return {
@@ -56,13 +62,35 @@ class SupervisorInstitucionSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs):
-        id_inst = attrs.get('id_institucion')
-        id_sup = attrs.get('id_supervisor')
+        id_inst = attrs.get('id_institucion') or (
+            self.instance.id_institucion if self.instance else None
+        )
+        id_sup = attrs.get('id_supervisor') or (
+            self.instance.id_supervisor if self.instance else None
+        )
+
+        if id_inst and not id_inst.es_activa():
+            raise serializers.ValidationError({
+                'id_institucion': (
+                    f"No se puede asignar la institución '{id_inst.nombre_institucion}' "
+                    "porque se encuentra en estado inactivo."
+                )
+            })
+
+        if id_sup and not id_sup.es_supervisor():
+            raise serializers.ValidationError({
+                'id_supervisor': (
+                    "Solo los usuarios con rol de Supervisor pueden tener "
+                    "múltiples instituciones asignadas mediante esta relación."
+                )
+            })
 
         # Regla de negocio PAE: Una institución solo puede tener un único Supervisor responsable
         filtro = SupervisorInstitucion.objects.filter(id_institucion=id_inst)
         if self.instance:
             filtro = filtro.exclude(pk=self.instance.pk)
+        if id_sup:
+            filtro = filtro.exclude(id_supervisor=id_sup)
 
         rel_existente = filtro.select_related('id_supervisor', 'id_institucion').first()
         if rel_existente:

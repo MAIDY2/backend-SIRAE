@@ -2,6 +2,71 @@ from django.conf import settings
 from django.db import models
 
 
+class CalculoEntrega(models.Model):
+    """Soporte auditable e inmutable del cálculo de abastecimiento confirmado al despachar."""
+
+    id_calculo = models.AutoField(primary_key=True)
+    codigo_documento = models.CharField(max_length=64, unique=True)
+    id_institucion = models.ForeignKey(
+        'instituciones.Institucion',
+        on_delete=models.RESTRICT,
+        db_column='id_institucion',
+        null=True,
+        blank=True,
+        related_name='calculos_entrega',
+    )
+    id_sede = models.ForeignKey(
+        'sedes.Sede',
+        on_delete=models.RESTRICT,
+        db_column='id_sede',
+        null=True,
+        blank=True,
+        related_name='calculos_entrega',
+    )
+    id_contrato = models.ForeignKey(
+        'contratos_pae.Contrato',
+        on_delete=models.SET_NULL,
+        db_column='id_contrato',
+        null=True,
+        blank=True,
+        related_name='calculos_entrega',
+    )
+    id_jornada = models.ForeignKey(
+        'jornadas.Jornada',
+        on_delete=models.SET_NULL,
+        db_column='id_jornada',
+        null=True,
+        blank=True,
+        related_name='calculos_entrega',
+    )
+    id_usuario_supervisor = models.IntegerField(null=True, blank=True)
+    supervisor_nombre = models.CharField(max_length=150, blank=True, default='')
+    fecha_referencia = models.DateField(null=True, blank=True)
+    periodo_inicio = models.DateField(null=True, blank=True)
+    periodo_fin = models.DateField(null=True, blank=True)
+    periodo_descripcion = models.CharField(max_length=150, blank=True, default='')
+    dias_perecederos = models.PositiveIntegerField(default=5)
+    dias_no_perecederos = models.PositiveIntegerField(default=20)
+    total_cupos = models.PositiveIntegerField(default=0)
+
+    autorizacion_exceso = models.BooleanField(default=False)
+    autorizado_por = models.CharField(max_length=150, blank=True, default='')
+    justificacion_exceso = models.TextField(blank=True, default='')
+
+    parametros_snapshot = models.JSONField(default=dict)
+    consolidado_snapshot = models.JSONField(default=list)
+    detalle_grados_snapshot = models.JSONField(default=list)
+    alertas_snapshot = models.JSONField(default=list)
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'calculos_entrega'
+        ordering = ['-fecha_creacion', '-id_calculo']
+
+    def __str__(self):
+        return f"Cálculo {self.codigo_documento} - Sede {self.id_sede_id}"
+
+
 class Entrega(models.Model):
     ESTADOS = [
         ('EN_TRANSITO', 'En tránsito'),
@@ -37,6 +102,29 @@ class Entrega(models.Model):
         blank=True,
         related_name='entregas'
     )
+    id_calculo_entrega = models.ForeignKey(
+        CalculoEntrega,
+        on_delete=models.SET_NULL,
+        db_column='id_calculo_entrega',
+        null=True,
+        blank=True,
+        related_name='entregas',
+    )
+    id_contrato = models.ForeignKey(
+        'contratos_pae.Contrato',
+        on_delete=models.SET_NULL,
+        db_column='id_contrato',
+        null=True,
+        blank=True,
+        related_name='entregas',
+    )
+    documento_entrega = models.CharField(max_length=64, blank=True, default='')
+    cantidad_requerida_calculo = models.DecimalField(
+        max_digits=12, decimal_places=3, null=True, blank=True
+    )
+    supera_calculo = models.BooleanField(default=False)
+    autorizado_por = models.CharField(max_length=150, blank=True, default='')
+    justificacion_exceso = models.TextField(blank=True, default='')
 
     estado = models.CharField(max_length=30, choices=ESTADOS, default='EN_TRANSITO')
     cantidad_recibida = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
@@ -52,6 +140,7 @@ class Entrega(models.Model):
         related_name='entregas_recibidas'
     )
     fecha_recepcion = models.DateTimeField(null=True, blank=True)
+    inventario_preacreditado = models.BooleanField(default=False)
 
     class Meta:
         db_table = 'entregas'

@@ -1,4 +1,3 @@
-
 from django.urls import include, path
 
 from apps_sirae.ia_sugerencias.views import sugerencias_recetas_ia
@@ -14,11 +13,13 @@ from apps_sirae.preparacion_asignada.api.router import (
 from apps_sirae.preparacion_asignada.api.views import PreparacionAsignadaApiViewSet
 
 from apps_sirae.asistencia_diaria.api.router import router_asistencia_diaria
+from apps_sirae.asistencia_diaria.views import CalculoRacionesPorGradoView
 from apps_sirae.menus.api.router import router_menus
 from apps_sirae.entregas.api.router import router_entregas
 from apps_sirae.entradas_inventario.api.router import router_entradas_inventario
 from apps_sirae.salidas_inventario.api.router import router_salidas_inventario
 from apps_sirae.notificaciones.api.router import router_notificaciones
+from apps_sirae.mensajes.api.router import router_mensajes
 from apps_sirae.grados.api.router import router_grados
 from apps_sirae.gramage.api.router import router_gramage
 from apps_sirae.inventario.api.router import router_inventario
@@ -62,6 +63,16 @@ urlpatterns = [
         'auth/confirmar-recuperacion-password/',
         ConfirmarCodigoRecuperacionPasswordView.as_view(),
         name='confirmar-recuperacion-password',
+    ),
+    path(
+        'auth/password-reset/',
+        SolicitarRecuperacionPasswordView.as_view(),
+        name='password-reset',
+    ),
+    path(
+        'auth/password-reset/solicitar/',
+        SolicitarRecuperacionPasswordView.as_view(),
+        name='password-reset-solicitar',
     ),
     path(
         'auth/password-reset/validar-token/',
@@ -113,6 +124,16 @@ urlpatterns = [
 
     # Asistencia, menús y entregas
     path('', include(router_asistencia_diaria.urls)),
+    path(
+        'asistencia_diaria/calculo/',
+        CalculoRacionesPorGradoView.as_view(),
+        name='asistencia-diaria-calculo-legacy',
+    ),
+    path(
+        'asistencia-diaria/calculo/',
+        CalculoRacionesPorGradoView.as_view(),
+        name='asistencia-diaria-calculo',
+    ),
     path('', include(router_menus.urls)),
     path('', include(router_entregas.urls)),
 
@@ -121,8 +142,9 @@ urlpatterns = [
     path('', include(router_salidas_inventario.urls)),
     path('', include(router_inventario.urls)),
 
-    # Notificaciones e ingredientes
+    # Notificaciones, mensajes e ingredientes
     path('', include(router_notificaciones.urls)),
+    path('', include(router_mensajes.urls)),
     path('', include(router_ingredientes.urls)),
 
     # Turnos y usuarios por turno
@@ -147,6 +169,9 @@ urlpatterns = [
 
     # Facturas de compra
     path('', include(router_facturas_compra.urls)),
+
+    # Reportes, plantillas oficiales y planillas auto-diligenciadas (SIR-170..SIR-173)
+    path('', include('apps_sirae.reportes.api.urls')),
 
     # Inteligencia artificial: sugerencias de recetas con el inventario
     path(
