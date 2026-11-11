@@ -18,4 +18,11 @@ class Sede(models.Model):
 
   class Meta:
     db_table = 'sedes'
-    
+
+  def es_activa(self) -> bool:
+    return str(self.estado or '').strip().lower() in {
+        'activo', 'activa', 'active', '1', 'true'
+    }
+
+  def __str__(self):
+    return f"{self.nombre_sede} ({self.id_institucion_id})"

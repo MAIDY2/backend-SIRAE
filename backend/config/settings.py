@@ -5,8 +5,10 @@ from datetime import timedelta
 
 try:
     import cloudinary
+    import cloudinary_storage
 except ImportError:
     cloudinary = None
+    cloudinary_storage = None
 import dj_database_url
 from dotenv import load_dotenv
 from django.core.exceptions import ImproperlyConfigured
@@ -73,9 +75,8 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    # Cloudinary Apps
-    "cloudinary_storage",
-    "cloudinary",
+    # Cloudinary Apps (cuando están instaladas)
+    *(["cloudinary_storage", "cloudinary"] if (cloudinary and cloudinary_storage) else []),
     # Rest Framework & Third-party
     "rest_framework",
     "rest_framework_simplejwt",
@@ -117,6 +118,11 @@ INSTALLED_APPS = [
 ]
 
 AUTH_USER_MODEL = "usuarios.Usuario"
+
+LOGIN_MAX_FAILED_ATTEMPTS = int(os.getenv("LOGIN_MAX_FAILED_ATTEMPTS", "5"))
+LOGIN_LOCKOUT_DURATION_MINUTES = int(
+    os.getenv("LOGIN_LOCKOUT_DURATION_MINUTES", "15")
+)
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(hours=1),
@@ -226,7 +232,8 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # Configuración de Cloudinary para almacenamiento multimedia persistente
 MEDIA_URL = "/media/"
-DEFAULT_FILE_STORAGE = "cloudinary_storage.storage.MediaCloudinaryStorage"
+if cloudinary and cloudinary_storage:
+    DEFAULT_FILE_STORAGE = "cloudinary_storage.storage.MediaCloudinaryStorage"
 
 BREVO_API_KEY = os.getenv("BREVO_API_KEY", "").strip()
 
