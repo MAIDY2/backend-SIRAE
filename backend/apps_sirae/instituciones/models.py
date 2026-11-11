@@ -14,6 +14,11 @@ class Institucion(models.Model):
     class Meta:
         db_table = 'instituciones'
 
+    def es_activa(self) -> bool:
+        return str(self.estado or '').strip().lower() in {
+            'activo', 'activa', 'active', '1', 'true'
+        }
+
     def __str__(self):
         return f"{self.nombre_institucion} ({self.nit})"
 
@@ -40,4 +45,3 @@ class SupervisorInstitucion(models.Model):
 
     def __str__(self):
         return f"Supervisor {self.id_supervisor_id} -> Institución {self.id_institucion_id}"
-    
