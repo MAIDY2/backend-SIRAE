@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.exceptions import ValidationError
 
@@ -45,4 +46,4 @@ class EntradaInventarioApiViewSet(viewsets.ModelViewSet):
             else None
         )
 
-        serializer.save(id_usuario=usuario_actual)
+        serializer.save(id_usuario=usuario_actual, fecha=timezone.now())

@@ -13,7 +13,11 @@ from apps_sirae.entregas.models import CalculoEntrega, Entrega
 from apps_sirae.facturas_compra.models import InventarioCentral
 from apps_sirae.gramage.models import Gramage
 from apps_sirae.ingredientes.models import Ingrediente
-from apps_sirae.inventario.models import Inventario
+from apps_sirae.inventario.models import AsignacionInventario, Inventario
+from apps_sirae.inventario.services import (
+    consumir_asignacion_institucion_fifo,
+    obtener_resumen_asignaciones_institucion,
+)
 from apps_sirae.menus.models import Menu
 from apps_sirae.receta_componente.models import RecetaComponente
 from apps_sirae.sede_jornada.models import SedeJornada
@@ -559,6 +563,13 @@ def calcular_abastecimiento_sede(
     for inv in Inventario.objects.filter(id_sede=sede):
         inv_sede_map[inv.id_ingrediente] += Decimal(str(inv.cantidad_actual or '0.000'))
 
+    asig_resumen = (
+        obtener_resumen_asignaciones_institucion(sede.id_institucion_id, solo_activas=False)
+        if sede.id_institucion_id
+        else {'tiene_asignaciones': False, 'items': [], 'mapa_por_ingrediente': {}}
+    )
+    asig_inst_map = asig_resumen.get('mapa_por_ingrediente') or {}
+
     tipos_mercado_map = {}
     for tm in TipoMercado.objects.all():
         nombre_tm = (tm.nombre_tipo or '').lower()
@@ -775,6 +786,11 @@ def calcular_abastecimiento_sede(
             'perecedero' if es_perecedero else 'no_perecedero'
         )
 
+        asig_item = asig_inst_map.get(ing_id)
+        asig_total = Decimal(str(asig_item['cantidad_asignada'])) if asig_item else Decimal('0.000')
+        asig_desp = Decimal(str(asig_item['cantidad_despachada'])) if asig_item else Decimal('0.000')
+        asig_pend = Decimal(str(asig_item['cantidad_pendiente'])) if asig_item else Decimal('0.000')
+
         sugerencias.append({
             'id_ingrediente': ing_id,
             'nombre_ingrediente': ing.nombre_ingrediente,
@@ -803,6 +819,10 @@ def calcular_abastecimiento_sede(
             'estado_bodega_central': estado_bodega,
             'pendiente_abastecer': float(round(pendiente_abastecer, 3)),
             'faltante_bodega_central': float(round(pendiente_abastecer, 3)),
+            'cantidad_asignada_institucion': float(round(asig_total, 3)),
+            'cantidad_despachada_asignacion': float(round(asig_desp, 3)),
+            'saldo_asignado_institucion': float(round(asig_pend, 3)),
+            'tiene_asignacion_institucion': bool(asig_item),
             'error_conversion': bool(errores_conversion_item),
             'alerta_conversion': '; '.join(errores_conversion_item) if errores_conversion_item else None,
             'tiene_gramajes_faltantes': bool(grados_sin_gramaje),
@@ -883,6 +903,8 @@ def calcular_abastecimiento_sede(
         'faltantes_configuracion': faltantes_unicos,
         'productos_sugeridos': sugerencias,
         'detalle_por_grado_global': detalle_por_grado_global,
+        'tiene_asignaciones_institucion': bool(asig_resumen.get('tiene_asignaciones')),
+        'resumen_asignacion_institucion': asig_resumen.get('items', []),
     }
 
 
@@ -1151,9 +1173,24 @@ def validar_y_registrar_despacho_lote(usuario, data: dict) -> dict:
     contrato_id_val = calculo['contrato']['id_contrato'] if calculo.get('contrato') else data.get('id_contrato')
 
     entregas_creadas = []
+    validar_asig = _es_verdadero(data.get('validar_contra_asignacion')) or (
+        bool(sede.id_institucion_id)
+        and AsignacionInventario.objects.filter(
+            id_institucion_id=sede.id_institucion_id,
+            estado__in=['ACTIVA', 'COMPLETADA'],
+        ).exists()
+    )
     with transaction.atomic():
         calculo_obj = _crear_snapshot_calculo(sede, usuario, data, eval_ctx, str(fecha_entrega))
         for item in eval_ctx['items_preparados']:
+            if sede.id_institucion_id:
+                consumir_asignacion_institucion_fifo(
+                    sede.id_institucion_id,
+                    item['id_ingrediente'],
+                    item['cantidad'],
+                    item['unidad'],
+                    validar_saldo=validar_asig,
+                )
             entrega = Entrega.objects.create(
                 id_institucion=sede.id_institucion,
                 id_sede=sede,
