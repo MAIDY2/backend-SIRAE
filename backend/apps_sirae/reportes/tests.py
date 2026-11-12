@@ -1,7 +1,8 @@
-from datetime import date, time
+from datetime import date, datetime, time
 from decimal import Decimal
 
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps_sirae.asistencia_diaria.models import AsistenciaDiaria
@@ -622,3 +623,197 @@ class ReportesSIR170a173Tests(TestCase):
         r_sa = self.client.get('/api/reportes/consolidados/?tipo_reporte=RESUMEN_GENERAL')
         self.assertEqual(r_sa.status_code, 200)
         self.assertEqual(len(r_sa.data['tipos_disponibles']), 11)
+
+    def test_plantillas_operativas_dinamicas_por_institucion_y_sede(self):
+        rol_manipuladora, _ = Rol.objects.get_or_create(nombre=Rol.NombreRol.MANIPULADORA)
+
+        # Sede A1 ya tiene jefa_a1_am; agregamos manipuladora exclusiva en A1
+        manip_a1 = Usuario.objects.create_user(
+            correo='manip-a1@test.com', nombre='Marta', apellido='SedeUno',
+            password='Password123!', numero_documento='MAN9001', rol=rol_manipuladora,
+            id_institucion=self.inst_a, id_sede=self.sede_a1, id_jornada=self.jornada_am,
+        )
+        # Sede A2 recibe su propia jefa y su propia manipuladora, contrato propio, entrega, salida y asistencia
+        jefa_a2 = Usuario.objects.create_user(
+            correo='jefa-a2@test.com', nombre='Elena', apellido='JefaDos',
+            password='Password123!', numero_documento='JEF9002', rol=self.rol_jefa,
+            id_institucion=self.inst_a, id_sede=self.sede_a2, id_jornada=self.jornada_am,
+        )
+        manip_a2 = Usuario.objects.create_user(
+            correo='manip-a2@test.com', nombre='Sofía', apellido='ManipDos',
+            password='Password123!', numero_documento='MAN9002', rol=rol_manipuladora,
+            id_institucion=self.inst_a, id_sede=self.sede_a2, id_jornada=self.jornada_am,
+        )
+        # Sede A3 vacía (sin equipo de cocina, sin entregas ni asistencias)
+        sede_a3 = Sede.objects.create(
+            id_institucion=self.inst_a,
+            nombre_sede='Sede Rural Vacía',
+            codigo_dane='119001000999',
+            estado='ACTIVO',
+        )
+
+        contrato_a2 = Contrato.objects.create(
+            numero_cor='CTR-ANEXA-2026',
+            institucion='Operador Anexa S.A.S.',
+            zona='Rural Norte',
+            fecha_inicio=date(2026, 2, 1),
+            fecha_fin=date(2026, 11, 30),
+            estado='ACTIVO',
+            id_institucion=self.inst_a,
+            id_sede=self.sede_a2,
+            id_usuario_supervisor=self.supervisor_a,
+            id_jornada=self.jornada_am,
+            cupos=50,
+            periodicidad_perecederos='SEMANAL',
+            dias_cobertura_perecederos=5,
+            periodicidad_no_perecederos='MENSUAL',
+            dias_cobertura_no_perecederos=10,
+        )
+        Entrega.objects.create(
+            id_ingrediente=self.arroz.id_ingrediente,
+            id_usuario_supervisor=self.supervisor_a.id_usuario,
+            id_tipo_mercado=self.tm_noper.id_tipo_mercado,
+            fecha_entrega=date(2026, 5, 9),
+            fecha_vencimiento=date(2026, 9, 15),
+            cantidad=Decimal('20.00'),
+            unidad='kg',
+            id_institucion=self.inst_a,
+            id_sede=self.sede_a2,
+            id_contrato=contrato_a2,
+            documento_entrega='REM-A2-001',
+            estado='RECIBIDA',
+            cantidad_recibida=Decimal('20.00'),
+        )
+        SalidaInventario.objects.filter(
+            id_usuario=self.jefa_a1_am,
+            fecha__isnull=True,
+        ).update(fecha=timezone.make_aware(datetime(2026, 5, 11, 8, 30)))
+        SalidaInventario.objects.create(
+            id_ingrediente=self.arroz,
+            id_usuario=jefa_a2,
+            cantidad=Decimal('10.00'),
+            id_unidad_medida=self.u_kg,
+            fecha=timezone.make_aware(datetime(2026, 5, 12, 8, 30)),
+            observaciones='Consumo Sede A2',
+        )
+        AsistenciaDiaria.objects.create(
+            id_grado=self.grado_primero,
+            fecha=date(2026, 5, 11),
+            ninos_presentes=44,
+            id_usuario_manipuladora=manip_a2.id_usuario,
+        )
+
+        self.client.force_authenticate(user=self.supervisor_a)
+
+        # 1. Consultar Sede A1: trae Rosa (Jefa) + Marta (Manipuladora), DANE 119001000111, CTR-NORTE-2026, asistencia 95, gasto 30
+        r_a1 = self.client.get(
+            f'/api/reportes/plantillas-operativas/datos/?id_institucion={self.inst_a.id_institucion}&id_sede={self.sede_a1.id_sede}&fecha_inicio=2026-05-01&fecha_fin=2026-05-29'
+        )
+        self.assertEqual(r_a1.status_code, 200, r_a1.data)
+        self.assertEqual(r_a1.data['encabezado']['codigo_dane'], '119001000111')
+        self.assertEqual(r_a1.data['encabezado']['numero_contrato'], 'CTR-NORTE-2026')
+        self.assertEqual(r_a1.data['encabezado']['operador'], 'Operador Nutricional Real S.A.')
+        self.assertEqual(r_a1.data['responsables']['manipuladora_jefe']['numero_documento'], 'JEF9001')
+        self.assertEqual(r_a1.data['responsables']['manipuladora']['numero_documento'], 'MAN9001')
+        self.assertNotIn('JEF9002', [p['numero_documento'] for p in r_a1.data['responsables']['jefas_manipuladoras']])
+        self.assertEqual(r_a1.data['cupos']['total'], 100)
+        self.assertEqual(r_a1.data['cupos']['primaria13'], 100)
+        self.assertEqual(r_a1.data['kardex']['total_atendido'], 95)
+        arroz_k1 = next(x for x in r_a1.data['kardex']['alimentos'] if x['id_ingrediente'] == self.arroz.id_ingrediente)
+        self.assertEqual(arroz_k1['entrada'], 42.0)
+        self.assertEqual(arroz_k1['totalGasto'], 30.0)
+        self.assertTrue(len(r_a1.data['minuta_patron']) >= 41)
+        self.assertTrue(len(r_a1.data['remision']['no_perecederos']) >= 22)
+        self.assertTrue(len(r_a1.data['remision']['perecederos']) >= 19)
+        self.assertTrue(len(r_a1.data['remision']['aseo']) >= 7)
+        self.assertTrue(len(r_a1.data['kardex']['alimentos']) >= 30)
+        arroz_np_a1 = next(x for x in r_a1.data['remision']['no_perecederos'] if x['id_ingrediente'] == self.arroz.id_ingrediente)
+        self.assertEqual(arroz_np_a1['producto'], 'ARROZ')
+        self.assertEqual(arroz_np_a1['recibido'], 42.0)
+
+        # 2. Cambiar a Sede A2: cambia a Elena (Jefa) + Sofía (Manipuladora), DANE 119001000222, CTR-ANEXA-2026, asistencia 44, gasto 10
+        r_a2 = self.client.get(
+            f'/api/reportes/plantillas-operativas/datos/?id_institucion={self.inst_a.id_institucion}&id_sede={self.sede_a2.id_sede}&fecha_inicio=2026-05-01&fecha_fin=2026-05-29'
+        )
+        self.assertEqual(r_a2.status_code, 200, r_a2.data)
+        self.assertEqual(r_a2.data['encabezado']['codigo_dane'], '119001000222')
+        self.assertEqual(r_a2.data['encabezado']['numero_contrato'], 'CTR-ANEXA-2026')
+        self.assertEqual(r_a2.data['encabezado']['operador'], 'Operador Anexa S.A.S.')
+        self.assertEqual(r_a2.data['responsables']['manipuladora_jefe']['numero_documento'], 'JEF9002')
+        self.assertEqual(r_a2.data['responsables']['manipuladora']['numero_documento'], 'MAN9002')
+        self.assertNotIn('MAN9001', [p['numero_documento'] for p in r_a2.data['responsables']['manipuladoras']])
+        self.assertEqual(r_a2.data['cupos']['total'], 50)
+        self.assertEqual(r_a2.data['kardex']['total_atendido'], 44)
+        arroz_k2 = next(x for x in r_a2.data['kardex']['alimentos'] if x['id_ingrediente'] == self.arroz.id_ingrediente)
+        self.assertEqual(arroz_k2['entrada'], 20.0)
+        self.assertEqual(arroz_k2['totalGasto'], 10.0)
+        arroz_np_a2 = next(x for x in r_a2.data['remision']['no_perecederos'] if x['id_ingrediente'] == self.arroz.id_ingrediente)
+        self.assertEqual(arroz_np_a2['recibido'], 20.0)
+
+        # 3. Sede A3 vacía: mantiene catálogo por defecto completo (22 NP, 19 P, 7 Aseo, 29 Kárdex, 41 Minuta) sin inventar Popayán ni cupos 227 ni nombres ficticios
+        r_a3 = self.client.get(
+            f'/api/reportes/plantillas-operativas/datos/?id_institucion={self.inst_a.id_institucion}&id_sede={sede_a3.id_sede}&fecha_inicio=2026-05-01&fecha_fin=2026-05-29'
+        )
+        self.assertEqual(r_a3.status_code, 200, r_a3.data)
+        self.assertIsNone(r_a3.data['responsables']['manipuladora_jefe'])
+        self.assertIsNone(r_a3.data['responsables']['manipuladora'])
+        self.assertEqual(r_a3.data['cupos']['total'], 0)
+        self.assertEqual(r_a3.data['kardex']['total_atendido'], 0)
+        self.assertEqual(len(r_a3.data['remision']['no_perecederos']), 22)
+        self.assertEqual(len(r_a3.data['remision']['perecederos']), 19)
+        self.assertEqual(len(r_a3.data['remision']['aseo']), 7)
+        self.assertGreaterEqual(len(r_a3.data['kardex']['alimentos']), 29)
+        self.assertGreaterEqual(len(r_a3.data['minuta_patron']), 41)
+        self.assertEqual(r_a3.data['remision']['no_perecederos'][0]['producto'], 'ACEITE')
+        self.assertEqual(r_a3.data['remision']['no_perecederos'][0]['aEntregar'], 59.0)
+        self.assertEqual(r_a3.data['remision']['no_perecederos'][0]['recibido'], 0.0)
+        self.assertEqual(r_a3.data['kardex']['alimentos'][0]['nombre'], 'VINAGRE')
+        self.assertEqual(r_a3.data['kardex']['alimentos'][0]['entrada'], 393.0)
+
+        # 3b. Si la manipuladora registra una recepción de Huevos y una nueva salida en Sede A1, se fusiona y agrega automáticamente
+        huevos_ing = Ingrediente.objects.create(
+            nombre_ingrediente='Huevos AA',
+            id_unidad_medida=self.u_g,
+            id_tipo_mercado=self.tm_noper,
+        )
+        Entrega.objects.create(
+            id_ingrediente=huevos_ing.id_ingrediente,
+            id_usuario_supervisor=self.supervisor_a.id_usuario,
+            id_tipo_mercado=self.tm_noper.id_tipo_mercado,
+            fecha_entrega=date(2026, 4, 29),
+            fecha_vencimiento=date(2026, 6, 15),
+            fecha_recepcion=timezone.make_aware(datetime(2026, 5, 11, 9, 0)),
+            cantidad=Decimal('150.00'),
+            unidad='UND',
+            id_institucion=self.inst_a,
+            id_sede=self.sede_a1,
+            documento_entrega='REM-HUE-A1',
+            estado='RECIBIDA',
+            cantidad_recibida=Decimal('150.00'),
+        )
+        r_a1_upd = self.client.get(
+            f'/api/reportes/plantillas-operativas/datos/?id_institucion={self.inst_a.id_institucion}&id_sede={self.sede_a1.id_sede}&fecha_inicio=2026-05-01&fecha_fin=2026-05-29'
+        )
+        self.assertEqual(r_a1_upd.status_code, 200)
+        huevos_per = next(x for x in r_a1_upd.data['remision']['perecederos'] if x['producto'] == 'HUEVOS')
+        self.assertEqual(huevos_per['recibido'], 150.0)
+        huevos_kar = next(x for x in r_a1_upd.data['kardex']['alimentos'] if x['nombre'] == 'HUEVOS')
+        self.assertEqual(huevos_kar['entrada'], 150.0)
+
+        # 4. Supervisor A no puede consultar Institución B (403)
+        r_b = self.client.get(
+            f'/api/reportes/plantillas-operativas/datos/?id_institucion={self.inst_b.id_institucion}'
+        )
+        self.assertEqual(r_b.status_code, 403)
+
+        # 5. Manipuladora de Sede A1 solo puede consultar Sede A1 (403 si pide Sede A2)
+        self.client.force_authenticate(user=manip_a1)
+        self.assertEqual(
+            self.client.get(f'/api/reportes/plantillas-operativas/datos/?id_sede={self.sede_a1.id_sede}').status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.get(f'/api/reportes/plantillas-operativas/datos/?id_sede={self.sede_a2.id_sede}').status_code,
+            403,
+        )
+

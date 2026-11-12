@@ -86,7 +86,8 @@ class EntregaTestCase(TestCase):
         deliveries_response = self.client.get('/api/entregas/')
 
         self.assertEqual(deliveries_response.status_code, 200)
-        self.assertEqual(deliveries_response.data, [])
+        items = deliveries_response.data.get('results', deliveries_response.data) if isinstance(deliveries_response.data, dict) else deliveries_response.data
+        self.assertEqual(items, [])
 
     def test_calcular_mercado_returns_correct_calculations(self):
         from apps_sirae.instituciones.models import Institucion

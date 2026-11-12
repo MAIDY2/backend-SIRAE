@@ -32,6 +32,9 @@ from apps_sirae.reportes.services.generador_planillas import (
     generar_planilla_automatica,
     previsualizar_version_plantilla,
 )
+from apps_sirae.reportes.services.plantillas_operativas import (
+    construir_datos_plantillas_operativas,
+)
 from apps_sirae.reportes.services.plantillas import (
     actualizar_plantilla_y_borrador,
     asegurar_plantillas_oficiales_base,
@@ -457,4 +460,37 @@ class ReportesConsolidadosAPIView(APIView):
             response['Content-Disposition'] = f'attachment; filename="reporte_pae_{tipo}.csv"'
             return response
         return Response(reporte)
+
+
+class PlantillasOperativasPermission(BasePermission):
+    message = "Su rol no está autorizado para consultar las planillas operativas PAE."
+
+    def has_permission(self, request, view):
+        user = getattr(request, 'user', None)
+        if not (user and user.is_authenticated and user.is_active):
+            return False
+        return bool(
+            _es_rol_autorizado_reportes(user)
+            or (hasattr(user, 'es_manipuladora') and user.es_manipuladora())
+        )
+
+
+class PlantillasOperativasDatosAPIView(APIView):
+    """
+    Devuelve datos reales de SIRAE (institución, sede, contrato, DANE, responsables
+    Jefa/Manipuladoras, cupos por grado, remisión, kárdex y minuta patrón)
+    estrictamente acotados a la institución y sede autorizada.
+    """
+    permission_classes = [IsAuthenticated, PlantillasOperativasPermission]
+
+    def get(self, request):
+        params = request.query_params
+        _validar_alcance_explicito(
+            request.user,
+            id_institucion=params.get('id_institucion'),
+            id_sede=params.get('id_sede'),
+        )
+        datos = construir_datos_plantillas_operativas(request.user, params)
+        return Response(datos)
+
 

@@ -105,6 +105,8 @@ class InventarioCentralSerializer(serializers.ModelSerializer):
         source='id_ingrediente.tipo_conservacion',
         read_only=True
     )
+    cantidad_asignada_pendiente = serializers.SerializerMethodField(read_only=True)
+    saldo_libre_asignar = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = InventarioCentral
@@ -115,6 +117,8 @@ class InventarioCentralSerializer(serializers.ModelSerializer):
             'categoria_nombre',
             'tipo_conservacion',
             'cantidad_disponible',
+            'cantidad_asignada_pendiente',
+            'saldo_libre_asignar',
             'stock_minimo',
             'id_unidad_medida',
             'unidad_medida_nombre',
@@ -122,3 +126,22 @@ class InventarioCentralSerializer(serializers.ModelSerializer):
             'fecha_ultima_actualizacion',
         ]
         read_only_fields = ['id_inventario_central', 'fecha_ultima_actualizacion']
+
+    def _pendiente_map(self):
+        cache_owner = self.parent if self.parent is not None else self
+        if not hasattr(cache_owner, '_pendiente_asignado_cache'):
+            from apps_sirae.inventario.services import obtener_pendiente_asignado_central
+            cache_owner._pendiente_asignado_cache = obtener_pendiente_asignado_central()
+        return cache_owner._pendiente_asignado_cache
+
+    def get_cantidad_asignada_pendiente(self, obj):
+        from decimal import Decimal
+        pend = self._pendiente_map().get(obj.id_ingrediente_id, Decimal('0.000'))
+        return float(round(pend, 3))
+
+    def get_saldo_libre_asignar(self, obj):
+        from decimal import Decimal
+        fisico = Decimal(str(obj.cantidad_disponible or '0.000'))
+        pend = self._pendiente_map().get(obj.id_ingrediente_id, Decimal('0.000'))
+        libre = max(Decimal('0.000'), fisico - pend)
+        return float(round(libre, 3))

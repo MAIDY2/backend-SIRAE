@@ -18,13 +18,20 @@ from apps_sirae.entregas.services import (
 from apps_sirae.usuarios.permissions import IsSupervisorOrAdminRole
 from apps_sirae.sedes.models import Sede
 from apps_sirae.ingredientes.models import Ingrediente
-from apps_sirae.inventario.models import Inventario
+from apps_sirae.inventario.models import AsignacionInventario, Inventario
+from apps_sirae.inventario.services import consumir_asignacion_institucion_fifo
 
 
 class entregasApiViewset(viewsets.ModelViewSet):
     queryset = Entrega.objects.all().order_by('-fecha_entrega', '-id_entrega')
     serializer_class = EntregaSerializer
     permission_classes = [IsSupervisorOrAdminRole]
+
+    def get_permissions(self):
+        if self.action in ['confirmar_recepcion', 'list', 'retrieve']:
+            from rest_framework.permissions import IsAuthenticated
+            return [IsAuthenticated()]
+        return [IsSupervisorOrAdminRole()]
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -72,6 +79,13 @@ class entregasApiViewset(viewsets.ModelViewSet):
                     Q(id_institucion_id__in=colegios_ids, id_sede__isnull=True) |
                     Q(id_sede__id_institucion_id__in=colegios_ids)
                 )
+
+            elif (hasattr(user, 'es_jefa_manipuladoras') and user.es_jefa_manipuladoras()) or \
+                 (hasattr(user, 'es_manipuladora') and user.es_manipuladora()):
+                if user.id_sede_id:
+                    qs = qs.filter(id_sede_id=user.id_sede_id)
+                elif user.id_institucion_id:
+                    qs = qs.filter(id_institucion_id=user.id_institucion_id)
 
         id_sede = self.request.query_params.get('id_sede')
         if id_sede:
@@ -127,12 +141,27 @@ class entregasApiViewset(viewsets.ModelViewSet):
                 extra['id_calculo_entrega'] = calc_obj
                 extra['documento_entrega'] = calc_obj.codigo_documento
 
-            serializer.save(
+            entrega = serializer.save(
                 id_usuario_supervisor=user_id or 1,
                 id_institucion=prep['id_institucion'],
                 estado='EN_TRANSITO',
                 **extra,
             )
+            inst_id = prep['id_institucion'].pk if prep.get('id_institucion') else None
+            if inst_id:
+                validar_asig = str(self.request.data.get('validar_contra_asignacion', '')).lower() in (
+                    '1', 'true', 'si'
+                ) or AsignacionInventario.objects.filter(
+                    id_institucion_id=inst_id,
+                    estado__in=['ACTIVA', 'COMPLETADA'],
+                ).exists()
+                consumir_asignacion_institucion_fifo(
+                    inst_id,
+                    entrega.id_ingrediente,
+                    Decimal(str(entrega.cantidad or 0)),
+                    entrega.unidad or '',
+                    validar_saldo=validar_asig,
+                )
 
     @action(detail=False, methods=['get'], url_path='calcular-mercado')
     def calcular_mercado(self, request):
