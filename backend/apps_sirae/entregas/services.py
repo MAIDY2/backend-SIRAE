@@ -1235,7 +1235,8 @@ def preparar_entrega_individual(usuario, serializer, raw_data: dict) -> dict:
 
     if sede is None:
         if inst is not None:
-            validar_alcance_sedes(usuario, Sede.objects.none(), id_institucion=inst.pk)
+            inst_pk = inst.pk if hasattr(inst, 'pk') else inst
+            validar_alcance_sedes(usuario, Sede.objects.none(), id_institucion=inst_pk)
         return {'id_institucion': inst}
 
     item = {

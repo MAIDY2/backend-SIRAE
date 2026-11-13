@@ -1,10 +1,13 @@
 
+import logging
 from decimal import Decimal
 from django.db import transaction
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
+
+logger = logging.getLogger(__name__)
 
 from apps_sirae.entregas.models import CalculoEntrega, Entrega
 from apps_sirae.entregas.api.serializer import CalculoEntregaSerializer, EntregaSerializer
@@ -131,15 +134,18 @@ class entregasApiViewset(viewsets.ModelViewSet):
         with transaction.atomic():
             extra = dict(prep.get('extra_save_kwargs') or {})
             if 'eval_ctx' in prep:
-                calc_obj = _crear_snapshot_calculo(
-                    prep['sede'],
-                    self.request.user,
-                    self.request.data,
-                    prep['eval_ctx'],
-                    prep['fallback_fecha'],
-                )
-                extra['id_calculo_entrega'] = calc_obj
-                extra['documento_entrega'] = calc_obj.codigo_documento
+                try:
+                    calc_obj = _crear_snapshot_calculo(
+                        prep['sede'],
+                        self.request.user,
+                        self.request.data,
+                        prep['eval_ctx'],
+                        prep['fallback_fecha'],
+                    )
+                    extra['id_calculo_entrega'] = calc_obj
+                    extra['documento_entrega'] = calc_obj.codigo_documento
+                except Exception as ex_calc:
+                    logger.warning("No se pudo crear snapshot de cálculo de entrega: %s", ex_calc)
 
             entrega = serializer.save(
                 id_usuario_supervisor=user_id or 1,
@@ -147,21 +153,25 @@ class entregasApiViewset(viewsets.ModelViewSet):
                 estado='EN_TRANSITO',
                 **extra,
             )
-            inst_id = prep['id_institucion'].pk if prep.get('id_institucion') else None
+            inst_obj = prep.get('id_institucion')
+            inst_id = inst_obj.pk if hasattr(inst_obj, 'pk') else (int(inst_obj) if inst_obj is not None else None)
             if inst_id:
-                validar_asig = str(self.request.data.get('validar_contra_asignacion', '')).lower() in (
-                    '1', 'true', 'si'
-                ) or AsignacionInventario.objects.filter(
-                    id_institucion_id=inst_id,
-                    estado__in=['ACTIVA', 'COMPLETADA'],
-                ).exists()
-                consumir_asignacion_institucion_fifo(
-                    inst_id,
-                    entrega.id_ingrediente,
-                    Decimal(str(entrega.cantidad or 0)),
-                    entrega.unidad or '',
-                    validar_saldo=validar_asig,
-                )
+                try:
+                    validar_asig = str(self.request.data.get('validar_contra_asignacion', '')).lower() in (
+                        '1', 'true', 'si'
+                    ) or AsignacionInventario.objects.filter(
+                        id_institucion_id=inst_id,
+                        estado__in=['ACTIVA', 'COMPLETADA'],
+                    ).exists()
+                    consumir_asignacion_institucion_fifo(
+                        inst_id,
+                        entrega.id_ingrediente,
+                        Decimal(str(entrega.cantidad or 0)),
+                        entrega.unidad or '',
+                        validar_saldo=validar_asig,
+                    )
+                except Exception as ex_asig:
+                    logger.warning("No se pudo descontar asignación FIFO institucional: %s", ex_asig)
 
     @action(detail=False, methods=['get'], url_path='calcular-mercado')
     def calcular_mercado(self, request):
