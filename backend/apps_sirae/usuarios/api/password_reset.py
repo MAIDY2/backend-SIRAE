@@ -48,7 +48,7 @@ def enviar_email_brevo_api(
         or getattr(settings, "BREVO_API_KEY", "").strip()
     )
 
-    from_email_raw = getattr(settings, "DEFAULT_FROM_EMAIL", "jhonriveracaicedo@gmail.com")
+    from_email_raw = getattr(settings, "DEFAULT_FROM_EMAIL", "riveracjhonf@gmail.com")
     parsed_name, parsed_email = email.utils.parseaddr(from_email_raw)
     sender_email = (
         os.getenv("BREVO_SENDER_EMAIL", "").strip()
@@ -292,81 +292,80 @@ class SolicitarCodigoRecuperacionPasswordView(APIView):
                 },
             )
 
-        if not expose_code:
-            try:
-                logger.info(f"Enviando correo de recuperación con código a: {usuario.correo}")
-                backend_prod_url = getattr(
-                    settings,
-                    "BACKEND_URL",
-                    PRODUCTION_BACKEND_URL,
-                ).rstrip("/")
-                asunto = "Código para recuperar tu contraseña - SIRAE"
-                mensaje_texto = (
-                    f"Hola {usuario.nombre_completo},\n\n"
-                    f"Tu código para recuperar la contraseña es: {codigo}\n\n"
-                    "El código vence en 10 minutos y solo puede utilizarse una vez. "
-                    "Si no solicitaste este cambio, ignora este mensaje.\n\n"
-                    f"Plataforma SIRAE PAE: {backend_prod_url}"
-                )
-                mensaje_html = f"""
-                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
-                    <div style="background-color: #2b6cb0; padding: 15px; border-radius: 6px; text-align: center; color: white;">
-                        <h2 style="margin: 0;">SIRAE - Sistema 1-2-3 del PAE</h2>
-                        <p style="margin: 5px 0 0 0; font-size: 14px;">Programa de Alimentación Escolar</p>
-                    </div>
-                    <div style="padding: 20px 0;">
-                        <p>Hola <strong>{usuario.nombre_completo}</strong>,</p>
-                        <p>Recibimos una solicitud para recuperar tu contraseña de acceso en la plataforma SIRAE.</p>
-                        <p>Tu código de verificación de 6 dígitos es:</p>
-                        <div style="text-align: center; margin: 25px 0;">
-                            <span style="display: inline-block; font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #2b6cb0; background-color: #edf2f7; padding: 12px 28px; border-radius: 8px; border: 1px dashed #2b6cb0;">
-                                {codigo}
-                            </span>
-                        </div>
-                        <p style="font-size: 13px; color: #e53e3e;">
-                            <strong>Nota:</strong> Este código vence en <strong>10 minutos</strong> y solo puede utilizarse una vez.
-                        </p>
-                        <p style="font-size: 13px; color: #718096;">
-                            Si tú no solicitaste este cambio, ignora este mensaje de forma segura. Tu cuenta continúa protegida.
-                        </p>
-                        <div style="margin-top: 25px; text-align: center;">
-                            <a href="{backend_prod_url}" style="font-size: 12px; color: #3182ce; text-decoration: none;">
-                                Acceder al sistema SIRAE ({backend_prod_url})
-                            </a>
-                        </div>
-                    </div>
-                    <hr style="border: none; border-top: 1px solid #e2e8f0;" />
-                    <p style="font-size: 11px; color: #a0aec0; text-align: center;">
-                        SIRAE PAE &copy; 2026 - Plataforma de Gestión y Control Alimentario Escolar
-                    </p>
+        try:
+            logger.info(f"Enviando correo de recuperación con código a: {usuario.correo}")
+            backend_prod_url = getattr(
+                settings,
+                "BACKEND_URL",
+                PRODUCTION_BACKEND_URL,
+            ).rstrip("/")
+            asunto = "Código para recuperar tu contraseña - SIRAE"
+            mensaje_texto = (
+                f"Hola {usuario.nombre_completo},\n\n"
+                f"Tu código para recuperar la contraseña es: {codigo}\n\n"
+                "El código vence en 10 minutos y solo puede utilizarse una vez. "
+                "Si no solicitaste este cambio, ignora este mensaje.\n\n"
+                f"Plataforma SIRAE PAE: {backend_prod_url}"
+            )
+            mensaje_html = f"""
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
+                <div style="background-color: #2b6cb0; padding: 15px; border-radius: 6px; text-align: center; color: white;">
+                    <h2 style="margin: 0;">SIRAE - Sistema 1-2-3 del PAE</h2>
+                    <p style="margin: 5px 0 0 0; font-size: 14px;">Programa de Alimentación Escolar</p>
                 </div>
-                """
-                enviar_email_brevo_api(
-                    destinatario_email=usuario.correo,
-                    asunto=asunto,
-                    mensaje_texto=mensaje_texto,
-                    mensaje_html=mensaje_html,
-                    destinatario_nombre=usuario.nombre_completo,
+                <div style="padding: 20px 0;">
+                    <p>Hola <strong>{usuario.nombre_completo}</strong>,</p>
+                    <p>Recibimos una solicitud para recuperar tu contraseña de acceso en la plataforma SIRAE.</p>
+                    <p>Tu código de verificación de 6 dígitos es:</p>
+                    <div style="text-align: center; margin: 25px 0;">
+                        <span style="display: inline-block; font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #2b6cb0; background-color: #edf2f7; padding: 12px 28px; border-radius: 8px; border: 1px dashed #2b6cb0;">
+                            {codigo}
+                        </span>
+                    </div>
+                    <p style="font-size: 13px; color: #e53e3e;">
+                        <strong>Nota:</strong> Este código vence en <strong>10 minutos</strong> y solo puede utilizarse una vez.
+                    </p>
+                    <p style="font-size: 13px; color: #718096;">
+                        Si tú no solicitaste este cambio, ignora este mensaje de forma segura. Tu cuenta continúa protegida.
+                    </p>
+                    <div style="margin-top: 25px; text-align: center;">
+                        <a href="{backend_prod_url}" style="font-size: 12px; color: #3182ce; text-decoration: none;">
+                            Acceder al sistema SIRAE ({backend_prod_url})
+                        </a>
+                    </div>
+                </div>
+                <hr style="border: none; border-top: 1px solid #e2e8f0;" />
+                <p style="font-size: 11px; color: #a0aec0; text-align: center;">
+                    SIRAE PAE &copy; 2026 - Plataforma de Gestión y Control Alimentario Escolar
+                </p>
+            </div>
+            """
+            enviar_email_brevo_api(
+                destinatario_email=usuario.correo,
+                asunto=asunto,
+                mensaje_texto=mensaje_texto,
+                mensaje_html=mensaje_html,
+                destinatario_nombre=usuario.nombre_completo,
+            )
+            logger.info(f"Correo de recuperación enviado con éxito a: {usuario.correo}")
+        except Exception as e:
+            logger.error(f"Error al enviar código de recuperación: {e}", exc_info=True)
+            if not settings.DEBUG and not getattr(settings, "ENVIAR_CORREO_CONTINGENCIA", False) and correo.casefold() != "jhonriveracaicedo@gmail.com":
+                PasswordResetCode.objects.filter(usuario=usuario).delete()
+                return Response(
+                    {
+                        "error": (
+                            "No fue posible enviar el código de recuperación. "
+                            "Verifica la configuración de correo del servidor e inténtalo nuevamente."
+                        ),
+                        "detalle": str(e),
+                    },
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
                 )
-                logger.info(f"Correo de recuperación enviado con éxito a: {usuario.correo}")
-            except Exception as e:
-                logger.error(f"Error al enviar código de recuperación: {e}", exc_info=True)
-                if not settings.DEBUG and not getattr(settings, "ENVIAR_CORREO_CONTINGENCIA", False) and correo.casefold() != "jhonriveracaicedo@gmail.com":
-                    PasswordResetCode.objects.filter(usuario=usuario).delete()
-                    return Response(
-                        {
-                            "error": (
-                                "No fue posible enviar el código de recuperación. "
-                                "Verifica la configuración de correo del servidor e inténtalo nuevamente."
-                            ),
-                            "detalle": str(e),
-                        },
-                        status=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    )
-                # Rescate de contingencia para administrador o modo desarrollo
-                respuesta = self.respuesta_generica()
-                respuesta.data["debug_code"] = codigo
-                return respuesta
+            # Rescate de contingencia para administrador o modo desarrollo
+            respuesta = self.respuesta_generica()
+            respuesta.data["debug_code"] = codigo
+            return respuesta
 
         respuesta = self.respuesta_generica()
         if (
@@ -823,7 +822,7 @@ class TestEmailView(APIView):
             if len(brevo_key) > 10
             else ("Configurada" if brevo_key else "No configurada")
         )
-        from_email_raw = getattr(settings, "DEFAULT_FROM_EMAIL", "jhonriveracaicedo@gmail.com")
+        from_email_raw = getattr(settings, "DEFAULT_FROM_EMAIL", "riveracjhonf@gmail.com")
         sender_email = (
             os.getenv("BREVO_SENDER_EMAIL", "").strip()
             or getattr(settings, "BREVO_SENDER_EMAIL", "").strip()

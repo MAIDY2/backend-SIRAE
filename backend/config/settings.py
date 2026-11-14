@@ -272,7 +272,7 @@ EMAIL_USE_TLS = (
 EMAIL_USE_SSL = (
     os.getenv("EMAIL_USE_SSL", "False").strip().lower() in {"1", "true", "yes", "on"}
 )
-EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "jhonriveracaicedo@gmail.com").strip()
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "riveracjhonf@gmail.com").strip()
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "nvdyvggclraintxk").strip()
 EMAIL_TIMEOUT = parse_env_int(os.getenv("EMAIL_TIMEOUT"), 10)
 
@@ -288,7 +288,7 @@ if BREVO_API_KEY and EMAIL_BACKEND == "anymail.backends.brevo.EmailBackend":
         "BREVO_API_KEY": BREVO_API_KEY,
     }
 
-DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "jhonriveracaicedo@gmail.com").strip()
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "riveracjhonf@gmail.com").strip()
 BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL", "").strip()
 
 BACKEND_URL = (
