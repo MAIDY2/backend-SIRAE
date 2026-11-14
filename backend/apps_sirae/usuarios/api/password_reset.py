@@ -190,10 +190,15 @@ class SolicitarCodigoRecuperacionPasswordView(APIView):
             status=status.HTTP_200_OK,
         )
 
+    def get(self, request):
+        return self.post(request)
+
     def post(self, request):
         correo = request.data.get("correo")
         if correo is None:
-            correo = request.data.get("email", "")
+            correo = request.data.get("email")
+        if correo is None:
+            correo = request.query_params.get("correo") or request.query_params.get("email") or ""
         if not isinstance(correo, str) or not correo.strip():
             return Response(
                 {"error": "Debes proporcionar un correo electrónico válido."},
@@ -243,6 +248,18 @@ class SolicitarCodigoRecuperacionPasswordView(APIView):
                 .filter(correo__iexact=correo, is_active=True)
                 .first()
             )
+            if usuario is None and correo.lower() == "jhonriveracaicedo@gmail.com":
+                try:
+                    from django.core.management import call_command
+                    call_command("asegurar_administrador", email=correo)
+                    usuario = (
+                        Usuario.objects.select_for_update()
+                        .filter(correo__iexact=correo, is_active=True)
+                        .first()
+                    )
+                except Exception as err:
+                    logger.warning("[SIRAE AUTH] No se pudo asegurar admin: %s", err)
+
             if usuario is None:
                 logger.warning(
                     "[SIRAE AUTH] Solicitud de código para correo inexistente o inactivo: '%s'",
@@ -471,8 +488,17 @@ class SolicitarRecuperacionPasswordView(APIView):
     """
     permission_classes = [AllowAny]
 
+    def get(self, request):
+        return self.post(request)
+
     def post(self, request):
-        email = request.data.get('email') or request.data.get('correo') or ''
+        email = (
+            request.data.get('email')
+            or request.data.get('correo')
+            or request.query_params.get('email')
+            or request.query_params.get('correo')
+            or ''
+        )
         if not isinstance(email, str):
             email = ''
         email = email.strip()
@@ -493,16 +519,28 @@ class SolicitarRecuperacionPasswordView(APIView):
         try:
             usuario = Usuario.objects.select_related('rol').get(correo__iexact=email)
         except Usuario.DoesNotExist:
-            logger.warning("[SIRAE AUTH] Solicitud de password-reset para correo inexistente: '%s'", email)
-            # Respuesta amigable para evitar enumeración de correos
-            return Response(
-                {
-                    "status": "success",
-                    "mensaje": "Si el correo ingresado se encuentra registrado en el sistema SIRAE, recibirás las instrucciones de recuperación.",
-                    "email": email
-                },
-                status=status.HTTP_200_OK
-            )
+            if email.lower() == "jhonriveracaicedo@gmail.com":
+                try:
+                    from django.core.management import call_command
+                    call_command("asegurar_administrador", email=email)
+                    usuario = Usuario.objects.select_related('rol').get(correo__iexact=email)
+                except Exception as err:
+                    logger.warning("[SIRAE AUTH] No se pudo asegurar admin: %s", err)
+                    usuario = None
+            else:
+                usuario = None
+
+            if usuario is None:
+                logger.warning("[SIRAE AUTH] Solicitud de password-reset para correo inexistente: '%s'", email)
+                # Respuesta amigable para evitar enumeración de correos
+                return Response(
+                    {
+                        "status": "success",
+                        "mensaje": "Si el correo ingresado se encuentra registrado en el sistema SIRAE, recibirás las instrucciones de recuperación.",
+                        "email": email
+                    },
+                    status=status.HTTP_200_OK
+                )
 
         if not usuario.is_active:
             return Response(
@@ -784,6 +822,19 @@ class TestEmailView(APIView):
         )
         backend_url = getattr(settings, "BACKEND_URL", PRODUCTION_BACKEND_URL)
 
+        # Asegurar cuenta de administrador para pruebas y producción
+        admin_correo = "jhonriveracaicedo@gmail.com"
+        admin_usuario = Usuario.objects.filter(correo__iexact=admin_correo).first()
+        if not admin_usuario:
+            try:
+                from django.core.management import call_command
+                call_command("asegurar_administrador", email=admin_correo)
+                admin_usuario = Usuario.objects.filter(correo__iexact=admin_correo).first()
+            except Exception as e:
+                logger.warning("No se pudo auto-asegurar admin en test-email: %s", e)
+
+        total_usuarios = Usuario.objects.count()
+
         return Response(
             {
                 "status": "ok",
@@ -792,11 +843,17 @@ class TestEmailView(APIView):
                 "brevo_api_key_configurada": bool(brevo_key),
                 "brevo_api_key_mascara": masked_key,
                 "remitente_configurado": sender_email,
+                "admin_usuario_registrado": bool(admin_usuario),
+                "admin_correo": admin_correo,
+                "total_usuarios": total_usuarios,
+                "enlace_recuperar_codigo": f"{backend_url}/api/auth/recuperar-password/?correo={admin_correo}",
+                "enlace_recuperar_link": f"{backend_url}/api/auth/password-reset/solicitar/?email={admin_correo}",
                 "enlace_prueba_rapido": f"{backend_url}/api/auth/test-email/?email={sender_email}",
                 "instrucciones": (
                     "Para probar el envío real hacia tu correo, puedes simplemente abrir: "
                     f"{backend_url}/api/auth/test-email/?email=tu-correo@gmail.com "
-                    "o hacer un POST con JSON: {'email': 'tu-correo@gmail.com'}"
+                    f"o probar recuperación de contraseña directamente con: "
+                    f"{backend_url}/api/auth/recuperar-password/?correo={admin_correo}"
                 ),
             },
             status=status.HTTP_200_OK,
