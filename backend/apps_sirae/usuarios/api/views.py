@@ -4,7 +4,7 @@ from django.db.models import Q
 from django.utils import timezone
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, APIException
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -541,12 +541,16 @@ class LoginView(TokenObtainPairView):
     def post(self, request, *args, **kwargs):
         try:
             return super().post(request, *args, **kwargs)
+        except APIException:
+            raise
         except Exception as e:
             from django.db.utils import DatabaseError, ProgrammingError
             if isinstance(e, (ProgrammingError, DatabaseError)):
                 try:
                     asegurar_columnas_criticas()
                     return super().post(request, *args, **kwargs)
+                except APIException:
+                    raise
                 except Exception:
                     pass
             import traceback
