@@ -159,6 +159,7 @@ class SolicitarCodigoRecuperacionPasswordView(APIView):
 
         if not expose_code:
             try:
+                logger.info(f"Enviando correo de recuperación con código a: {usuario.correo}")
                 send_mail(
                     subject="Código para recuperar tu contraseña - SIRAE",
                     message=(
@@ -171,15 +172,17 @@ class SolicitarCodigoRecuperacionPasswordView(APIView):
                     recipient_list=[usuario.correo],
                     fail_silently=False,
                 )
-            except Exception:
-                logger.exception("No se pudo enviar el código de recuperación de contraseña.")
+                logger.info(f"Correo de recuperación enviado con éxito a: {usuario.correo}")
+            except Exception as e:
+                logger.error(f"Error SMTP: {e}", exc_info=True)
                 PasswordResetCode.objects.filter(usuario=usuario).delete()
                 return Response(
                     {
                         "error": (
                             "No fue posible enviar el código de recuperación. "
                             "Verifica la configuración de correo del servidor e inténtalo nuevamente."
-                        )
+                        ),
+                        "detalle": str(e) if settings.DEBUG else None,
                     },
                     status=status.HTTP_503_SERVICE_UNAVAILABLE,
                 )
@@ -413,6 +416,7 @@ class SolicitarRecuperacionPasswordView(APIView):
             )
             print(f"[SIRAE EMAIL] Correo de recuperacion enviado con exito a: {usuario.correo}")
         except Exception as e:
+            logger.error(f"Error SMTP: {e}", exc_info=True)
             logger.error(f"[SIRAE EMAIL ERROR] No se pudo enviar el correo a {usuario.correo}: {e}", exc_info=True)
             print(f"[SIRAE EMAIL ERROR] Fallo el envio de correo a {usuario.correo}: {e}")
             return Response(

@@ -237,47 +237,35 @@ MEDIA_URL = "/media/"
 if cloudinary and cloudinary_storage:
     DEFAULT_FILE_STORAGE = "cloudinary_storage.storage.MediaCloudinaryStorage"
 
-BREVO_API_KEY = os.getenv("BREVO_API_KEY", "").strip()
+# ==============================================================================
+# Configuración de Correo Electrónico (Google SMTP / Gmail)
+# ==============================================================================
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.smtp.EmailBackend",
+)
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_USE_TLS = (
+    os.getenv("EMAIL_USE_TLS", "True").strip().lower() in {"1", "true", "yes", "on"}
+)
+EMAIL_USE_SSL = (
+    os.getenv("EMAIL_USE_SSL", "False").strip().lower() in {"1", "true", "yes", "on"}
+)
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "jhonriveracaicedo@gmail.com").strip()
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "nvdyvggclraintxk").strip()
+EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
 
-if BREVO_API_KEY:
-    INSTALLED_APPS += ["anymail"]
-    EMAIL_BACKEND = "anymail.backends.brevo.EmailBackend"
+# Soporte opcional para Anymail / Brevo únicamente si está configurado explícitamente
+BREVO_API_KEY = os.getenv("BREVO_API_KEY", "").strip()
+if BREVO_API_KEY and EMAIL_BACKEND == "anymail.backends.brevo.EmailBackend":
+    if "anymail" not in INSTALLED_APPS:
+        INSTALLED_APPS += ["anymail"]
     ANYMAIL = {
         "BREVO_API_KEY": BREVO_API_KEY,
     }
-    DEFAULT_FROM_EMAIL = os.getenv(
-        "DEFAULT_FROM_EMAIL",
-        "SIRAE <riveracjhonf@gmail.com>",
-    )
-else:
-    EMAIL_BACKEND = os.getenv(
-        "EMAIL_BACKEND",
-        (
-            "django.core.mail.backends.console.EmailBackend"
-            if DEBUG
-            else "django.core.mail.backends.smtp.EmailBackend"
-        ),
-    )
 
-    email_user = os.getenv("EMAIL_HOST_USER", "")
-    DEFAULT_FROM_EMAIL = os.getenv(
-        "DEFAULT_FROM_EMAIL",
-        (
-            f"SIRAE PAE <{email_user}>"
-            if email_user
-            else "SIRAE PAE <no-reply@sirae-pae.edu.co>"
-        ),
-    )
-
-EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
-EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
-EMAIL_USE_TLS = os.getenv(
-    "EMAIL_USE_TLS", "True"
-).strip().lower() in {"1", "true", "yes", "on"}
-
-EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
-EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
-EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "jhonriveracaicedo@gmail.com").strip()
 
 FRONTEND_URL = os.getenv(
     "FRONTEND_URL",

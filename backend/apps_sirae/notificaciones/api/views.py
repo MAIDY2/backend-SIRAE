@@ -281,10 +281,22 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
                 for destinatario in destinatarios
             ])
 
+        # Enviar correos de forma segura (fuera de la transacción atómica)
+        from apps_sirae.notificaciones.services import notificar_usuarios_por_correo
+
+        resultado_envio = notificar_usuarios_por_correo(
+            destinatarios=destinatarios,
+            remitente=remitente,
+            titulo=titulo,
+            mensaje=mensaje,
+            imagen_url=imagen_url,
+        )
+
         return Response(
             {
                 'mensaje': 'Notificación enviada correctamente.',
                 'cantidad_destinatarios': len(creadas),
+                'correo_notificado': resultado_envio.get('exito', False),
                 'resultados': self.get_serializer(
                     creadas,
                     many=True,
@@ -386,4 +398,121 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
                 ),
             },
             status=status.HTTP_200_OK,
+        )
+
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='alerta-inventario',
+    )
+    def alerta_inventario(self, request):
+        """
+        Dispara una alerta de inventario por stock bajo/agotado vía notificación y correo.
+        Accesible por Administrador, Supervisor o Jefa de Manipuladoras.
+        """
+        usuario = request.user
+        if not (
+            usuario.es_administrador()
+            or usuario.es_supervisor()
+            or usuario.es_jefa_manipuladoras()
+        ):
+            return Response(
+                {'error': 'No tienes permisos para emitir alertas de inventario.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        ingrediente = str(request.data.get('ingrediente', '')).strip()
+        sede = str(request.data.get('sede', '')).strip()
+        stock_actual = request.data.get('stock_actual')
+        stock_minimo = request.data.get('stock_minimo')
+        unidad = str(request.data.get('unidad', '')).strip()
+
+        if not ingrediente or not sede or stock_actual is None or stock_minimo is None:
+            return Response(
+                {
+                    'error': (
+                        'Los campos ingrediente, sede, stock_actual '
+                        'y stock_minimo son obligatorios.'
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from apps_sirae.notificaciones.services import enviar_alerta_stock_inventario
+
+        resultado = enviar_alerta_stock_inventario(
+            ingrediente_nombre=ingrediente,
+            sede_nombre=sede,
+            stock_actual=stock_actual,
+            stock_minimo=stock_minimo,
+            unidad_medida=unidad,
+            id_remitente=getattr(usuario, 'id_usuario', None),
+        )
+
+        return Response(
+            {
+                'mensaje': 'Alerta de inventario emitida correctamente.',
+                'resultado_correo': resultado,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='probar-email',
+    )
+    def probar_email(self, request):
+        """
+        Endpoint seguro (solo Administrador) para diagnosticar y probar el envío SMTP real con Gmail.
+        """
+        if not request.user.es_administrador():
+            return Response(
+                {'error': 'Solo el administrador puede probar el servicio de correo.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        email_destino = str(request.data.get('email', '')).strip()
+        if not email_destino or '@' not in email_destino:
+            return Response(
+                {'error': 'Indica un correo electrónico válido en el campo email.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from apps_sirae.notificaciones.services import (
+            construir_plantilla_notificacion_html,
+            enviar_correo_notificacion,
+        )
+
+        asunto = 'Prueba de Conexión de Correo - SIRAE PAE'
+        mensaje_texto = (
+            'Hola,\n\n'
+            'Este es un mensaje de prueba emitido desde la API de SIRAE PAE.\n'
+            'Si lo recibiste, la configuración SMTP con Google está operando correctamente.'
+        )
+        mensaje_html = construir_plantilla_notificacion_html(
+            titulo='Prueba de Conexión Exitosa',
+            mensaje='Si estás leyendo este correo, la configuración SMTP de Google en SIRAE PAE está operando correctamente.',
+            remitente_nombre=request.user.nombre_completo,
+            remitente_rol='Administrador',
+            categoria='DIAGNÓSTICO SMTP',
+        )
+
+        resultado = enviar_correo_notificacion(
+            asunto=asunto,
+            destinatarios=[email_destino],
+            mensaje_texto=mensaje_texto,
+            mensaje_html=mensaje_html,
+        )
+
+        return Response(
+            {
+                'mensaje': 'Diagnóstico de envío finalizado.',
+                'resultado': resultado,
+            },
+            status=(
+                status.HTTP_200_OK
+                if resultado.get('exito')
+                else status.HTTP_502_BAD_GATEWAY
+            ),
         )

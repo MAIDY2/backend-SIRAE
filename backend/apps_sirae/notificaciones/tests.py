@@ -1,6 +1,9 @@
-from unittest.mock import patch
+import smtplib
+import socket
+from unittest.mock import MagicMock, patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from apps_sirae.roles.models import Rol
@@ -425,3 +428,149 @@ class NotificacionApiTestCase(APITestCase):
             titulo='Reporte de manipuladora',
         )
         self.assertEqual(notificacion.imagen_url, url_imagen)
+
+    @override_settings(
+        EMAIL_BACKEND='django.core.mail.backends.smtp.EmailBackend',
+        EMAIL_HOST_USER='pruebas@sirae-pae.edu.co',
+        EMAIL_HOST_PASSWORD='passwordseguro123',
+    )
+    @patch('apps_sirae.notificaciones.services.send_mail')
+    def test_envio_notificacion_dispara_correo_con_asunto_y_cuerpo(self, mock_send):
+        mock_send.return_value = 1
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.post(
+            '/api/notificaciones/enviar/',
+            {
+                'titulo': 'Convocatoria Comité PAE',
+                'mensaje': 'Reunión ordinaria el próximo lunes a las 8am.',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(mock_send.called)
+
+    @override_settings(
+        EMAIL_BACKEND='django.core.mail.backends.smtp.EmailBackend',
+        EMAIL_HOST_USER='pruebas@sirae-pae.edu.co',
+        EMAIL_HOST_PASSWORD='passwordseguro123',
+    )
+    @patch(
+        'apps_sirae.notificaciones.services.send_mail',
+        side_effect=smtplib.SMTPAuthenticationError(535, b'Bad credentials'),
+    )
+    def test_envio_notificacion_no_falla_si_smtp_genera_error_de_autenticacion(
+        self, mock_send
+    ):
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.post(
+            '/api/notificaciones/enviar/',
+            {
+                'titulo': 'Aviso Importante',
+                'mensaje': 'El correo fallará pero la notificación persiste.',
+            },
+            format='json',
+        )
+
+        # La notificación se guarda y la API responde 201 sin colapsar
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(
+            Notificacion.objects.filter(titulo='Aviso Importante').exists()
+        )
+
+    @override_settings(
+        EMAIL_BACKEND='django.core.mail.backends.smtp.EmailBackend',
+        EMAIL_HOST_USER='pruebas@sirae-pae.edu.co',
+        EMAIL_HOST_PASSWORD='passwordseguro123',
+    )
+    @patch(
+        'apps_sirae.notificaciones.services.send_mail',
+        side_effect=socket.timeout('Connection timed out'),
+    )
+    def test_envio_notificacion_no_falla_si_smtp_genera_timeout(self, mock_send):
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.post(
+            '/api/notificaciones/enviar/',
+            {
+                'titulo': 'Aviso Timeout',
+                'mensaje': 'Prueba de tolerancia a fallos por latencia de red.',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(
+            Notificacion.objects.filter(titulo='Aviso Timeout').exists()
+        )
+
+    @override_settings(
+        EMAIL_BACKEND='django.core.mail.backends.smtp.EmailBackend',
+        EMAIL_HOST_USER='pruebas@sirae-pae.edu.co',
+        EMAIL_HOST_PASSWORD='passwordseguro123',
+    )
+    @patch('apps_sirae.notificaciones.services.send_mail')
+    def test_alerta_inventario_crea_notificacion_y_envia_correo(self, mock_send):
+        mock_send.return_value = 1
+        self.client.force_authenticate(user=self.supervisor)
+
+        response = self.client.post(
+            '/api/notificaciones/alerta-inventario/',
+            {
+                'ingrediente': 'Arroz Blanco',
+                'sede': 'Sede Principal Los Pinos',
+                'stock_actual': 1.5,
+                'stock_minimo': 10.0,
+                'unidad': 'Kg',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(
+            Notificacion.objects.filter(
+                titulo__icontains='Arroz Blanco'
+            ).exists()
+        )
+        self.assertTrue(mock_send.called)
+
+    def test_alerta_inventario_falla_sin_campos_obligatorios(self):
+        self.client.force_authenticate(user=self.supervisor)
+
+        response = self.client.post(
+            '/api/notificaciones/alerta-inventario/',
+            {'ingrediente': 'Arroz Blanco'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+    @override_settings(
+        EMAIL_BACKEND='django.core.mail.backends.smtp.EmailBackend',
+        EMAIL_HOST_USER='pruebas@sirae-pae.edu.co',
+        EMAIL_HOST_PASSWORD='passwordseguro123',
+    )
+    @patch('apps_sirae.notificaciones.services.send_mail')
+    def test_probar_email_endpoint_solo_admin(self, mock_send):
+        mock_send.return_value = 1
+
+        # Supervisor no debe poder probar el endpoint de diagnóstico
+        self.client.force_authenticate(user=self.supervisor)
+        resp_sup = self.client.post(
+            '/api/notificaciones/probar-email/',
+            {'email': 'test@gmail.com'},
+            format='json',
+        )
+        self.assertEqual(resp_sup.status_code, 403)
+
+        # Admin sí puede probarlo
+        self.client.force_authenticate(user=self.admin)
+        resp_admin = self.client.post(
+            '/api/notificaciones/probar-email/',
+            {'email': 'destino@gmail.com'},
+            format='json',
+        )
+        self.assertEqual(resp_admin.status_code, 200)
+        self.assertTrue(resp_admin.data['resultado']['exito'])
