@@ -8,12 +8,18 @@ from apps_sirae.usuarios.api.views import (
     LogoutView,
     RegistroView,
     ValidarSesionActivaView,
+    MigrarDBView,
 )
 
 
 urlpatterns = [
     path('', include(router_usuarios.urls)),
 
+    path(
+        'auth/migrar/',
+        MigrarDBView.as_view(),
+        name='migrar_db'
+    ),
     path(
         'auth/login/',
         LoginView.as_view(),

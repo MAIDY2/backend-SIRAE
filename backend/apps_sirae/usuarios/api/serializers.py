@@ -1166,8 +1166,9 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             )
 
         # Verificar si la cuenta tiene un bloqueo temporal activo
-        if usuario.bloqueado_hasta:
-            if usuario.bloqueado_hasta > ahora:
+        bloqueado_hasta = getattr(usuario, 'bloqueado_hasta', None)
+        if bloqueado_hasta:
+            if bloqueado_hasta > ahora:
                 self._registrar_intento(correo, usuario, False, 'cuenta_bloqueada')
                 raise AuthenticationFailed(
                     self.MENSAJE_CUENTA_BLOQUEADA,
@@ -1175,28 +1176,38 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 )
             else:
                 # El bloqueo temporal ya expiró; se restablece el contador
-                usuario.intentos_fallidos_login = 0
-                usuario.bloqueado_hasta = None
-                usuario.save(update_fields=['intentos_fallidos_login', 'bloqueado_hasta'])
+                try:
+                    usuario.intentos_fallidos_login = 0
+                    usuario.bloqueado_hasta = None
+                    usuario.save(update_fields=['intentos_fallidos_login', 'bloqueado_hasta'])
+                except Exception:
+                    pass
 
         if not check_password(password, usuario.password):
-            usuario.intentos_fallidos_login = (usuario.intentos_fallidos_login or 0) + 1
-            usuario.ultimo_intento_fallido = ahora
+            try:
+                intentos_actuales = (getattr(usuario, 'intentos_fallidos_login', 0) or 0) + 1
+                usuario.intentos_fallidos_login = intentos_actuales
+                usuario.ultimo_intento_fallido = ahora
 
-            if usuario.intentos_fallidos_login >= max_intentos:
-                usuario.bloqueado_hasta = ahora + duracion_bloqueo
-                usuario.save(update_fields=[
-                    'intentos_fallidos_login',
-                    'ultimo_intento_fallido',
-                    'bloqueado_hasta',
-                ])
-                self._registrar_intento(correo, usuario, False, 'bloqueo_por_intentos')
-                raise AuthenticationFailed(
-                    self.MENSAJE_CUENTA_BLOQUEADA,
-                    code='account_locked',
-                )
+                if intentos_actuales >= max_intentos:
+                    usuario.bloqueado_hasta = ahora + duracion_bloqueo
+                    usuario.save(update_fields=[
+                        'intentos_fallidos_login',
+                        'ultimo_intento_fallido',
+                        'bloqueado_hasta',
+                    ])
+                    self._registrar_intento(correo, usuario, False, 'bloqueo_por_intentos')
+                    raise AuthenticationFailed(
+                        self.MENSAJE_CUENTA_BLOQUEADA,
+                        code='account_locked',
+                    )
 
-            usuario.save(update_fields=['intentos_fallidos_login', 'ultimo_intento_fallido'])
+                usuario.save(update_fields=['intentos_fallidos_login', 'ultimo_intento_fallido'])
+            except AuthenticationFailed:
+                raise
+            except Exception as e:
+                logger.warning("[SIRAE AUTH] Error al persistir intento fallido en usuario: %s", e)
+
             self._registrar_intento(correo, usuario, False, 'credenciales_invalidas')
             raise AuthenticationFailed(
                 self.MENSAJE_CREDENCIALES_INVALIDAS,
@@ -1219,10 +1230,15 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             )
 
         # Autenticación exitosa: limpiar intentos fallidos y bloqueo previo
-        if usuario.intentos_fallidos_login > 0 or usuario.bloqueado_hasta is not None:
-            usuario.intentos_fallidos_login = 0
-            usuario.bloqueado_hasta = None
-            usuario.save(update_fields=['intentos_fallidos_login', 'bloqueado_hasta'])
+        try:
+            intentos_previos = getattr(usuario, 'intentos_fallidos_login', 0) or 0
+            bloqueo_previo = getattr(usuario, 'bloqueado_hasta', None)
+            if intentos_previos > 0 or bloqueo_previo is not None:
+                usuario.intentos_fallidos_login = 0
+                usuario.bloqueado_hasta = None
+                usuario.save(update_fields=['intentos_fallidos_login', 'bloqueado_hasta'])
+        except Exception as e:
+            logger.warning("[SIRAE AUTH] Error al limpiar intentos de usuario: %s", e)
 
         cache.delete(fail_cache_key)
         cache.delete(lock_cache_key)
@@ -1235,17 +1251,20 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
         inst_nombre = (
             usuario.id_institucion.nombre_institucion
-            if usuario.id_institucion else None
+            if getattr(usuario, 'id_institucion', None) else None
         )
 
         sede_nombre = (
             usuario.id_sede.nombre_sede
-            if usuario.id_sede else None
+            if getattr(usuario, 'id_sede', None) else None
         )
-        jornada_nombre = (
-            usuario.id_jornada.nombre_jornada
-            if usuario.id_jornada else None
-        )
+        jornada_nombre = None
+        try:
+            jornada_obj = getattr(usuario, 'id_jornada', None)
+            if jornada_obj:
+                jornada_nombre = getattr(jornada_obj, 'nombre_jornada', None)
+        except Exception:
+            pass
 
         instituciones_sup = instituciones_asignadas_del_supervisor(
             usuario

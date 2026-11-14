@@ -494,9 +494,56 @@ class RegistroView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+import logging
+logger = logging.getLogger(__name__)
+
+
 class LoginView(TokenObtainPairView):
     permission_classes = [AllowAny]
     serializer_class = CustomTokenObtainPairSerializer
+
+    def post(self, request, *args, **kwargs):
+        try:
+            return super().post(request, *args, **kwargs)
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            logger.error("[SIRAE LOGIN ERROR]: %s\n%s", e, tb)
+            return Response(
+                {
+                    "error": "Error interno en login",
+                    "detalle": str(e),
+                    "tipo": e.__class__.__name__,
+                    "traceback": [line.strip() for line in tb.splitlines()[-6:]],
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class MigrarDBView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        import io
+        from django.core.management import call_command
+        out = io.StringIO()
+        err = io.StringIO()
+        try:
+            call_command('migrate', stdout=out, stderr=err, interactive=False)
+            res = "ok"
+            status_code = status.HTTP_200_OK
+        except Exception as e:
+            import traceback
+            res = f"error: {e}"
+            err.write(traceback.format_exc())
+            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+
+        return Response({
+            "status": res,
+            "stdout": [l for l in out.getvalue().splitlines() if l.strip()],
+            "stderr": [l for l in err.getvalue().splitlines() if l.strip()],
+            "version": "2026-11-14-login-fix"
+        }, status=status_code)
 
 
 class CustomTokenRefreshView(TokenRefreshView):
