@@ -29,28 +29,33 @@ def registrar_token_emitido(token_obj, usuario: Usuario):
     """
     Registra un token JWT (Access o Refresh) en OutstandingToken para que pueda
     ser revocado e incluido en BlacklistedToken al desactivar la cuenta o cerrar sesión.
+    Protegido contra fallos si la tabla de blacklist aún no existe en la base de datos.
     """
-    if not token_obj or not usuario or not getattr(usuario, 'pk', None):
+    try:
+        if not token_obj or not usuario or not getattr(usuario, 'pk', None):
+            return None
+        jti = token_obj.get('jti') if hasattr(token_obj, 'get') else None
+        if not jti:
+            return None
+        exp = token_obj.get('exp')
+        expires_at = (
+            datetime.fromtimestamp(int(exp), tz=dt_timezone.utc)
+            if exp
+            else (timezone.now() + timedelta(hours=1))
+        )
+        outstanding, _ = OutstandingToken.objects.get_or_create(
+            jti=jti,
+            defaults={
+                'user': usuario,
+                'token': str(token_obj),
+                'created_at': timezone.now(),
+                'expires_at': expires_at,
+            },
+        )
+        return outstanding
+    except Exception as e:
+        logger.warning("[SIRAE AUTH] No se pudo registrar token emitido en OutstandingToken: %s", e)
         return None
-    jti = token_obj.get('jti') if hasattr(token_obj, 'get') else None
-    if not jti:
-        return None
-    exp = token_obj.get('exp')
-    expires_at = (
-        datetime.fromtimestamp(int(exp), tz=dt_timezone.utc)
-        if exp
-        else (timezone.now() + timedelta(hours=1))
-    )
-    outstanding, _ = OutstandingToken.objects.get_or_create(
-        jti=jti,
-        defaults={
-            'user': usuario,
-            'token': str(token_obj),
-            'created_at': timezone.now(),
-            'expires_at': expires_at,
-        },
-    )
-    return outstanding
 
 
 def revocar_sesiones_activas_usuario(usuario: Usuario) -> int:
@@ -1077,13 +1082,16 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         return request.META.get('REMOTE_ADDR')
 
     def _registrar_intento(self, correo, usuario=None, exitoso=False, motivo=''):
-        IntentoAutenticacion.objects.create(
-            correo=correo,
-            usuario=usuario,
-            exitoso=exitoso,
-            ip_address=self._obtener_ip_cliente(),
-            motivo=motivo,
-        )
+        try:
+            IntentoAutenticacion.objects.create(
+                correo=correo,
+                usuario=usuario,
+                exitoso=exitoso,
+                ip_address=self._obtener_ip_cliente(),
+                motivo=motivo,
+            )
+        except Exception as e:
+            logger.warning("[SIRAE AUTH] No se pudo registrar intento de autenticacion: %s", e)
 
     @classmethod
     def get_token(cls, user):
@@ -1103,7 +1111,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             if user.id_institucion else None
         )
         token['id_sede'] = user.id_sede_id
-        token['id_jornada'] = user.id_jornada_id
+        token['id_jornada'] = getattr(user, 'id_jornada_id', None)
 
         return token
 
@@ -1120,12 +1128,17 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         fail_cache_key = f"login_fails:{correo}"
 
         try:
-            usuario = Usuario.objects.select_related(
-                'rol',
-                'id_institucion',
-                'id_sede',
-                'id_jornada',
-            ).get(correo__iexact=correo)
+            try:
+                usuario = Usuario.objects.select_related(
+                    'rol',
+                    'id_institucion',
+                    'id_sede',
+                    'id_jornada',
+                ).get(correo__iexact=correo)
+            except Exception as select_err:
+                # Si id_jornada o alguna relación no existe aún en la base de datos de producción
+                logger.warning("[SIRAE AUTH] select_related fallo en login, usando consulta simple: %s", select_err)
+                usuario = Usuario.objects.select_related('rol', 'id_institucion', 'id_sede').get(correo__iexact=correo)
         except Usuario.DoesNotExist:
             bloqueado_cache = cache.get(lock_cache_key)
             if bloqueado_cache and bloqueado_cache > ahora:
