@@ -1,9 +1,12 @@
 from datetime import datetime, timedelta, timezone as dt_timezone
+import logging
 import re
 import secrets
 import string
 import unicodedata
 from urllib.parse import urlencode
+
+logger = logging.getLogger(__name__)
 
 from django.conf import settings
 from django.contrib.auth.hashers import check_password
@@ -1135,6 +1138,8 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                     'id_sede',
                     'id_jornada',
                 ).get(correo__iexact=correo)
+            except Usuario.DoesNotExist:
+                raise
             except Exception as select_err:
                 # Si id_jornada o alguna relación no existe aún en la base de datos de producción
                 logger.warning("[SIRAE AUTH] select_related fallo en login, usando consulta simple: %s", select_err)
