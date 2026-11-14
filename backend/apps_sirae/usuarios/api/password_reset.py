@@ -763,6 +763,10 @@ class TestEmailView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
+        email_param = request.query_params.get("email") or request.query_params.get("correo")
+        if email_param:
+            return self._enviar_prueba(email_param.strip())
+
         brevo_key = (
             os.getenv("BREVO_API_KEY", "").strip()
             or getattr(settings, "BREVO_API_KEY", "").strip()
@@ -788,17 +792,27 @@ class TestEmailView(APIView):
                 "brevo_api_key_configurada": bool(brevo_key),
                 "brevo_api_key_mascara": masked_key,
                 "remitente_configurado": sender_email,
+                "enlace_prueba_rapido": f"{backend_url}/api/auth/test-email/?email={sender_email}",
                 "instrucciones": (
-                    "Para probar el envío real hacia tu correo, realiza una petición POST "
-                    "a este mismo endpoint con JSON: {'email': 'tu-correo@gmail.com'}"
+                    "Para probar el envío real hacia tu correo, puedes simplemente abrir: "
+                    f"{backend_url}/api/auth/test-email/?email=tu-correo@gmail.com "
+                    "o hacer un POST con JSON: {'email': 'tu-correo@gmail.com'}"
                 ),
             },
             status=status.HTTP_200_OK,
         )
 
     def post(self, request):
-        destinatario = request.data.get("email") or request.data.get("correo") or ""
-        destinatario = str(destinatario).strip()
+        destinatario = (
+            request.data.get("email")
+            or request.data.get("correo")
+            or request.query_params.get("email")
+            or request.query_params.get("correo")
+            or ""
+        )
+        return self._enviar_prueba(str(destinatario).strip())
+
+    def _enviar_prueba(self, destinatario: str):
         if not destinatario:
             return Response(
                 {"error": "Debes proporcionar un correo en el campo 'email' o 'correo'."},
