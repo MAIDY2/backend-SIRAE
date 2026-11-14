@@ -21,6 +21,11 @@ if os.getenv('DATABASE_URL'):
     import threading
     def _auto_migrate():
         try:
+            from apps_sirae.usuarios.api.views import asegurar_columnas_criticas
+            asegurar_columnas_criticas()
+        except Exception:
+            pass
+        try:
             from django.core.management import call_command
             call_command('migrate', interactive=False)
             print("[SIRAE WSGI] Migraciones automáticas aplicadas exitosamente.")

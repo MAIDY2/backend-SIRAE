@@ -498,6 +498,42 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def asegurar_columnas_criticas():
+    from django.db import connection
+    sql_statements = [
+        "ALTER TABLE sedes ADD COLUMN IF NOT EXISTS telefono VARCHAR(30);",
+        "ALTER TABLE sedes ADD COLUMN IF NOT EXISTS codigo_dane VARCHAR(50);",
+        "ALTER TABLE sedes ADD COLUMN IF NOT EXISTS direccion VARCHAR(200);",
+        "ALTER TABLE sedes ADD COLUMN IF NOT EXISTS estado VARCHAR(20) DEFAULT 'ACTIVO';",
+        "ALTER TABLE instituciones ADD COLUMN IF NOT EXISTS representante_legal VARCHAR(150);",
+        "ALTER TABLE instituciones ADD COLUMN IF NOT EXISTS telefono VARCHAR(30);",
+        "ALTER TABLE instituciones ADD COLUMN IF NOT EXISTS correo_contacto VARCHAR(150);",
+        "ALTER TABLE instituciones ADD COLUMN IF NOT EXISTS estado VARCHAR(20) DEFAULT 'ACTIVO';",
+        "ALTER TABLE usuarios_usuario ADD COLUMN IF NOT EXISTS bloqueado_hasta TIMESTAMP WITH TIME ZONE;",
+        "ALTER TABLE usuarios_usuario ADD COLUMN IF NOT EXISTS intentos_fallidos_login SMALLINT DEFAULT 0;",
+        "ALTER TABLE usuarios_usuario ADD COLUMN IF NOT EXISTS ultimo_intento_fallido TIMESTAMP WITH TIME ZONE;",
+        "ALTER TABLE usuarios_usuario ADD COLUMN IF NOT EXISTS id_jornada_id INTEGER;",
+        "ALTER TABLE usuarios_usuario ADD COLUMN IF NOT EXISTS debe_cambiar_password BOOLEAN DEFAULT FALSE;",
+        """
+        CREATE TABLE IF NOT EXISTS usuarios_intento_autenticacion (
+            id BIGSERIAL PRIMARY KEY,
+            correo VARCHAR(150) NOT NULL,
+            exitoso BOOLEAN NOT NULL DEFAULT FALSE,
+            ip_address INET,
+            motivo VARCHAR(120) NOT NULL DEFAULT '',
+            creado_en TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            usuario_id INTEGER
+        );
+        """
+    ]
+    with connection.cursor() as cursor:
+        for sql in sql_statements:
+            try:
+                cursor.execute(sql)
+            except Exception as e:
+                logger.warning("[SIRAE SQL] Fallo al ejecutar '%s': %s", sql[:40], e)
+
+
 class LoginView(TokenObtainPairView):
     permission_classes = [AllowAny]
     serializer_class = CustomTokenObtainPairSerializer
@@ -506,6 +542,13 @@ class LoginView(TokenObtainPairView):
         try:
             return super().post(request, *args, **kwargs)
         except Exception as e:
+            from django.db.utils import DatabaseError, ProgrammingError
+            if isinstance(e, (ProgrammingError, DatabaseError)):
+                try:
+                    asegurar_columnas_criticas()
+                    return super().post(request, *args, **kwargs)
+                except Exception:
+                    pass
             import traceback
             tb = traceback.format_exc()
             logger.error("[SIRAE LOGIN ERROR]: %s\n%s", e, tb)
@@ -524,6 +567,7 @@ class MigrarDBView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
+        asegurar_columnas_criticas()
         import io
         from django.core.management import call_command
         out = io.StringIO()
@@ -542,7 +586,7 @@ class MigrarDBView(APIView):
             "status": res,
             "stdout": [l for l in out.getvalue().splitlines() if l.strip()],
             "stderr": [l for l in err.getvalue().splitlines() if l.strip()],
-            "version": "2026-11-14-login-fix"
+            "version": "2026-11-14-login-fix-v2"
         }, status=status_code)
 
 

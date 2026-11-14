@@ -1141,9 +1141,9 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             except Usuario.DoesNotExist:
                 raise
             except Exception as select_err:
-                # Si id_jornada o alguna relación no existe aún en la base de datos de producción
-                logger.warning("[SIRAE AUTH] select_related fallo en login, usando consulta simple: %s", select_err)
-                usuario = Usuario.objects.select_related('rol', 'id_institucion', 'id_sede').get(correo__iexact=correo)
+                # Si id_jornada, sede o alguna relación tiene columnas pendientes en producción
+                logger.warning("[SIRAE AUTH] select_related fallo en login, usando consulta directa: %s", select_err)
+                usuario = Usuario.objects.get(correo__iexact=correo)
         except Usuario.DoesNotExist:
             bloqueado_cache = cache.get(lock_cache_key)
             if bloqueado_cache and bloqueado_cache > ahora:
@@ -1254,20 +1254,24 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         registrar_token_emitido(refresh, usuario)
         registrar_token_emitido(access_token_obj, usuario)
 
-        inst_nombre = (
-            usuario.id_institucion.nombre_institucion
-            if getattr(usuario, 'id_institucion', None) else None
-        )
+        inst_nombre = None
+        try:
+            if getattr(usuario, 'id_institucion_id', None) and getattr(usuario, 'id_institucion', None):
+                inst_nombre = getattr(usuario.id_institucion, 'nombre_institucion', None)
+        except Exception:
+            pass
 
-        sede_nombre = (
-            usuario.id_sede.nombre_sede
-            if getattr(usuario, 'id_sede', None) else None
-        )
+        sede_nombre = None
+        try:
+            if getattr(usuario, 'id_sede_id', None) and getattr(usuario, 'id_sede', None):
+                sede_nombre = getattr(usuario.id_sede, 'nombre_sede', None)
+        except Exception:
+            pass
+
         jornada_nombre = None
         try:
-            jornada_obj = getattr(usuario, 'id_jornada', None)
-            if jornada_obj:
-                jornada_nombre = getattr(jornada_obj, 'nombre_jornada', None)
+            if getattr(usuario, 'id_jornada_id', None) and getattr(usuario, 'id_jornada', None):
+                jornada_nombre = getattr(usuario.id_jornada, 'nombre_jornada', None)
         except Exception:
             pass
 
