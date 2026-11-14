@@ -48,13 +48,14 @@ def enviar_email_brevo_api(
         or getattr(settings, "BREVO_API_KEY", "").strip()
     )
 
-    from_email_raw = getattr(settings, "DEFAULT_FROM_EMAIL", "riveracjhonf@gmail.com")
+    from_email_raw = getattr(settings, "DEFAULT_FROM_EMAIL", "jhonriveracaicedo@gmail.com")
     parsed_name, parsed_email = email.utils.parseaddr(from_email_raw)
     sender_email = (
         os.getenv("BREVO_SENDER_EMAIL", "").strip()
         or getattr(settings, "BREVO_SENDER_EMAIL", "").strip()
         or parsed_email
         or from_email_raw
+        or "jhonriveracaicedo@gmail.com"
     )
     sender_name = parsed_name if parsed_name else "SIRAE PAE"
 
