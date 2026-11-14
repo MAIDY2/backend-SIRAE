@@ -3,6 +3,8 @@ from django.urls import include, path
 from apps_sirae.ia_sugerencias.views import (
     sugerencias_recetas_ia,
     descontar_inventario_ia,
+    estado_mongodb_ia,
+    historial_sugerencias_ia_view,
 )
 
 from apps_sirae.unidades_medida.api.router import router_unidades_medida
@@ -182,7 +184,7 @@ urlpatterns = [
     # Reportes, plantillas oficiales y planillas auto-diligenciadas (SIR-170..SIR-173)
     path('', include('apps_sirae.reportes.api.urls')),
 
-    # Inteligencia artificial: sugerencias de recetas con el inventario
+    # Inteligencia artificial: sugerencias de recetas con el inventario y MongoDB Atlas
     path(
         'ia/sugerencias-recetas/',
         sugerencias_recetas_ia,
@@ -192,5 +194,15 @@ urlpatterns = [
         'ia/descontar-inventario/',
         descontar_inventario_ia,
         name='descontar-inventario-ia',
+    ),
+    path(
+        'ia/mongodb/status/',
+        estado_mongodb_ia,
+        name='ia-mongodb-status',
+    ),
+    path(
+        'ia/historial/',
+        historial_sugerencias_ia_view,
+        name='ia-historial',
     ),
 ]

@@ -23,6 +23,13 @@ from apps_sirae.salidas_inventario.models import SalidaInventario
 from apps_sirae.secciones_menu.models import SeccionMenu
 from apps_sirae.sedes.models import Sede
 from apps_sirae.unidades_medida.models import UnidadMedida
+from apps_sirae.ia_sugerencias.mongodb import (
+    guardar_historial_sugerencia,
+    obtener_historial_sugerencias,
+    guardar_auditoria_consumo,
+    verificar_conexion_mongo,
+    sincronizar_catalogo_recetas,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1008,6 +1015,29 @@ def sugerencias_recetas_ia(request):
         "las normas nutricionales del PAE sin repetir los menús ya estipulados."
     )
 
+    # Sincronizar catálogo base en MongoDB Atlas si aplica
+    try:
+        sincronizar_catalogo_recetas(CATALOGO_20_MENUS_PAE)
+    except Exception:
+        pass
+
+    # Registrar el evento en el historial de MongoDB Atlas
+    id_registro_mongo = None
+    try:
+        id_registro_mongo = guardar_historial_sugerencia({
+            "id_sede": id_sede_final,
+            "seccion": seccion_nombre,
+            "id_seccion": id_seccion,
+            "ninos_presentes": ninos_presentes,
+            "preferencia": preferencia,
+            "motor_ia": "OpenAI GPT-4o-mini" if sugerencias_crudas else "Motor PAE Determinístico",
+            "total_sugerencias": len(sugerencias_estructuradas),
+            "sugerencias": sugerencias_estructuradas,
+            "platos_base_pae_consultados": len(platos_base_pae),
+        })
+    except Exception as e:
+        logger.warning("No se pudo registrar la sugerencia en MongoDB Atlas: %s", e)
+
     return Response(
         {
             "status": "success",
@@ -1019,6 +1049,10 @@ def sugerencias_recetas_ia(request):
             "sugerencias_ia_estructuradas": sugerencias_estructuradas,
             "platos_estipulados_pae": platos_base_pae,
             "todas_las_opciones": todas_las_opciones,
+            "mongodb_atlas": {
+                "activo": bool(id_registro_mongo),
+                "id_registro_historial": id_registro_mongo,
+            },
         },
         status=status.HTTP_200_OK,
     )
@@ -1122,6 +1156,21 @@ def descontar_inventario_ia(request):
                     f"El ingrediente '{nombre}' no está registrado en el inventario de esta sede."
                 )
 
+    # Registrar auditoría del consumo en MongoDB Atlas
+    id_auditoria_mongo = None
+    try:
+        id_auditoria_mongo = guardar_auditoria_consumo({
+            "id_sede": id_sede,
+            "nombre_preparacion": nombre_preparacion,
+            "ninos_presentes": ninos,
+            "total_descontados": len(descuentos_aplicados),
+            "descuentos": descuentos_aplicados,
+            "alertas": alertas,
+            "usuario": getattr(request.user, "email", "anonimo") if getattr(request, "user", None) and request.user.is_authenticated else "anonimo",
+        })
+    except Exception as e:
+        logger.warning("No se pudo registrar la auditoría de consumo en MongoDB Atlas: %s", e)
+
     return Response(
         {
             "status": "success",
@@ -1129,6 +1178,61 @@ def descontar_inventario_ia(request):
             "descuentos": descuentos_aplicados,
             "alertas": alertas,
             "total_ingredientes_descontados": len(descuentos_aplicados),
+            "id_auditoria_mongodb": id_auditoria_mongo,
         },
         status=status.HTTP_200_OK,
     )
+
+
+# ==============================================================================
+# ENDPOINT: ESTADO DE CONEXIÓN CON MONGODB ATLAS
+# ==============================================================================
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def estado_mongodb_ia(request):
+    """
+    GET /api/ia/mongodb/status/
+    Verifica el estado de conexión activa entre el módulo de IA y MongoDB Atlas.
+    """
+    estado = verificar_conexion_mongo()
+    codigo_http = status.HTTP_200_OK if estado.get("conectado") else status.HTTP_503_SERVICE_UNAVAILABLE
+    return Response(estado, status=codigo_http)
+
+
+# ==============================================================================
+# ENDPOINT: HISTORIAL DE SUGERENCIAS IA ALMACENADAS EN MONGODB ATLAS
+# ==============================================================================
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def historial_sugerencias_ia_view(request):
+    """
+    GET /api/ia/historial/
+    Retorna el historial de sugerencias generadas por la IA almacenadas en MongoDB Atlas.
+    Parámetros opcionales: limite, id_sede, seccion
+    """
+    limite = int(request.query_params.get("limite", 20))
+    id_sede = request.query_params.get("id_sede")
+    seccion = request.query_params.get("seccion")
+
+    id_sede_int = None
+    if id_sede:
+        try:
+            id_sede_int = int(id_sede)
+        except (ValueError, TypeError):
+            pass
+
+    historial = obtener_historial_sugerencias(
+        limite=limite,
+        id_sede=id_sede_int,
+        seccion=seccion,
+    )
+
+    return Response(
+        {
+            "status": "success",
+            "total_registros": len(historial),
+            "historial": historial,
+        },
+        status=status.HTTP_200_OK,
+    )
+

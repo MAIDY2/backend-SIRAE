@@ -157,3 +157,20 @@ class IASugerenciasRecetasTests(TestCase):
         self.assertEqual(self.inv_huevos.cantidad_actual, Decimal("100.0"))
         # 50 - 9 = 41
         self.assertEqual(self.inv_arroz.cantidad_actual, Decimal("41.0"))
+
+    def test_estado_mongodb_ia_resiliente(self):
+        """Verifica que el endpoint de estado de MongoDB Atlas responda adecuadamente sin colapsar."""
+        response = self.client.get("/api/ia/mongodb/status/")
+        # Si no hay URI configurada en el entorno de pruebas, retorna 503 con diagnóstico claro
+        self.assertIn(response.status_code, [status.HTTP_200_OK, status.HTTP_503_SERVICE_UNAVAILABLE])
+        data = response.json()
+        self.assertIn("conectado", data)
+
+    def test_historial_sugerencias_endpoint(self):
+        """Verifica que el endpoint de historial de la IA responda 200 con estructura esperada."""
+        response = self.client.get("/api/ia/historial/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data["status"], "success")
+        self.assertIn("historial", data)
+

@@ -427,3 +427,9 @@ else:
     SECURE_SSL_REDIRECT = False
     SESSION_COOKIE_SECURE = False
     CSRF_COOKIE_SECURE = False
+
+# ==============================================================================
+# CONFIGURACIÓN DE MONGODB ATLAS (Módulo de Inteligencia Artificial)
+# ==============================================================================
+MONGO_URI = os.getenv("MONGO_URI", os.getenv("MONGODB_URI", "")).strip()
+MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "sirae_ia").strip()
