@@ -277,15 +277,9 @@ EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "nvdyvggclraintxk").strip
 EMAIL_TIMEOUT = parse_env_int(os.getenv("EMAIL_TIMEOUT"), 10)
 
 # Soporte para API HTTP directa de Brevo y soporte opcional Anymail
-_BREVO_PARTS = [
-    "xkey",
-    "sib-062e55490795c654378f4b06f8c4cb7061d4b684cb68019e0954b8d003cfcf0f",
-    "-7tA2x8O0Z00X0CQc",
-]
 BREVO_API_KEY = (
     os.getenv("BREVO_API_KEY", "").strip()
     or os.getenv("SENDINBLUE_API_KEY", "").strip()
-    or "".join(_BREVO_PARTS)
 )
 if BREVO_API_KEY and EMAIL_BACKEND == "anymail.backends.brevo.EmailBackend":
     if "anymail" not in INSTALLED_APPS:
