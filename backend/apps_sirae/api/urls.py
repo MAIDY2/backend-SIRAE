@@ -1,6 +1,9 @@
 from django.urls import include, path
 
-from apps_sirae.ia_sugerencias.views import sugerencias_recetas_ia
+from apps_sirae.ia_sugerencias.views import (
+    sugerencias_recetas_ia,
+    descontar_inventario_ia,
+)
 
 from apps_sirae.unidades_medida.api.router import router_unidades_medida
 from apps_sirae.secciones_menu.api.router import router_secciones_menu
@@ -184,5 +187,10 @@ urlpatterns = [
         'ia/sugerencias-recetas/',
         sugerencias_recetas_ia,
         name='sugerencias-recetas-ia',
+    ),
+    path(
+        'ia/descontar-inventario/',
+        descontar_inventario_ia,
+        name='descontar-inventario-ia',
     ),
 ]
