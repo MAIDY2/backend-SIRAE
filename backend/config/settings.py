@@ -73,9 +73,15 @@ def parse_env_int(value, default=0):
 
 ALLOWED_HOSTS = parse_env_list(
     os.getenv("ALLOWED_HOSTS"),
-    "localhost,127.0.0.1,0.0.0.0,testserver,.onrender.com",
+    "localhost,127.0.0.1,0.0.0.0,testserver,.onrender.com,backend-sirae-pyim.onrender.com",
 )
-for host in [".onrender.com", "0.0.0.0", "localhost", "127.0.0.1"]:
+for host in [
+    "backend-sirae-pyim.onrender.com",
+    ".onrender.com",
+    "0.0.0.0",
+    "localhost",
+    "127.0.0.1",
+]:
     if host not in ALLOWED_HOSTS:
         ALLOWED_HOSTS.append(host)
 
@@ -269,7 +275,7 @@ EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "jhonriveracaicedo@gmail.com").st
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "nvdyvggclraintxk").strip()
 EMAIL_TIMEOUT = parse_env_int(os.getenv("EMAIL_TIMEOUT"), 10)
 
-# Soporte opcional para Anymail / Brevo únicamente si está configurado explícitamente
+# Soporte para API HTTP directa de Brevo y soporte opcional Anymail
 BREVO_API_KEY = os.getenv("BREVO_API_KEY", "").strip()
 if BREVO_API_KEY and EMAIL_BACKEND == "anymail.backends.brevo.EmailBackend":
     if "anymail" not in INSTALLED_APPS:
@@ -280,10 +286,15 @@ if BREVO_API_KEY and EMAIL_BACKEND == "anymail.backends.brevo.EmailBackend":
 
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "jhonriveracaicedo@gmail.com").strip()
 
+BACKEND_URL = os.getenv(
+    "BACKEND_URL",
+    "https://backend-sirae-pyim.onrender.com",
+).strip().rstrip("/")
+
 FRONTEND_URL = os.getenv(
     "FRONTEND_URL",
-    "http://localhost:4200",
-)
+    "https://backend-sirae-pyim.onrender.com" if not DEBUG else "http://localhost:4200",
+).strip().rstrip("/")
 
 PASSWORD_RESET_EXPOSE_CODE = (
     os.getenv("PASSWORD_RESET_EXPOSE_CODE", "False")
@@ -326,9 +337,15 @@ CORS_ALLOWED_ORIGINS = parse_env_list(
         "http://localhost:5173,"
         "http://127.0.0.1:5173,"
         "http://localhost:4200,"
-        "http://127.0.0.1:4200"
+        "http://127.0.0.1:4200,"
+        "https://backend-sirae-pyim.onrender.com"
     ),
 )
+for origin in [
+    "https://backend-sirae-pyim.onrender.com",
+]:
+    if origin not in CORS_ALLOWED_ORIGINS:
+        CORS_ALLOWED_ORIGINS.append(origin)
 
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^http://localhost:\d+$",
@@ -344,9 +361,16 @@ CSRF_TRUSTED_ORIGINS = parse_env_list(
         "http://127.0.0.1:5173,"
         "http://localhost:4200,"
         "http://127.0.0.1:4200,"
-        "https://*.onrender.com"
+        "https://*.onrender.com,"
+        "https://backend-sirae-pyim.onrender.com"
     ),
 )
+for origin in [
+    "https://*.onrender.com",
+    "https://backend-sirae-pyim.onrender.com",
+]:
+    if origin not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(origin)
 
 SWAGGER_SETTINGS = {
     "SECURITY_DEFINITIONS": {

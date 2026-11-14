@@ -15,6 +15,7 @@ schema_view = get_schema_view(
         default_version="v1",
         description="Documentación de endpoints del sistema SIRAE",
     ),
+    url=getattr(settings, "BACKEND_URL", "https://backend-sirae-pyim.onrender.com"),
     public=True,
     permission_classes=(permissions.AllowAny,),
     authentication_classes=(),

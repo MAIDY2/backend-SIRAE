@@ -28,6 +28,12 @@ from apps_sirae.usuarios.api.serializers import (
 from apps_sirae.usuarios.api.password_reset import (
     ConfirmarCodigoRecuperacionPasswordView,
     SolicitarCodigoRecuperacionPasswordView,
+    SolicitarRecuperacionPasswordView,
+    ConfirmarRecuperacionPasswordView,
+    ValidarTokenPasswordView,
+    CambiarPasswordView,
+    PerfilUsuarioView,
+    enviar_email_brevo_api,
 )
 
 

@@ -1,6 +1,6 @@
 
 import re
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from datetime import timedelta
 from django.core.cache import cache
@@ -758,6 +758,77 @@ class PasswordRecoveryCodeTests(TestCase):
         self.assertTrue(
             self.user.check_password("Original-Safe-Password-2026!")
         )
+
+
+class BrevoPasswordResetApiTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+        self.rol_admin = Rol.objects.create(nombre=Rol.NombreRol.ADMINISTRADOR)
+        self.user = Usuario.objects.create_user(
+            correo="brevo.user@sirae.com",
+            nombre="Carlos",
+            apellido="Brevo",
+            password="Original-Pass-2026!x",
+            tipo_documento="CC",
+            numero_documento="BREVO001",
+            rol=self.rol_admin,
+            is_active=True,
+        )
+
+    @override_settings(
+        BREVO_API_KEY="xkeysib-fake-render-brevo-key",
+        BACKEND_URL="https://backend-sirae-pyim.onrender.com",
+        DEBUG=False,
+    )
+    @patch("apps_sirae.usuarios.api.password_reset.requests.post")
+    def test_recuperar_password_code_calls_brevo_http_api(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 201
+        mock_resp.text = '{"messageId": "<fake-brevo-msg-id>"}'
+        mock_post.return_value = mock_resp
+
+        response = self.client.post(
+            reverse("recuperar-password"),
+            {"correo": self.user.correo},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(mock_post.called)
+        call_args, call_kwargs = mock_post.call_args
+        self.assertEqual(call_args[0], "https://api.brevo.com/v3/smtp/email")
+        self.assertEqual(call_kwargs["headers"]["api-key"], "xkeysib-fake-render-brevo-key")
+        payload = call_kwargs["json"]
+        self.assertEqual(payload["to"][0]["email"], self.user.correo)
+        self.assertIn("https://backend-sirae-pyim.onrender.com", payload["htmlContent"])
+
+    @override_settings(
+        BREVO_API_KEY="xkeysib-fake-render-brevo-key",
+        BACKEND_URL="https://backend-sirae-pyim.onrender.com",
+        FRONTEND_URL="",
+        DEBUG=False,
+    )
+    @patch("apps_sirae.usuarios.api.password_reset.requests.post")
+    def test_solicitar_recuperacion_password_view_uses_brevo_and_production_url(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 201
+        mock_resp.text = '{"messageId": "<fake-brevo-msg-id-2>"}'
+        mock_post.return_value = mock_resp
+
+        response = self.client.post(
+            reverse("password-reset-solicitar"),
+            {"correo": self.user.correo},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(mock_post.called)
+        call_args, call_kwargs = mock_post.call_args
+        self.assertEqual(call_args[0], "https://api.brevo.com/v3/smtp/email")
+        payload = call_kwargs["json"]
+        self.assertEqual(payload["to"][0]["email"], self.user.correo)
+        self.assertIn("https://backend-sirae-pyim.onrender.com/recuperar-password?token=", payload["htmlContent"])
 
 
 

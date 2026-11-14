@@ -23,7 +23,9 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: ALLOWED_HOSTS
-        value: ".onrender.com,localhost,127.0.0.1,0.0.0.0,testserver"
+        value: "backend-sirae-pyim.onrender.com,.onrender.com,localhost,127.0.0.1,0.0.0.0,testserver"
+      - key: BACKEND_URL
+        value: "https://backend-sirae-pyim.onrender.com"
       - key: FRONTEND_URL
         sync: false
       - key: CORS_ALLOWED_ORIGINS

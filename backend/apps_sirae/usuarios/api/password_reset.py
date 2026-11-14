@@ -1,9 +1,12 @@
+import email.utils
 import logging
-from urllib.parse import urlencode
+import os
 import secrets
 import smtplib
 from datetime import timedelta
+from urllib.parse import urlencode
 
+import requests
 from django.conf import settings
 from django.core.mail import send_mail
 from django.core.signing import TimestampSigner, BadSignature, SignatureExpired
@@ -22,6 +25,101 @@ from ..models import PasswordResetCode, Usuario
 from .serializers import UsuarioSerializer
 
 logger = logging.getLogger(__name__)
+
+BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
+PRODUCTION_BACKEND_URL = "https://backend-sirae-pyim.onrender.com"
+
+
+def enviar_email_brevo_api(
+    destinatario_email: str,
+    asunto: str,
+    mensaje_texto: str,
+    mensaje_html: str | None = None,
+    destinatario_nombre: str | None = None,
+) -> bool:
+    """
+    Envía un correo electrónico utilizando directamente la API HTTP REST de Brevo
+    (POST https://api.brevo.com/v3/smtp/email), evitando bloqueos de puertos SMTP (587/465/25)
+    en plataformas en la nube como Render.
+    Si no se encuentra configurado BREVO_API_KEY, realiza un fallback a send_mail de Django.
+    """
+    brevo_api_key = (
+        os.getenv("BREVO_API_KEY", "").strip()
+        or getattr(settings, "BREVO_API_KEY", "").strip()
+    )
+
+    from_email_raw = getattr(settings, "DEFAULT_FROM_EMAIL", "jhonriveracaicedo@gmail.com")
+    parsed_name, parsed_email = email.utils.parseaddr(from_email_raw)
+    sender_email = parsed_email if parsed_email else from_email_raw
+    sender_name = parsed_name if parsed_name else "SIRAE PAE"
+
+    if brevo_api_key:
+        headers = {
+            "accept": "application/json",
+            "api-key": brevo_api_key,
+            "content-type": "application/json",
+        }
+        payload = {
+            "sender": {
+                "name": sender_name,
+                "email": sender_email,
+            },
+            "to": [
+                {
+                    "email": destinatario_email,
+                    "name": destinatario_nombre or destinatario_email,
+                }
+            ],
+            "subject": asunto,
+            "textContent": mensaje_texto,
+        }
+        if mensaje_html:
+            payload["htmlContent"] = mensaje_html
+        else:
+            payload["htmlContent"] = (
+                f"<div style='font-family: Arial, sans-serif; white-space: pre-line;'>"
+                f"{mensaje_texto}</div>"
+            )
+
+        logger.info(
+            "Enviando correo a %s vía Brevo HTTP API: %s (Asunto: '%s')",
+            destinatario_email,
+            BREVO_API_URL,
+            asunto,
+        )
+        response = requests.post(
+            BREVO_API_URL,
+            headers=headers,
+            json=payload,
+            timeout=15,
+        )
+        if response.status_code not in (200, 201, 202):
+            logger.error(
+                "Error en Brevo HTTP API al enviar correo a %s (HTTP %s): %s",
+                destinatario_email,
+                response.status_code,
+                response.text,
+            )
+            response.raise_for_status()
+
+        logger.info(
+            "Correo enviado exitosamente vía Brevo HTTP API a: %s (HTTP %s)",
+            destinatario_email,
+            response.status_code,
+        )
+        return True
+
+    # Fallback transparente a send_mail cuando no esté definido BREVO_API_KEY (desarrollo / test)
+    logger.info("BREVO_API_KEY no configurado, utilizando Django send_mail...")
+    send_mail(
+        subject=asunto,
+        message=mensaje_texto,
+        from_email=from_email_raw,
+        recipient_list=[destinatario_email],
+        html_message=mensaje_html,
+        fail_silently=False,
+    )
+    return True
 
 
 class PasswordResetService:
@@ -106,15 +204,16 @@ class SolicitarCodigoRecuperacionPasswordView(APIView):
             settings.PASSWORD_RESET_EXPOSE_CODE
             and correo.casefold() in settings.PASSWORD_RESET_EXPOSE_CODE_EMAILS
         )
-        smtp_is_configured = bool(
+        brevo_key = (
+            os.getenv("BREVO_API_KEY", "").strip()
+            or getattr(settings, "BREVO_API_KEY", "").strip()
+        )
+        email_is_configured = bool(
             settings.EMAIL_BACKEND == "django.core.mail.backends.smtp.EmailBackend"
             and settings.EMAIL_HOST_USER
             and settings.EMAIL_HOST_PASSWORD
-        ) or bool(
-            settings.EMAIL_BACKEND == "anymail.backends.brevo.EmailBackend"
-            and getattr(settings, "BREVO_API_KEY", "")
-        )
-        if not settings.DEBUG and not expose_code and not smtp_is_configured:
+        ) or bool(brevo_key)
+        if not settings.DEBUG and not expose_code and not email_is_configured:
             logger.error(
                 "No se puede enviar recuperación de contraseña: "
                 "el correo de producción no está configurado."
@@ -160,21 +259,62 @@ class SolicitarCodigoRecuperacionPasswordView(APIView):
         if not expose_code:
             try:
                 logger.info(f"Enviando correo de recuperación con código a: {usuario.correo}")
-                send_mail(
-                    subject="Código para recuperar tu contraseña - SIRAE",
-                    message=(
-                        f"Hola {usuario.nombre_completo},\n\n"
-                        f"Tu código para recuperar la contraseña es: {codigo}\n\n"
-                        "El código vence en 10 minutos y solo puede utilizarse una vez. "
-                        "Si no solicitaste este cambio, ignora este mensaje."
-                    ),
-                    from_email=settings.DEFAULT_FROM_EMAIL,
-                    recipient_list=[usuario.correo],
-                    fail_silently=False,
+                backend_prod_url = getattr(
+                    settings,
+                    "BACKEND_URL",
+                    PRODUCTION_BACKEND_URL,
+                ).rstrip("/")
+                asunto = "Código para recuperar tu contraseña - SIRAE"
+                mensaje_texto = (
+                    f"Hola {usuario.nombre_completo},\n\n"
+                    f"Tu código para recuperar la contraseña es: {codigo}\n\n"
+                    "El código vence en 10 minutos y solo puede utilizarse una vez. "
+                    "Si no solicitaste este cambio, ignora este mensaje.\n\n"
+                    f"Plataforma SIRAE PAE: {backend_prod_url}"
+                )
+                mensaje_html = f"""
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
+                    <div style="background-color: #2b6cb0; padding: 15px; border-radius: 6px; text-align: center; color: white;">
+                        <h2 style="margin: 0;">SIRAE - Sistema 1-2-3 del PAE</h2>
+                        <p style="margin: 5px 0 0 0; font-size: 14px;">Programa de Alimentación Escolar</p>
+                    </div>
+                    <div style="padding: 20px 0;">
+                        <p>Hola <strong>{usuario.nombre_completo}</strong>,</p>
+                        <p>Recibimos una solicitud para recuperar tu contraseña de acceso en la plataforma SIRAE.</p>
+                        <p>Tu código de verificación de 6 dígitos es:</p>
+                        <div style="text-align: center; margin: 25px 0;">
+                            <span style="display: inline-block; font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #2b6cb0; background-color: #edf2f7; padding: 12px 28px; border-radius: 8px; border: 1px dashed #2b6cb0;">
+                                {codigo}
+                            </span>
+                        </div>
+                        <p style="font-size: 13px; color: #e53e3e;">
+                            <strong>Nota:</strong> Este código vence en <strong>10 minutos</strong> y solo puede utilizarse una vez.
+                        </p>
+                        <p style="font-size: 13px; color: #718096;">
+                            Si tú no solicitaste este cambio, ignora este mensaje de forma segura. Tu cuenta continúa protegida.
+                        </p>
+                        <div style="margin-top: 25px; text-align: center;">
+                            <a href="{backend_prod_url}" style="font-size: 12px; color: #3182ce; text-decoration: none;">
+                                Acceder al sistema SIRAE ({backend_prod_url})
+                            </a>
+                        </div>
+                    </div>
+                    <hr style="border: none; border-top: 1px solid #e2e8f0;" />
+                    <p style="font-size: 11px; color: #a0aec0; text-align: center;">
+                        SIRAE PAE &copy; 2026 - Plataforma de Gestión y Control Alimentario Escolar
+                    </p>
+                </div>
+                """
+                enviar_email_brevo_api(
+                    destinatario_email=usuario.correo,
+                    asunto=asunto,
+                    mensaje_texto=mensaje_texto,
+                    mensaje_html=mensaje_html,
+                    destinatario_nombre=usuario.nombre_completo,
                 )
                 logger.info(f"Correo de recuperación enviado con éxito a: {usuario.correo}")
             except Exception as e:
-                logger.error(f"Error SMTP: {e}", exc_info=True)
+                logger.error(f"Error al enviar código de recuperación: {e}", exc_info=True)
                 PasswordResetCode.objects.filter(usuario=usuario).delete()
                 return Response(
                     {
@@ -353,9 +493,18 @@ class SolicitarRecuperacionPasswordView(APIView):
             )
 
         token = PasswordResetService.generar_token(usuario)
-        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200')
+        backend_url = getattr(
+            settings,
+            'BACKEND_URL',
+            PRODUCTION_BACKEND_URL,
+        ).rstrip('/')
+        frontend_url = getattr(settings, 'FRONTEND_URL', '').rstrip('/')
+        base_url = frontend_url if frontend_url else backend_url
+        if base_url.startswith("http://localhost") and not settings.DEBUG:
+            base_url = backend_url
+
         enlace_recuperacion = (
-            f"{frontend_url}/recuperar-password?"
+            f"{base_url}/recuperar-password?"
             f"{urlencode({'token': token})}"
         )
 
@@ -406,17 +555,17 @@ class SolicitarRecuperacionPasswordView(APIView):
         """
 
         try:
-            send_mail(
-                subject=asunto,
-                message=mensaje_texto,
-                from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'no-reply@sirae.edu.co'),
-                recipient_list=[usuario.correo],
-                html_message=mensaje_html,
-                fail_silently=False,
+            enviar_email_brevo_api(
+                destinatario_email=usuario.correo,
+                asunto=asunto,
+                mensaje_texto=mensaje_texto,
+                mensaje_html=mensaje_html,
+                destinatario_nombre=usuario.nombre_completo,
             )
+            logger.info(f"[SIRAE EMAIL] Correo de recuperacion enviado con exito a: {usuario.correo}")
             print(f"[SIRAE EMAIL] Correo de recuperacion enviado con exito a: {usuario.correo}")
         except Exception as e:
-            logger.error(f"Error SMTP: {e}", exc_info=True)
+            logger.error(f"Error Brevo HTTP / Correo: {e}", exc_info=True)
             logger.error(f"[SIRAE EMAIL ERROR] No se pudo enviar el correo a {usuario.correo}: {e}", exc_info=True)
             print(f"[SIRAE EMAIL ERROR] Fallo el envio de correo a {usuario.correo}: {e}")
             return Response(

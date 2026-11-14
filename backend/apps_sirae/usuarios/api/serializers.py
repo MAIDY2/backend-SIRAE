@@ -141,29 +141,66 @@ def enviar_correo_activacion_cuenta(usuario: Usuario) -> bool:
     """
     Dispara un correo de activación/configuración inicial de contraseña usando
     un token firmado criptográficamente (jamás envía contraseñas en texto plano).
+    Utiliza Brevo HTTP API para evitar bloqueos SMTP en plataformas en la nube como Render.
     """
     try:
-        from apps_sirae.usuarios.api.password_reset import PasswordResetService
+        from apps_sirae.usuarios.api.password_reset import (
+            PasswordResetService,
+            enviar_email_brevo_api,
+            PRODUCTION_BACKEND_URL,
+        )
 
         token = PasswordResetService.generar_token(usuario)
-        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200')
-        enlace_activacion = f"{frontend_url}/recuperar-password?{urlencode({'token': token})}"
+        backend_url = getattr(settings, 'BACKEND_URL', PRODUCTION_BACKEND_URL).rstrip('/')
+        frontend_url = getattr(settings, 'FRONTEND_URL', '').rstrip('/')
+        base_url = frontend_url if frontend_url else backend_url
+        if base_url.startswith("http://localhost") and not getattr(settings, 'DEBUG', False):
+            base_url = backend_url
 
-        send_mail(
-            subject="Activación de cuenta y configuración de clave - SIRAE PAE",
-            message=(
-                f"Hola {usuario.nombre_completo},\n\n"
-                "Tu cuenta institucional en SIRAE PAE ha sido creada.\n"
-                "Por seguridad, nunca enviamos contraseñas en texto plano. "
-                "Para activar tu acceso y definir tu contraseña personal, "
-                f"ingresa al siguiente enlace seguro:\n{enlace_activacion}\n\n"
-                "Si no reconoces este registro, ignora este mensaje."
-            ),
-            from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'no-reply@sirae.edu.co'),
-            recipient_list=[usuario.correo],
-            fail_silently=True,
+        enlace_activacion = f"{base_url}/recuperar-password?{urlencode({'token': token})}"
+
+        asunto = "Activación de cuenta y configuración de clave - SIRAE PAE"
+        mensaje_texto = (
+            f"Hola {usuario.nombre_completo},\n\n"
+            "Tu cuenta institucional en SIRAE PAE ha sido creada.\n"
+            "Por seguridad, nunca enviamos contraseñas en texto plano. "
+            "Para activar tu acceso y definir tu contraseña personal, "
+            f"ingresa al siguiente enlace seguro:\n{enlace_activacion}\n\n"
+            "Si no reconoces este registro, ignora este mensaje."
         )
-        return True
+        mensaje_html = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
+            <div style="background-color: #2b6cb0; padding: 15px; border-radius: 6px; text-align: center; color: white;">
+                <h2 style="margin: 0;">SIRAE - Sistema 1-2-3 del PAE</h2>
+                <p style="margin: 5px 0 0 0; font-size: 14px;">Activación de Cuenta Institucional</p>
+            </div>
+            <div style="padding: 20px 0;">
+                <p>Hola <strong>{usuario.nombre_completo}</strong>,</p>
+                <p>Tu cuenta institucional en el sistema SIRAE PAE ha sido creada satisfactoriamente.</p>
+                <p>Por políticas de seguridad institucional, no enviamos contraseñas en texto plano. Para activar tu cuenta y configurar tu clave de acceso:</p>
+                <div style="text-align: center; margin: 30px 0;">
+                    <a href="{enlace_activacion}" style="background-color: #3182ce; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
+                        Activar Cuenta y Crear Contraseña
+                    </a>
+                </div>
+                <p style="font-size: 13px; color: #718096;">
+                    Si el botón no funciona, copia y pega el siguiente enlace en tu navegador:<br />
+                    <span style="word-break: break-all; color: #3182ce;">{enlace_activacion}</span>
+                </p>
+            </div>
+            <hr style="border: none; border-top: 1px solid #e2e8f0;" />
+            <p style="font-size: 11px; color: #a0aec0; text-align: center;">
+                SIRAE PAE &copy; 2026 - Plataforma de Gestión y Control Alimentario Escolar
+            </p>
+        </div>
+        """
+        return enviar_email_brevo_api(
+            destinatario_email=usuario.correo,
+            asunto=asunto,
+            mensaje_texto=mensaje_texto,
+            mensaje_html=mensaje_html,
+            destinatario_nombre=usuario.nombre_completo,
+        )
     except Exception:
         return False
 
