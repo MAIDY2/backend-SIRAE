@@ -72,7 +72,28 @@ class SedeViewSet(viewsets.ModelViewSet):
         cupos_por_jornada = {
             item['id_jornada_id']: item['total'] or 0
             for item in contratos.values('id_jornada_id').annotate(total=Sum('cupos'))
+            if item['id_jornada_id'] is not None
         }
+
+        # Identificar jornadas autorizadas para esta sede mediante sus contratos
+        jornadas_autorizadas_ids = set(cupos_por_jornada.keys())
+
+        # Secciones de menú por jornada
+        secciones = ContratoSeccionMenu.objects.filter(
+            id_contrato__in=contratos
+        ).select_related(
+            'id_contrato__id_jornada',
+            'id_seccion',
+            'id_seccion__id_jornada',
+        ).order_by('id_seccion__nombre_seccion')
+
+        for conf in secciones:
+            j_id = (
+                conf.id_contrato.id_jornada_id
+                or conf.id_seccion.id_jornada_id
+            )
+            if j_id:
+                jornadas_autorizadas_ids.add(j_id)
 
         # Jornadas configuradas con sus cupos asignados por el admin
         sede_jornadas = list(
@@ -84,6 +105,11 @@ class SedeViewSet(viewsets.ModelViewSet):
 
         jornada_por_id = {}
         for sj in sede_jornadas:
+            # Si existen contratos configurados, no mostrar jornadas ajenas sin cupos ni registros
+            if jornadas_autorizadas_ids and sj.id_jornada_id not in jornadas_autorizadas_ids:
+                if sj.cupos == 0 and not sj.grados_atendidos.filter(estado='ACTIVO', cupos__gt=0).exists():
+                    continue
+
             # Grados activos con sus cupos guardados en BD
             grados_guardados = [
                 {
@@ -96,23 +122,38 @@ class SedeViewSet(viewsets.ModelViewSet):
                     key=lambda item: (item.id_grado.nombre_grado or '').lower(),
                 )
             ]
+
+            cupos_jornada = sj.cupos if sj.cupos > 0 else cupos_por_jornada.get(sj.id_jornada_id, 0)
+            if cupos_jornada == 0 and len(jornadas_autorizadas_ids) == 1 and cupos_totales > 0:
+                cupos_jornada = cupos_totales
+
             jornada_por_id[sj.id_jornada_id] = {
                 'id_jornada': sj.id_jornada_id,
                 'nombre_jornada': sj.id_jornada.nombre_jornada or 'Jornada sin nombre',
-                'cupos': sj.cupos,
+                'cupos': cupos_jornada,
                 'habilitada': True,
                 'secciones': [],
                 'grados': grados_guardados,
             }
 
-        # Secciones de menú por jornada
-        secciones = ContratoSeccionMenu.objects.filter(
-            id_contrato__in=contratos
-        ).select_related(
-            'id_contrato__id_jornada',
-            'id_seccion',
-            'id_seccion__id_jornada',
-        ).order_by('id_seccion__nombre_seccion')
+        # Si hay jornadas autorizadas en contratos que no tenían SedeJornada, agregarlas
+        if jornadas_autorizadas_ids:
+            from apps_sirae.jornadas.models import Jornada
+            for j_id in sorted(jornadas_autorizadas_ids):
+                if j_id not in jornada_por_id:
+                    j_obj = Jornada.objects.filter(pk=j_id).first()
+                    if j_obj:
+                        cupos_j = cupos_por_jornada.get(j_id, 0)
+                        if cupos_j == 0 and len(jornadas_autorizadas_ids) == 1:
+                            cupos_j = cupos_totales
+                        jornada_por_id[j_id] = {
+                            'id_jornada': j_id,
+                            'nombre_jornada': j_obj.nombre_jornada or 'Jornada sin nombre',
+                            'cupos': cupos_j,
+                            'habilitada': True,
+                            'secciones': [],
+                            'grados': [],
+                        }
 
         for conf in secciones:
             jornada_id = (
@@ -120,6 +161,8 @@ class SedeViewSet(viewsets.ModelViewSet):
                 or conf.id_seccion.id_jornada_id
             )
             jornada = jornada_por_id.get(jornada_id)
+            if not jornada and len(jornada_por_id) == 1:
+                jornada = next(iter(jornada_por_id.values()))
             if not jornada:
                 continue
             jornada['secciones'].append({
@@ -130,6 +173,22 @@ class SedeViewSet(viewsets.ModelViewSet):
                 ),
                 'estado': conf.estado,
             })
+
+        # Asegurar catálogo de grados activos disponible para cada jornada
+        from apps_sirae.grados.models import Grados
+        todos_grados = list(
+            Grados.objects.filter(estado='ACTIVO').order_by('nombre_grado')
+        )
+        for jornada in jornada_por_id.values():
+            existentes = {g['id_grado'] for g in jornada['grados']}
+            for g in todos_grados:
+                if g.id_grado not in existentes:
+                    jornada['grados'].append({
+                        'id_grado': g.id_grado,
+                        'nombre_grado': g.nombre_grado,
+                        'cupos': 0,
+                    })
+            jornada['grados'].sort(key=lambda item: (item['nombre_grado'] or '').lower())
 
         # Historial de cambios
         from apps_sirae.sede_jornada.models import HistorialConfiguracionSede

@@ -1,8 +1,12 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-import cloudinary.uploader
 from .models import Plato
+
+try:
+    import cloudinary.uploader
+except ImportError:
+    cloudinary = None
 
 class SubirImagenPlatoView(APIView):
     def post(self, request, pk):
@@ -18,6 +22,8 @@ class SubirImagenPlatoView(APIView):
             return Response({"error": "No se ha proporcionado ningún archivo de imagen."}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
+            if not cloudinary:
+                return Response({"error": "El paquete cloudinary no está disponible en este entorno."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
             # Sube la imagen a Cloudinary en una carpeta llamada 'sirae_platos'
             resultado = cloudinary.uploader.upload(archivo_imagen, folder="sirae_platos/")
             
