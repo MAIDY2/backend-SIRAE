@@ -61,10 +61,23 @@ def parse_env_list(value, default=""):
     ]
 
 
+def parse_env_int(value, default=0):
+    if value is None:
+        return default
+    try:
+        val_str = str(value).strip()
+        return int(val_str) if val_str else default
+    except (ValueError, TypeError):
+        return default
+
+
 ALLOWED_HOSTS = parse_env_list(
     os.getenv("ALLOWED_HOSTS"),
     "localhost,127.0.0.1,0.0.0.0,testserver,.onrender.com",
 )
+for host in [".onrender.com", "0.0.0.0", "localhost", "127.0.0.1"]:
+    if host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(host)
 
 APPEND_SLASH = False
 
@@ -121,9 +134,9 @@ INSTALLED_APPS = [
 
 AUTH_USER_MODEL = "usuarios.Usuario"
 
-LOGIN_MAX_FAILED_ATTEMPTS = int(os.getenv("LOGIN_MAX_FAILED_ATTEMPTS", "5"))
-LOGIN_LOCKOUT_DURATION_MINUTES = int(
-    os.getenv("LOGIN_LOCKOUT_DURATION_MINUTES", "15")
+LOGIN_MAX_FAILED_ATTEMPTS = parse_env_int(os.getenv("LOGIN_MAX_FAILED_ATTEMPTS"), 5)
+LOGIN_LOCKOUT_DURATION_MINUTES = parse_env_int(
+    os.getenv("LOGIN_LOCKOUT_DURATION_MINUTES"), 15
 )
 
 SIMPLE_JWT = {
@@ -245,7 +258,7 @@ EMAIL_BACKEND = os.getenv(
     "django.core.mail.backends.smtp.EmailBackend",
 )
 EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
-EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_PORT = parse_env_int(os.getenv("EMAIL_PORT"), 587)
 EMAIL_USE_TLS = (
     os.getenv("EMAIL_USE_TLS", "True").strip().lower() in {"1", "true", "yes", "on"}
 )
@@ -254,7 +267,7 @@ EMAIL_USE_SSL = (
 )
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "jhonriveracaicedo@gmail.com").strip()
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "nvdyvggclraintxk").strip()
-EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
+EMAIL_TIMEOUT = parse_env_int(os.getenv("EMAIL_TIMEOUT"), 10)
 
 # Soporte opcional para Anymail / Brevo únicamente si está configurado explícitamente
 BREVO_API_KEY = os.getenv("BREVO_API_KEY", "").strip()

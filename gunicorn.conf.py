@@ -10,14 +10,16 @@ backend_dir = os.path.join(os.path.dirname(__file__), "backend")
 if os.path.exists(backend_dir) and backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 
-# Configuración de workers y concurrencia optimizada para arranque inmediato
-workers = int(os.environ.get("WEB_CONCURRENCY", "2"))
-threads = int(os.environ.get("PYTHON_MAX_THREADS", "2"))
-worker_class = "gthread"
-timeout = int(os.environ.get("WEB_TIMEOUT", "120"))
+# Configuración de workers: sync es el modo más robusto y rápido para Django en Render
+concurrency_env = os.environ.get("WEB_CONCURRENCY")
+workers = int(concurrency_env) if concurrency_env and concurrency_env.isdigit() else 1
+worker_class = "sync"
+timeout = 120
 keepalive = 5
 
-# Logs dirigidos a la consola para visibilidad en el panel de Render
+# Logs dirigidos inmediatamente a stdout/stderr sin buffer para visibilidad total en Render
 accesslog = "-"
 errorlog = "-"
 loglevel = os.environ.get("LOG_LEVEL", "info")
+capture_output = True
+enable_stdio_inheritance = True

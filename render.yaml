@@ -8,6 +8,12 @@ services:
     envVars:
       - key: DJANGO_SETTINGS_MODULE
         value: config.settings
+      - key: PYTHONPATH
+        value: "backend:."
+      - key: PYTHONUNBUFFERED
+        value: "true"
+      - key: PORT
+        value: "10000"
       - key: SECRET_KEY
         generateValue: true
       - key: DEBUG

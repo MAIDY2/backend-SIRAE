@@ -4,14 +4,16 @@ import os
 port = os.environ.get("PORT", "10000")
 bind = f"0.0.0.0:{port}"
 
-# Configuración de workers y concurrencia optimizada para arranque inmediato
-workers = int(os.environ.get("WEB_CONCURRENCY", "2"))
-threads = int(os.environ.get("PYTHON_MAX_THREADS", "2"))
-worker_class = "gthread"
-timeout = int(os.environ.get("WEB_TIMEOUT", "120"))
+# Configuración de workers: sync es el modo más robusto y rápido para Django en Render
+concurrency_env = os.environ.get("WEB_CONCURRENCY")
+workers = int(concurrency_env) if concurrency_env and concurrency_env.isdigit() else 1
+worker_class = "sync"
+timeout = 120
 keepalive = 5
 
-# Logs dirigidos a la consola para visibilidad en el panel de Render
+# Logs dirigidos inmediatamente a stdout/stderr sin buffer para visibilidad total en Render
 accesslog = "-"
 errorlog = "-"
 loglevel = os.environ.get("LOG_LEVEL", "info")
+capture_output = True
+enable_stdio_inheritance = True
