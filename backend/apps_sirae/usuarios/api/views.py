@@ -33,6 +33,7 @@ from apps_sirae.usuarios.api.password_reset import (
     ValidarTokenPasswordView,
     CambiarPasswordView,
     PerfilUsuarioView,
+    TestEmailView,
     enviar_email_brevo_api,
 )
 

@@ -285,6 +285,7 @@ if BREVO_API_KEY and EMAIL_BACKEND == "anymail.backends.brevo.EmailBackend":
     }
 
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "jhonriveracaicedo@gmail.com").strip()
+BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL", "").strip()
 
 BACKEND_URL = os.getenv(
     "BACKEND_URL",

@@ -830,6 +830,36 @@ class BrevoPasswordResetApiTests(TestCase):
         self.assertEqual(payload["to"][0]["email"], self.user.correo)
         self.assertIn("https://backend-sirae-pyim.onrender.com/recuperar-password?token=", payload["htmlContent"])
 
+    @override_settings(
+        BREVO_API_KEY="xkeysib-fake-render-brevo-key",
+        BACKEND_URL="https://backend-sirae-pyim.onrender.com",
+    )
+    def test_test_email_view_get_status(self):
+        response = self.client.get(reverse("auth-test-email"))
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["brevo_api_key_configurada"])
+        self.assertEqual(response.data["backend_url"], "https://backend-sirae-pyim.onrender.com")
+
+    @override_settings(
+        BREVO_API_KEY="xkeysib-fake-render-brevo-key",
+        BACKEND_URL="https://backend-sirae-pyim.onrender.com",
+    )
+    @patch("apps_sirae.usuarios.api.password_reset.requests.post")
+    def test_test_email_view_post_sends_email(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 201
+        mock_resp.text = '{"messageId": "<test-diagnostic-id>"}'
+        mock_post.return_value = mock_resp
+
+        response = self.client.post(
+            reverse("auth-test-email"),
+            {"email": "prueba@sirae.com"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], "success")
+        self.assertTrue(mock_post.called)
+
 
 
 class UsuarioLogoutApiTests(TestCase):

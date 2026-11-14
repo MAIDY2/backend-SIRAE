@@ -50,7 +50,12 @@ def enviar_email_brevo_api(
 
     from_email_raw = getattr(settings, "DEFAULT_FROM_EMAIL", "jhonriveracaicedo@gmail.com")
     parsed_name, parsed_email = email.utils.parseaddr(from_email_raw)
-    sender_email = parsed_email if parsed_email else from_email_raw
+    sender_email = (
+        os.getenv("BREVO_SENDER_EMAIL", "").strip()
+        or getattr(settings, "BREVO_SENDER_EMAIL", "").strip()
+        or parsed_email
+        or from_email_raw
+    )
     sender_name = parsed_name if parsed_name else "SIRAE PAE"
 
     if brevo_api_key:
@@ -82,9 +87,10 @@ def enviar_email_brevo_api(
             )
 
         logger.info(
-            "Enviando correo a %s vía Brevo HTTP API: %s (Asunto: '%s')",
+            "Enviando correo a %s vía Brevo HTTP API: %s (Remitente: %s, Asunto: '%s')",
             destinatario_email,
             BREVO_API_URL,
+            sender_email,
             asunto,
         )
         response = requests.post(
@@ -94,18 +100,21 @@ def enviar_email_brevo_api(
             timeout=15,
         )
         if response.status_code not in (200, 201, 202):
-            logger.error(
-                "Error en Brevo HTTP API al enviar correo a %s (HTTP %s): %s",
-                destinatario_email,
-                response.status_code,
-                response.text,
+            error_detail = (
+                f"Error en Brevo HTTP API (HTTP {response.status_code}): {response.text}"
             )
-            response.raise_for_status()
+            logger.error(
+                "Fallo en Brevo HTTP API al enviar correo a %s: %s",
+                destinatario_email,
+                error_detail,
+            )
+            raise RuntimeError(error_detail)
 
         logger.info(
-            "Correo enviado exitosamente vía Brevo HTTP API a: %s (HTTP %s)",
+            "Correo enviado exitosamente vía Brevo HTTP API a: %s (HTTP %s). Respuesta: %s",
             destinatario_email,
             response.status_code,
+            response.text,
         )
         return True
 
@@ -235,6 +244,10 @@ class SolicitarCodigoRecuperacionPasswordView(APIView):
                 .first()
             )
             if usuario is None:
+                logger.warning(
+                    "[SIRAE AUTH] Solicitud de código para correo inexistente o inactivo: '%s'",
+                    correo,
+                )
                 return self.respuesta_generica()
 
             codigo_existente = PasswordResetCode.objects.filter(usuario=usuario).first()
@@ -244,6 +257,10 @@ class SolicitarCodigoRecuperacionPasswordView(APIView):
                 and codigo_existente is not None
                 and codigo_existente.creado_en > ahora - self.INTERVALO_SOLICITUD
             ):
+                logger.info(
+                    "[SIRAE AUTH] Solicitud de código repetida en menos de 1 minuto para '%s'",
+                    correo,
+                )
                 return self.respuesta_generica()
 
             codigo = f"{secrets.randbelow(1_000_000):06d}"
@@ -322,7 +339,7 @@ class SolicitarCodigoRecuperacionPasswordView(APIView):
                             "No fue posible enviar el código de recuperación. "
                             "Verifica la configuración de correo del servidor e inténtalo nuevamente."
                         ),
-                        "detalle": str(e) if settings.DEBUG else None,
+                        "detalle": str(e),
                     },
                     status=status.HTTP_503_SERVICE_UNAVAILABLE,
                 )
@@ -476,6 +493,7 @@ class SolicitarRecuperacionPasswordView(APIView):
         try:
             usuario = Usuario.objects.select_related('rol').get(correo__iexact=email)
         except Usuario.DoesNotExist:
+            logger.warning("[SIRAE AUTH] Solicitud de password-reset para correo inexistente: '%s'", email)
             # Respuesta amigable para evitar enumeración de correos
             return Response(
                 {
@@ -571,7 +589,7 @@ class SolicitarRecuperacionPasswordView(APIView):
             return Response(
                 {
                     "error": "No fue posible enviar el correo de recuperación en este momento. Por favor verifica la configuración de correo del servidor o contacta al administrador.",
-                    "detalle": str(e) if settings.DEBUG else None
+                    "detalle": str(e)
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -734,3 +752,115 @@ class PerfilUsuarioView(APIView):
     def get(self, request):
         serializer = UsuarioSerializer(request.user)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class TestEmailView(APIView):
+    """
+    Endpoint de diagnóstico para validar el estado de la API de Brevo y probar envíos reales.
+    GET /api/auth/test-email/
+    POST /api/auth/test-email/ con {'email': 'destinatario@correo.com'}
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        brevo_key = (
+            os.getenv("BREVO_API_KEY", "").strip()
+            or getattr(settings, "BREVO_API_KEY", "").strip()
+        )
+        masked_key = (
+            (brevo_key[:6] + "..." + brevo_key[-4:])
+            if len(brevo_key) > 10
+            else ("Configurada" if brevo_key else "No configurada")
+        )
+        from_email_raw = getattr(settings, "DEFAULT_FROM_EMAIL", "jhonriveracaicedo@gmail.com")
+        sender_email = (
+            os.getenv("BREVO_SENDER_EMAIL", "").strip()
+            or getattr(settings, "BREVO_SENDER_EMAIL", "").strip()
+            or from_email_raw
+        )
+        backend_url = getattr(settings, "BACKEND_URL", PRODUCTION_BACKEND_URL)
+
+        return Response(
+            {
+                "status": "ok",
+                "servicio": "Diagnóstico de Correo SIRAE PAE",
+                "backend_url": backend_url,
+                "brevo_api_key_configurada": bool(brevo_key),
+                "brevo_api_key_mascara": masked_key,
+                "remitente_configurado": sender_email,
+                "instrucciones": (
+                    "Para probar el envío real hacia tu correo, realiza una petición POST "
+                    "a este mismo endpoint con JSON: {'email': 'tu-correo@gmail.com'}"
+                ),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        destinatario = request.data.get("email") or request.data.get("correo") or ""
+        destinatario = str(destinatario).strip()
+        if not destinatario:
+            return Response(
+                {"error": "Debes proporcionar un correo en el campo 'email' o 'correo'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            validate_email(destinatario)
+        except ValidationError:
+            return Response(
+                {"error": f"El correo '{destinatario}' no tiene un formato válido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        backend_url = getattr(settings, "BACKEND_URL", PRODUCTION_BACKEND_URL)
+        asunto = "Prueba de Diagnóstico SIRAE PAE - Brevo API"
+        mensaje_texto = (
+            f"Hola,\n\nEste es un correo de diagnóstico generado desde SIRAE PAE ({backend_url}) "
+            "utilizando directamente la API HTTP de Brevo.\n"
+            "Si recibes este mensaje, la configuración en Render y Brevo funciona al 100%."
+        )
+        mensaje_html = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 550px; margin: 0 auto; border: 1px solid #cbd5e0; border-radius: 8px; overflow: hidden;">
+            <div style="background-color: #2b6cb0; color: white; padding: 20px; text-align: center;">
+                <h2 style="margin: 0;">SIRAE - Sistema 1-2-3 del PAE</h2>
+                <p style="margin: 5px 0 0 0; font-size: 14px;">Diagnóstico de Enlace Brevo HTTP API</p>
+            </div>
+            <div style="padding: 25px; background-color: #ffffff; color: #2d3748;">
+                <h3 style="color: #38a169; margin-top: 0;">¡Conexión y envío exitosos!</h3>
+                <p>El backend en Render (<strong>{backend_url}</strong>) logró enviar este correo mediante Brevo HTTP API.</p>
+                <p>Los correos de recuperación de contraseña y activación operarán de forma transparente.</p>
+            </div>
+        </div>
+        """
+
+        try:
+            enviar_email_brevo_api(
+                destinatario_email=destinatario,
+                asunto=asunto,
+                mensaje_texto=mensaje_texto,
+                mensaje_html=mensaje_html,
+            )
+            return Response(
+                {
+                    "status": "success",
+                    "mensaje": f"Correo de prueba enviado exitosamente a {destinatario} vía Brevo HTTP API.",
+                    "backend_url": backend_url,
+                    "destinatario": destinatario,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": "error",
+                    "error": str(e),
+                    "mensaje": "Falló el envío a través de Brevo.",
+                    "posibles_causas": [
+                        "BREVO_API_KEY no está configurada o es incorrecta en Render.",
+                        "El remitente (DEFAULT_FROM_EMAIL o BREVO_SENDER_EMAIL) no está verificado en tu cuenta de Brevo (Senders).",
+                        "Tu cuenta de Brevo no tiene créditos disponibles o está suspendida.",
+                    ],
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

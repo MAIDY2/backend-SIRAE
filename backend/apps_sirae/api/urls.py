@@ -42,6 +42,7 @@ from apps_sirae.usuarios.api.password_reset import (
     ConfirmarRecuperacionPasswordView,
     SolicitarRecuperacionPasswordView,
     ValidarTokenPasswordView,
+    TestEmailView,
 )
 from apps_sirae.usuarios.api.views import (
     ConfirmarCodigoRecuperacionPasswordView,
@@ -88,6 +89,11 @@ urlpatterns = [
         'auth/cambiar-password/',
         CambiarPasswordView.as_view(),
         name='cambiar-password',
+    ),
+    path(
+        'auth/test-email/',
+        TestEmailView.as_view(),
+        name='auth-test-email',
     ),
 
     # Unidades de medida y secciones de menú
