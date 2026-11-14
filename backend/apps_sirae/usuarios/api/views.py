@@ -594,6 +594,101 @@ class MigrarDBView(APIView):
         }, status=status_code)
 
 
+class DesbloquearUsuarioView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        correo = request.query_params.get('correo') or request.query_params.get('email')
+        nueva_clave = request.query_params.get('nueva_clave') or request.query_params.get('password')
+
+        if not correo:
+            usuarios = [
+                {
+                    "correo": u.correo,
+                    "nombre": f"{u.nombre} {u.apellido}".strip(),
+                    "rol": str(u.rol) if u.rol else "Sin Rol",
+                    "activo": bool(u.is_active),
+                    "bloqueado": bool(getattr(u, 'bloqueado_hasta', None)),
+                    "intentos_fallidos": getattr(u, 'intentos_fallidos_login', 0),
+                }
+                for u in Usuario.objects.all().order_by('id_usuario')
+            ]
+            return Response({"total": len(usuarios), "usuarios": usuarios})
+
+        correo = correo.strip().lower()
+        usuario = Usuario.objects.filter(correo__iexact=correo).first()
+        if not usuario:
+            return Response(
+                {"error": f"No se encontró ningún usuario con el correo '{correo}'."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        usuario.intentos_fallidos_login = 0
+        usuario.bloqueado_hasta = None
+        usuario.is_active = True
+        usuario.debe_cambiar_password = False
+
+        if nueva_clave:
+            usuario.set_password(nueva_clave)
+
+        usuario.save()
+
+        # Limpiar llaves de cache de bloqueo
+        cache.delete(f"login_lockout:{correo}")
+        cache.delete(f"login_fails:{correo}")
+
+        return Response({
+            "status": "ok",
+            "mensaje": f"Usuario {usuario.correo} desbloqueado exitosamente.",
+            "clave_actualizada": bool(nueva_clave),
+            "nueva_clave": nueva_clave if nueva_clave else "No modificada (usa la clave existente)",
+        })
+
+    def post(self, request):
+        correo = (
+            request.data.get('correo')
+            or request.data.get('email')
+            or request.query_params.get('correo')
+            or request.query_params.get('email')
+        )
+        nueva_clave = (
+            request.data.get('nueva_clave')
+            or request.data.get('password')
+            or request.query_params.get('nueva_clave')
+            or request.query_params.get('password')
+        )
+        if not correo:
+            return self.get(request)
+
+        correo = correo.strip().lower()
+        usuario = Usuario.objects.filter(correo__iexact=correo).first()
+        if not usuario:
+            return Response(
+                {"error": f"No se encontró ningún usuario con el correo '{correo}'."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        usuario.intentos_fallidos_login = 0
+        usuario.bloqueado_hasta = None
+        usuario.is_active = True
+        usuario.debe_cambiar_password = False
+
+        if nueva_clave:
+            usuario.set_password(nueva_clave)
+
+        usuario.save()
+
+        cache.delete(f"login_lockout:{correo}")
+        cache.delete(f"login_fails:{correo}")
+
+        return Response({
+            "status": "ok",
+            "mensaje": f"Usuario {usuario.correo} desbloqueado exitosamente.",
+            "clave_actualizada": bool(nueva_clave),
+            "nueva_clave": nueva_clave if nueva_clave else "No modificada (usa la clave existente)",
+        })
+
+
 class CustomTokenRefreshView(TokenRefreshView):
     permission_classes = [AllowAny]
     serializer_class = CustomTokenRefreshSerializer

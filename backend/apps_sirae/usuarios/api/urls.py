@@ -9,6 +9,7 @@ from apps_sirae.usuarios.api.views import (
     RegistroView,
     ValidarSesionActivaView,
     MigrarDBView,
+    DesbloquearUsuarioView,
 )
 
 
@@ -19,6 +20,11 @@ urlpatterns = [
         'auth/migrar/',
         MigrarDBView.as_view(),
         name='migrar_db'
+    ),
+    path(
+        'auth/desbloquear/',
+        DesbloquearUsuarioView.as_view(),
+        name='desbloquear_usuario'
     ),
     path(
         'auth/login/',
