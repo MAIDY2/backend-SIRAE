@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import random
+import unicodedata
 from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
@@ -506,6 +507,386 @@ def resolver_gramaje_por_nino(nombre_ingrediente: str, seccion_nombre: str) -> d
     return {"cantidad": Decimal("25.0"), "unidad": "g", "descripcion": "Porción complementaria"}
 
 
+def normalizar_texto(texto: str) -> str:
+    """Normaliza texto a minúsculas sin tildes ni espacios sobrantes."""
+    s = unicodedata.normalize("NFKD", str(texto or "").strip().lower())
+    return "".join(ch for ch in s if not unicodedata.combining(ch))
+
+
+def coincide_ingrediente(nombre_a: str, nombre_b: str) -> bool:
+    """Verifica si dos nombres de ingrediente se refieren al mismo alimento sin falsos positivos."""
+    a = normalizar_texto(nombre_a)
+    b = normalizar_texto(nombre_b)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+
+    palabras_a = set(a.split())
+    palabras_b = set(b.split())
+    if palabras_a.issubset(palabras_b) or palabras_b.issubset(palabras_a):
+        return True
+
+    # Singular/plural simple (huevo/huevos, frijol/frijoles, lenteja/lentejas)
+    raiz_a = a[:-2] if a.endswith("es") and len(a) > 4 else (a[:-1] if a.endswith("s") and len(a) > 3 else a)
+    raiz_b = b[:-2] if b.endswith("es") and len(b) > 4 else (b[:-1] if b.endswith("s") and len(b) > 3 else b)
+    if raiz_a == raiz_b and len(raiz_a) >= 3:
+        return True
+
+    # Evitar que palabras muy cortas como "sal" coincidan dentro de "salsa" o "ensalada"
+    if len(raiz_a) >= 4 and raiz_a in palabras_b:
+        return True
+    if len(raiz_b) >= 4 and raiz_b in palabras_a:
+        return True
+    return False
+
+
+def buscar_en_mapa_inventario(ing_nombre: str, mapa_inventario: dict) -> dict | None:
+    """Busca un ingrediente en el mapa de inventario priorizando coincidencia exacta."""
+    clave = normalizar_texto(ing_nombre)
+    if clave in mapa_inventario:
+        return mapa_inventario[clave]
+    for clave_inv, datos_inv in mapa_inventario.items():
+        if coincide_ingrediente(ing_nombre, datos_inv.get("nombre", clave_inv)):
+            return datos_inv
+    return None
+
+
+def convertir_cantidad_a_unidad_inventario(
+    cantidad_base: Decimal,
+    unidad_base: str,
+    unidad_inv: str,
+    factor_inv: Decimal | None = None,
+    magnitud_inv: str | None = None,
+) -> Decimal:
+    """Convierte una cantidad expresada en unidad base (g, ml, und) a la unidad del inventario."""
+    u_inv = normalizar_texto(unidad_inv)
+    u_base = normalizar_texto(unidad_base)
+    mag_inv = (magnitud_inv or "").upper()
+
+    if u_base == "g":
+        if u_inv in {"kg", "kilo", "kilos", "kilogramo", "kilogramos"}:
+            return (cantidad_base / Decimal("1000.0")).quantize(Decimal("0.01"))
+        if u_inv in {"lb", "libra", "libras"}:
+            return (cantidad_base / Decimal("500.0")).quantize(Decimal("0.01"))
+        if factor_inv and factor_inv > Decimal("1.0") and mag_inv == "MASA":
+            return (cantidad_base / factor_inv).quantize(Decimal("0.01"))
+    elif u_base == "ml":
+        if u_inv in {"l", "lt", "litro", "litros"}:
+            return (cantidad_base / Decimal("1000.0")).quantize(Decimal("0.01"))
+        if factor_inv and factor_inv > Decimal("1.0") and mag_inv == "VOLUMEN":
+            return (cantidad_base / factor_inv).quantize(Decimal("0.01"))
+    elif u_base == "und":
+        if u_inv in {"cubeta", "cubetas", "panal", "panales"}:
+            return (cantidad_base / Decimal("30.0")).quantize(Decimal("0.01"))
+        if u_inv in {"docena", "docenas"}:
+            return (cantidad_base / Decimal("12.0")).quantize(Decimal("0.01"))
+        if factor_inv and factor_inv > Decimal("1.0") and mag_inv in {"UNIDAD", "CANTIDAD"}:
+            return (cantidad_base / factor_inv).quantize(Decimal("0.01"))
+
+    return cantidad_base.quantize(Decimal("0.01"))
+
+
+def convertir_stock_a_unidad_base(
+    stock_inv: Decimal,
+    unidad_inv: str,
+    unidad_base: str,
+    factor_inv: Decimal | None = None,
+    magnitud_inv: str | None = None,
+) -> Decimal:
+    """Convierte el stock disponible en la unidad de inventario hacia la unidad base (g, ml, und)."""
+    u_inv = normalizar_texto(unidad_inv)
+    u_base = normalizar_texto(unidad_base)
+    mag_inv = (magnitud_inv or "").upper()
+
+    if u_base == "g":
+        if u_inv in {"kg", "kilo", "kilos", "kilogramo", "kilogramos"}:
+            return stock_inv * Decimal("1000.0")
+        if u_inv in {"lb", "libra", "libras"}:
+            return stock_inv * Decimal("500.0")
+        if factor_inv and factor_inv > Decimal("1.0") and mag_inv == "MASA":
+            return stock_inv * factor_inv
+    elif u_base == "ml":
+        if u_inv in {"l", "lt", "litro", "litros"}:
+            return stock_inv * Decimal("1000.0")
+        if factor_inv and factor_inv > Decimal("1.0") and mag_inv == "VOLUMEN":
+            return stock_inv * factor_inv
+    elif u_base == "und":
+        if u_inv in {"cubeta", "cubetas", "panal", "panales"}:
+            return stock_inv * Decimal("30.0")
+        if u_inv in {"docena", "docenas"}:
+            return stock_inv * Decimal("12.0")
+        if factor_inv and factor_inv > Decimal("1.0") and mag_inv in {"UNIDAD", "CANTIDAD"}:
+            return stock_inv * factor_inv
+
+    return stock_inv
+
+
+def clasificar_grupo_alimento(nombre_ingrediente: str) -> str:
+    """Clasifica un ingrediente en su grupo alimenticio para validar coherencia por momento del día."""
+    n = normalizar_texto(nombre_ingrediente)
+    if any(k in n for k in ["huevo", "queso", "cuajada", "jamon"]):
+        return "proteina_desayuno"
+    if any(k in n for k in ["pollo", "pechuga", "carne", "res", "cerdo", "pescado", "atun", "lenteja", "frijol", "garbanzo"]):
+        return "proteina_almuerzo"
+    if any(k in n for k in ["leche", "yogur", "chocolate", "cocoa", "kumis"]):
+        return "lacteo_bebida"
+    if any(k in n for k in ["banano", "mango", "papaya", "manzana", "mandarina", "guayaba", "naranja", "pera", "fresa", "mora", "pina", "sandia", "melon", "fruta", "limon"]):
+        return "fruta"
+    if any(k in n for k in ["arroz", "pasta", "fideo", "arepa", "harina", "pan", "avena", "galleta", "papa", "yuca", "platano", "maiz", "torta", "hojaldra"]):
+        return "cereal"
+    if any(k in n for k in ["tomate", "cebolla", "zanahoria", "pimenton", "cilantro", "espinaca", "lechuga", "repollo", "ahuyama", "habichuela", "brocoli", "pepino", "arveja"]):
+        return "verdura"
+    if any(k in n for k in ["sal", "aceite", "mantequilla", "margarina", "azucar", "panela", "ajo", "canela", "polvo de hornear", "agua", "comino", "color", "pimienta"]):
+        return "condimento"
+    return "otro"
+
+
+def evaluar_inventario_para_ninos(
+    mapa_inventario: dict,
+    ninos_presentes: int,
+    seccion_nombre: str,
+) -> tuple[list[dict], list[dict], int]:
+    """
+    Evalúa cada alimento del inventario real contra el consumo requerido para `ninos_presentes`.
+    Retorna: (ingredientes_suficientes, ingredientes_insuficientes, ninos_maximos_atendibles).
+    """
+    suficientes = []
+    insuficientes = []
+    max_ninos_principales = []
+
+    for datos_inv in mapa_inventario.values():
+        nombre = datos_inv["nombre"]
+        datos_gramaje = resolver_gramaje_por_nino(nombre, seccion_nombre)
+        cant_nino = datos_gramaje["cantidad"]
+        unidad_base = datos_gramaje["unidad"]
+        cant_total_base = cant_nino * Decimal(ninos_presentes)
+
+        unidad_inv = datos_inv["unidad"]
+        factor_inv = datos_inv.get("factor_conversion_base")
+        magnitud_inv = datos_inv.get("tipo_magnitud")
+        stock_actual = datos_inv["cantidad_actual"]
+
+        cant_req_inv = convertir_cantidad_a_unidad_inventario(
+            cant_total_base, unidad_base, unidad_inv, factor_inv, magnitud_inv
+        )
+        stock_en_base = convertir_stock_a_unidad_base(
+            stock_actual, unidad_inv, unidad_base, factor_inv, magnitud_inv
+        )
+        ninos_que_cubre = int(stock_en_base // cant_nino) if cant_nino > 0 else 0
+        grupo = clasificar_grupo_alimento(nombre)
+
+        if grupo != "condimento" and ninos_que_cubre > 0:
+            max_ninos_principales.append(ninos_que_cubre)
+
+        if stock_actual >= cant_req_inv and ninos_que_cubre >= ninos_presentes:
+            suficientes.append({
+                **datos_inv,
+                "grupo": grupo,
+                "cantidad_por_nino": cant_nino,
+                "unidad_base": unidad_base,
+                "cantidad_requerida_inv": cant_req_inv,
+                "ninos_que_cubre": ninos_que_cubre,
+            })
+        else:
+            faltante = max(Decimal("0.0"), cant_req_inv - stock_actual).quantize(Decimal("0.01"))
+            insuficientes.append({
+                "id_ingrediente": datos_inv["id_ingrediente"],
+                "nombre_ingrediente": nombre,
+                "stock_actual": str(stock_actual),
+                "cantidad_requerida": str(cant_req_inv),
+                "faltante": str(faltante),
+                "unidad": unidad_inv,
+                "ninos_que_cubre": ninos_que_cubre,
+                "grupo": grupo,
+            })
+
+    ninos_maximos = min(max_ninos_principales) if max_ninos_principales else 0
+    return suficientes, insuficientes, ninos_maximos
+
+
+def tiene_alimentos_principales_para_seccion(
+    ingredientes_suficientes: list[dict],
+    seccion_nombre: str,
+) -> bool:
+    """Valida que existan alimentos principales suficientes y coherentes para el momento del día."""
+    grupos = {item["grupo"] for item in ingredientes_suficientes}
+    if seccion_nombre == "Desayuno":
+        return bool(grupos & {"proteina_desayuno", "cereal", "lacteo_bebida", "fruta"})
+    if seccion_nombre == "Merienda":
+        return bool(grupos & {"lacteo_bebida", "cereal", "fruta", "proteina_desayuno"})
+    # Almuerzo
+    return bool(grupos & {"proteina_almuerzo", "proteina_desayuno", "cereal", "verdura"})
+
+
+def construir_sugerencias_adaptadas_al_inventario(
+    seccion_nombre: str,
+    ingredientes_suficientes: list[dict],
+    ninos_presentes: int,
+) -> list[dict]:
+    """
+    Construye propuestas 100% viables usando ÚNICAMENTE los ingredientes que sí alcanzan
+    en el inventario real para los `ninos_presentes`. Si no hay alimentos suficientes y coherentes
+    para el momento solicitado, retorna lista vacía.
+    """
+    if not tiene_alimentos_principales_para_seccion(ingredientes_suficientes, seccion_nombre):
+        return []
+
+    mapa_suf = {normalizar_texto(it["nombre"]): it for it in ingredientes_suficientes}
+    sugerencias: list[dict] = []
+
+    # 1. Intentar primero plantillas innovadoras cuyos ingredientes estén 100% disponibles
+    plantillas = PLANTILLAS_INNOVADORAS_PAE.get(seccion_nombre, PLANTILLAS_INNOVADORAS_PAE["Desayuno"])
+    for p in plantillas:
+        ingredientes_match = []
+        completa = True
+        for ing_req in p["ingredientes_clave"]:
+            match = buscar_en_mapa_inventario(ing_req, mapa_suf)
+            if not match:
+                completa = False
+                break
+            if match["nombre"] not in ingredientes_match:
+                ingredientes_match.append(match["nombre"])
+        if completa and ingredientes_match:
+            sugerencias.append({
+                "nombre_plato": f"Sugerencia IA: {p['nombre']}",
+                "componentes_detalle": p["componentes_detalle"],
+                "ingredientes_usados": ingredientes_match,
+                "pasos": p["pasos"],
+            })
+
+    if sugerencias:
+        return sugerencias
+
+    # 2. Adaptación dinámica estricta a los alimentos realmente disponibles en bodega
+    por_grupo: dict[str, list[dict]] = {
+        "proteina_desayuno": [],
+        "proteina_almuerzo": [],
+        "cereal": [],
+        "lacteo_bebida": [],
+        "fruta": [],
+        "verdura": [],
+        "condimento": [],
+        "otro": [],
+    }
+    for it in ingredientes_suficientes:
+        por_grupo.setdefault(it["grupo"], []).append(it)
+
+    condimentos_nombres = [it["nombre"] for it in por_grupo["condimento"][:3]]
+    verduras_nombres = [it["nombre"] for it in por_grupo["verdura"][:3]]
+    frutas_nombres = [it["nombre"] for it in por_grupo["fruta"][:2]]
+    lacteos_nombres = [it["nombre"] for it in por_grupo["lacteo_bebida"][:2]]
+    cereales_nombres = [it["nombre"] for it in por_grupo["cereal"][:2]]
+    prot_des = [it["nombre"] for it in por_grupo["proteina_desayuno"][:2]]
+    prot_alm = [it["nombre"] for it in por_grupo["proteina_almuerzo"][:2]]
+
+    def _dedup(lista: list[str]) -> list[str]:
+        vistos = set()
+        res = []
+        for x in lista:
+            k = normalizar_texto(x)
+            if k not in vistos:
+                vistos.add(k)
+                res.append(x)
+        return res
+
+    if seccion_nombre == "Desayuno":
+        principales = _dedup(prot_des + cereales_nombres + lacteos_nombres + frutas_nombres)
+        if not principales:
+            return []
+
+        usados = _dedup(principales + verduras_nombres[:2] + condimentos_nombres)
+        if prot_des and cereales_nombres:
+            titulo = f"Sugerencia IA: Preparación matutina de {prot_des[0]} con {cereales_nombres[0]} adaptada al inventario"
+        elif lacteos_nombres and cereales_nombres:
+            titulo = f"Sugerencia IA: Desayuno escolar de {lacteos_nombres[0]} con {cereales_nombres[0]} adaptado al inventario"
+        elif prot_des:
+            titulo = f"Sugerencia IA: Desayuno proteico de {prot_des[0]} adaptado al inventario"
+        else:
+            titulo = f"Sugerencia IA: Desayuno escolar de {', '.join(principales[:2])} adaptado al inventario"
+
+        componentes = {
+            "Bebida con leche": ", ".join(lacteos_nombres) if lacteos_nombres else "Agua potable",
+            "Alimento proteico": ", ".join(prot_des) if prot_des else "—",
+            "Cereal acompañante": ", ".join(cereales_nombres) if cereales_nombres else "—",
+            "Fruta": ", ".join(frutas_nombres) if frutas_nombres else "—",
+            "Agua": "Agua potable tratada",
+        }
+        pasos = [
+            f"Alistar y verificar las cantidades exactas para {ninos_presentes} raciones usando únicamente el inventario disponible: {', '.join(usados)}.",
+            f"Cocinar y preparar {', '.join(principales[:2])} asegurando cocción completa e inocuidad alimentaria.",
+            "Porcionar de forma uniforme según los gramajes PAE y servir caliente para el desayuno escolar.",
+        ]
+        sugerencias.append({
+            "nombre_plato": titulo,
+            "componentes_detalle": componentes,
+            "ingredientes_usados": usados,
+            "pasos": pasos,
+        })
+
+    elif seccion_nombre == "Merienda":
+        principales = _dedup(lacteos_nombres + cereales_nombres + frutas_nombres + prot_des)
+        if not principales:
+            return []
+
+        usados = _dedup(principales + condimentos_nombres[:2])
+        titulo = f"Sugerencia IA: Refrigerio escolar de {' con '.join(principales[:2])} adaptado al inventario"
+        componentes = {
+            "Bebida con leche": ", ".join(lacteos_nombres) if lacteos_nombres else "Agua potable",
+            "Alimento proteico": ", ".join(prot_des) if prot_des else "—",
+            "Cereal acompañante": ", ".join(cereales_nombres) if cereales_nombres else "—",
+            "Fruta": ", ".join(frutas_nombres) if frutas_nombres else "—",
+            "Agua": "Agua potable tratada",
+        }
+        pasos = [
+            f"Alistar y desinfectar los ingredientes disponibles para {ninos_presentes} meriendas: {', '.join(usados)}.",
+            f"Preparar y porcionar {', '.join(principales[:2])} conforme al gramaje PAE vigente.",
+            "Entregar en porciones individuales limpias durante la jornada escolar.",
+        ]
+        sugerencias.append({
+            "nombre_plato": titulo,
+            "componentes_detalle": componentes,
+            "ingredientes_usados": usados,
+            "pasos": pasos,
+        })
+
+    else:
+        # Almuerzo: acepta proteínas de almuerzo y, si no hay, huevos/queso como proteína alternativa
+        proteinas = _dedup(prot_alm + prot_des)
+        principales = _dedup(proteinas + cereales_nombres + verduras_nombres)
+        if not principales:
+            return []
+
+        usados = _dedup(principales + frutas_nombres[:1] + lacteos_nombres[:1] + condimentos_nombres)
+        if proteinas and cereales_nombres:
+            titulo = f"Sugerencia IA: Almuerzo escolar de {proteinas[0]} con {cereales_nombres[0]} adaptado al inventario"
+        elif proteinas:
+            titulo = f"Sugerencia IA: Plato proteico escolar de {proteinas[0]} adaptado al inventario"
+        else:
+            titulo = f"Sugerencia IA: Preparación de almuerzo con {' y '.join(principales[:2])} adaptada al inventario"
+
+        componentes = {
+            "Bebida con leche": ", ".join(lacteos_nombres) if lacteos_nombres else "Agua potable",
+            "Alimento proteico": ", ".join(proteinas) if proteinas else "—",
+            "Cereal acompañante": ", ".join(cereales_nombres) if cereales_nombres else "—",
+            "Verdura / Fruta": ", ".join(verduras_nombres + frutas_nombres) if (verduras_nombres or frutas_nombres) else "—",
+            "Agua": "Agua potable tratada",
+        }
+        pasos = [
+            f"Alistar y pesar los ingredientes disponibles con stock suficiente para {ninos_presentes} almuerzos: {', '.join(usados)}.",
+            f"Realizar la cocción completa de {', '.join(principales[:3])} cuidando higiene y temperatura de inocuidad.",
+            "Servir las raciones calientes y homogéneas de acuerdo con los gramajes PAE.",
+        ]
+        sugerencias.append({
+            "nombre_plato": titulo,
+            "componentes_detalle": componentes,
+            "ingredientes_usados": usados,
+            "pasos": pasos,
+        })
+
+    return sugerencias
+
+
 def convertir_a_unidad_mayor(cantidad: Decimal, unidad: str) -> tuple[Decimal, str]:
     """Convierte gramos a kilogramos o mililitros a litros si la cantidad es grande."""
     if unidad == "g" and cantidad >= 1000:
@@ -726,20 +1107,25 @@ def generar_con_openai(
             )
 
         prompt_usuario = f"""
-Genera 2 o 3 propuestas de preparaciones escolares para el momento: **{seccion_nombre}**.
+Genera 1 o 2 propuestas de preparaciones escolares para el momento: **{seccion_nombre}**.
 Número de niños beneficiarios: {ninos_presentes} niños de Primaria.
-Ingredientes disponibles en el inventario de la sede escolar:
-{", ".join(inventario_nombres) if inventario_nombres else "Ingredientes institucionales básicos del PAE"}
+Ingredientes REALES con stock suficiente en el inventario de la sede escolar:
+{", ".join(inventario_nombres)}
 
 Preferencia adicional: {preferencia if preferencia else "Sin preferencia específica"}
 
 {reglas_momento}
 
+REGLA CRÍTICA DE INVENTARIO REAL:
+- Debes usar **ÚNICAMENTE** ingredientes que aparezcan en la lista anterior.
+- **ESTÁ PROHIBIDO** agregar ingredientes que no estén en esa lista (ni siquiera leche, fruta, queso, tomate, sal o aceite si no aparecen listados).
+- Si con los ingredientes listados no es posible preparar una comida coherente para {seccion_nombre}, devuelve `"sugerencias": []`.
+
 REGLA DE ORIGINALIDAD:
 Los siguientes menús ya están formalmente registrados en el ciclo oficial del PAE para este momento:
 {ejemplos_str}
 Tus propuestas deben inspirarse en el balance del PAE, pero **NO deben repetir ninguno de los anteriores**.
-Deben ser preparaciones NUEVAS, DIFERENTES, apetitosas y creativas para los niños.
+Deben ser preparaciones NUEVAS, DIFERENTES, apetitosas y viables con lo disponible.
 
 Responde ÚNICAMENTE un objeto JSON válido con la siguiente estructura:
 {{
@@ -753,7 +1139,7 @@ Responde ÚNICAMENTE un objeto JSON válido con la siguiente estructura:
         "Fruta": "...",
         "Agua": "Agua potable tratada"
       }},
-      "ingredientes_usados": ["Nombre1", "Nombre2", "Nombre3"],
+      "ingredientes_usados": ["Nombre1", "Nombre2"],
       "pasos": [
         "Paso 1...",
         "Paso 2...",
@@ -815,7 +1201,7 @@ def sugerencias_recetas_ia(request):
 
     seccion_nombre = obtener_nombre_seccion(id_seccion)
 
-    # 1. Obtener inventario de la sede
+    # 1. Obtener inventario REAL de la sede (sin simular stock inexistente)
     id_sede_final = None
     if raw_sede:
         try:
@@ -831,171 +1217,189 @@ def sugerencias_recetas_ia(request):
         items_inventario_db = list(
             Inventario.objects.filter(id_sede_id=id_sede_final, cantidad_actual__gt=0)
         )
+    elif getattr(request.user, "id_institucion_id", None):
+        items_inventario_db = list(
+            Inventario.objects.filter(
+                id_institucion_id=request.user.id_institucion_id,
+                cantidad_actual__gt=0,
+            )
+        )
+    else:
+        items_inventario_db = list(
+            Inventario.objects.filter(cantidad_actual__gt=0)[:100]
+        )
 
-    # Mapeo de inventario: clave normalizada -> datos
+    # Mapeo de inventario REAL: clave normalizada -> datos
     mapa_inventario = {}
-    nombres_disponibles_inv = []
-
     if items_inventario_db:
-        # Cargar nombres de ingredientes
         ids_ing = [it.id_ingrediente for it in items_inventario_db]
         ings_dict = {
             ing.id_ingrediente: ing
             for ing in Ingrediente.objects.filter(id_ingrediente__in=ids_ing).select_related("id_unidad_medida")
         }
         unidades_dict = {
-            u.id_unidad_medida: u.abreviatura
+            u.id_unidad_medida: u
             for u in UnidadMedida.objects.all()
         }
 
         for item in items_inventario_db:
             ing_obj = ings_dict.get(item.id_ingrediente)
             nombre_ing = ing_obj.nombre_ingrediente if ing_obj else f"Ingrediente #{item.id_ingrediente}"
-            u_abrev = unidades_dict.get(item.id_unidad_medida, "und")
-            clave = nombre_ing.strip().lower()
+            u_obj = unidades_dict.get(item.id_unidad_medida)
+            u_abrev = u_obj.abreviatura if u_obj else "und"
+            factor_base = u_obj.factor_conversion_base if u_obj else Decimal("1.0")
+            tipo_mag = u_obj.tipo_magnitud if u_obj else None
+            clave = normalizar_texto(nombre_ing)
 
-            mapa_inventario[clave] = {
-                "id_inventario": item.id_inventario,
-                "id_ingrediente": item.id_ingrediente,
-                "nombre": nombre_ing,
-                "cantidad_actual": Decimal(item.cantidad_actual),
-                "unidad": u_abrev,
-            }
-            nombres_disponibles_inv.append(f"{nombre_ing} ({item.cantidad_actual} {u_abrev})")
-    else:
-        # Si no hay inventario cargado en la sede, cargar catálogo general para permitir la sugerencia
-        todos_ing = list(Ingrediente.objects.all()[:30].select_related("id_unidad_medida"))
-        for ing in todos_ing:
-            u_abrev = ing.id_unidad_medida.abreviatura if ing.id_unidad_medida else "und"
-            clave = ing.nombre_ingrediente.strip().lower()
-            mapa_inventario[clave] = {
-                "id_inventario": None,
-                "id_ingrediente": ing.id_ingrediente,
-                "nombre": ing.nombre_ingrediente,
-                "cantidad_actual": Decimal("100.0"),  # Stock simulado para diagnóstico/planificación
-                "unidad": u_abrev,
-            }
-            nombres_disponibles_inv.append(f"{ing.nombre_ingrediente} (Stock institucional)")
+            # Si hubiera varios registros del mismo ingrediente en la consulta, sumar cantidades de la misma unidad
+            if clave in mapa_inventario and mapa_inventario[clave]["unidad"] == u_abrev:
+                mapa_inventario[clave]["cantidad_actual"] += Decimal(item.cantidad_actual)
+            elif clave not in mapa_inventario:
+                mapa_inventario[clave] = {
+                    "id_inventario": item.id_inventario,
+                    "id_ingrediente": item.id_ingrediente,
+                    "nombre": nombre_ing,
+                    "cantidad_actual": Decimal(item.cantidad_actual),
+                    "unidad": u_abrev,
+                    "factor_conversion_base": factor_base,
+                    "tipo_magnitud": tipo_mag,
+                }
 
-    # 2. Generar sugerencias con OpenAI o Fallback Inteligente
-    sugerencias_crudas = generar_con_openai(
-        seccion_nombre=seccion_nombre,
-        ninos_presentes=ninos_presentes,
-        inventario_nombres=nombres_disponibles_inv,
-        preferencia=preferencia,
+    # Evaluar qué alimentos realmente alcanzan para los `ninos_presentes`
+    ingredientes_suficientes, ingredientes_insuficientes, ninos_maximos_atendibles = (
+        evaluar_inventario_para_ninos(mapa_inventario, ninos_presentes, seccion_nombre)
     )
-    uso_openai = bool(sugerencias_crudas)
+    hay_base_suficiente = tiene_alimentos_principales_para_seccion(
+        ingredientes_suficientes, seccion_nombre
+    )
 
-    if not sugerencias_crudas:
-        plantillas = PLANTILLAS_INNOVADORAS_PAE.get(seccion_nombre, PLANTILLAS_INNOVADORAS_PAE["Desayuno"])
-        sugerencias_crudas = []
-        for p in plantillas:
-            sugerencias_crudas.append({
-                "nombre_plato": f"Sugerencia IA: {p['nombre']}",
-                "componentes_detalle": p["componentes_detalle"],
-                "ingredientes_usados": p["ingredientes_clave"],
-                "pasos": p["pasos"],
-            })
+    nombres_suficientes_prompt = [
+        f"{it['nombre']} ({it['cantidad_actual']} {it['unidad']})"
+        for it in ingredientes_suficientes
+    ]
 
-    # 3. Filtrar para asegurar que NINGUNA propuesta sea igual a los 20 menús base del PAE
-    sugerencias_filtradas = []
-    for s in sugerencias_crudas:
-        nombre = s.get("nombre_plato", "").strip()
-        nombre_lower = nombre.lower().replace("sugerencia ia:", "").strip()
-        if nombre_lower in NOMBRES_20_MENUS_BASE:
-            # Modificar nombre para no repetir
-            s = dict(s)
-            s["nombre_plato"] = f"Sugerencia IA Alternativa: {nombre} Estilo Casero Escolar"
-        sugerencias_filtradas.append(s)
+    # 2. Generar sugerencias SOLO si hay alimentos reales suficientes para los N niños
+    def _estructurar_y_validar(candidatas: list[dict]) -> list[dict]:
+        """Calcula gramajes/stock real y conserva ÚNICAMENTE recetas 100% viables con el inventario."""
+        viables = []
+        for idx, s in enumerate(candidatas, start=1):
+            nombre_plato = str(s.get("nombre_plato") or f"Sugerencia IA #{idx}").strip()
+            nombre_lower = nombre_plato.lower().replace("sugerencia ia:", "").strip()
+            if nombre_lower in NOMBRES_20_MENUS_BASE:
+                nombre_plato = f"Sugerencia IA Alternativa: {nombre_plato} Estilo Casero Escolar"
 
-    # 4. Construir la estructura completa con cálculos matemáticos y balance de inventario
+            componentes_det = s.get("componentes_detalle", {})
+            comp_resumen = ", ".join(f"{k}: {v}" for k, v in componentes_det.items() if v and v != "—")
+            ing_usados = s.get("ingredientes_usados") or []
+            if not ing_usados:
+                continue
+
+            lista_ingredientes_resultado = []
+            todos_alcanzan = True
+
+            for ing_nombre in ing_usados:
+                ing_low = str(ing_nombre).strip().lower()
+                datos_gramaje = resolver_gramaje_por_nino(ing_low, seccion_nombre)
+
+                cant_nino = datos_gramaje["cantidad"]
+                cant_total = cant_nino * Decimal(ninos_presentes)
+                unidad_base = datos_gramaje["unidad"]
+
+                item_inv = buscar_en_mapa_inventario(ing_nombre, mapa_inventario)
+                if item_inv:
+                    stock_disponible = item_inv["cantidad_actual"]
+                    unidad_inv = item_inv["unidad"]
+                    factor_inv = item_inv.get("factor_conversion_base")
+                    magnitud_inv = item_inv.get("tipo_magnitud")
+                    id_ing = item_inv["id_ingrediente"]
+                    id_inv = item_inv["id_inventario"]
+                    cant_total_unidad_inv = convertir_cantidad_a_unidad_inventario(
+                        cant_total, unidad_base, unidad_inv, factor_inv, magnitud_inv
+                    )
+                    alcanza = stock_disponible >= cant_total_unidad_inv
+                else:
+                    # El ingrediente NO existe en el inventario real: stock 0 y NO alcanza
+                    stock_disponible = Decimal("0.0")
+                    unidad_inv = unidad_base
+                    id_ing = None
+                    id_inv = None
+                    cant_total_unidad_inv = cant_total.quantize(Decimal("0.01"))
+                    alcanza = False
+
+                stock_restante = max(Decimal("0.0"), stock_disponible - cant_total_unidad_inv)
+                if not alcanza:
+                    todos_alcanzan = False
+
+                cant_total_mostrada, unidad_mostrada = convertir_a_unidad_mayor(cant_total, unidad_base)
+
+                lista_ingredientes_resultado.append({
+                    "id_ingrediente": id_ing,
+                    "id_inventario": id_inv,
+                    "nombre_ingrediente": item_inv["nombre"] if item_inv else ing_nombre,
+                    "cantidad_por_nino": f"{cant_nino} {unidad_base}",
+                    "cantidad_por_nino_valor": str(cant_nino),
+                    "cantidad_total": f"{cant_total_mostrada} {unidad_mostrada}",
+                    "cantidad_total_valor": str(cant_total_unidad_inv),
+                    "unidad": unidad_inv,
+                    "stock_actual": str(stock_disponible),
+                    "stock_restante_proyectado": str(stock_restante.quantize(Decimal("0.01"))),
+                    "alcanza": alcanza,
+                })
+
+            if todos_alcanzan and lista_ingredientes_resultado:
+                viables.append({
+                    "id_plato": None,
+                    "nombre_plato": nombre_plato,
+                    "id_seccion": id_seccion,
+                    "seccion_nombre": seccion_nombre,
+                    "componente": comp_resumen or "Preparación adaptada al inventario disponible",
+                    "componentes_detalle": componentes_det,
+                    "ninos_presentes": ninos_presentes,
+                    "ingredientes": lista_ingredientes_resultado,
+                    "pasos": s.get("pasos", [
+                        "Desinfectar superficies, utensilios e ingredientes en la cocina escolar.",
+                        "Realizar la cocción completa asegurando temperatura de inocuidad.",
+                        "Porcionar de manera homogénea según las cantidades calculadas para los niños.",
+                    ]),
+                    "origen": "SUGERENCIA_IA",
+                    "etiqueta": f"Sugerencia Inteligente para {seccion_nombre} ({ninos_presentes} raciones)",
+                    "viable_con_inventario": True,
+                })
+        return viables
+
     sugerencias_estructuradas = []
+    uso_openai = False
 
-    for idx, s in enumerate(sugerencias_filtradas, start=1):
-        nombre_plato = s.get("nombre_plato", f"Sugerencia IA #{idx}")
-        componentes_det = s.get("componentes_detalle", {})
-        comp_resumen = ", ".join(f"{k}: {v}" for k, v in componentes_det.items() if v and v != "—")
+    if hay_base_suficiente:
+        sugerencias_openai = generar_con_openai(
+            seccion_nombre=seccion_nombre,
+            ninos_presentes=ninos_presentes,
+            inventario_nombres=nombres_suficientes_prompt,
+            preferencia=preferencia,
+        )
+        if sugerencias_openai:
+            sugerencias_estructuradas = _estructurar_y_validar(sugerencias_openai)
+            uso_openai = bool(sugerencias_estructuradas)
 
-        lista_ingredientes_resultado = []
-        todos_alcanzan = True
+        if not sugerencias_estructuradas:
+            sugerencias_adaptadas = construir_sugerencias_adaptadas_al_inventario(
+                seccion_nombre=seccion_nombre,
+                ingredientes_suficientes=ingredientes_suficientes,
+                ninos_presentes=ninos_presentes,
+            )
+            sugerencias_estructuradas = _estructurar_y_validar(sugerencias_adaptadas)
 
-        for ing_nombre in s.get("ingredientes_usados", []):
-            ing_low = ing_nombre.strip().lower()
-            datos_gramaje = resolver_gramaje_por_nino(ing_low, seccion_nombre)
+    inventario_suficiente = bool(sugerencias_estructuradas)
 
-            cant_nino = datos_gramaje["cantidad"]
-            cant_total = cant_nino * Decimal(ninos_presentes)
-            unidad_base = datos_gramaje["unidad"]
-
-            # Buscar coincidencia en inventario
-            item_inv = None
-            for clave_inv, datos_inv in mapa_inventario.items():
-                if clave_inv in ing_low or ing_low in clave_inv:
-                    item_inv = datos_inv
-                    break
-
-            if item_inv:
-                stock_disponible = item_inv["cantidad_actual"]
-                unidad_inv = item_inv["unidad"]
-                id_ing = item_inv["id_ingrediente"]
-                id_inv = item_inv["id_inventario"]
-            else:
-                stock_disponible = Decimal("50.0")  # Valor de referencia
-                unidad_inv = unidad_base
-                id_ing = None
-                id_inv = None
-
-            # Normalizar unidades para cálculo del total (ej. si inventario está en kg y gramaje en g)
-            cant_total_unidad_inv = cant_total
-            if unidad_inv.lower() in ["kg", "kilo", "kilogramo"] and unidad_base == "g":
-                cant_total_unidad_inv = (cant_total / Decimal("1000.0")).quantize(Decimal("0.01"))
-            elif unidad_inv.lower() in ["l", "litro"] and unidad_base == "ml":
-                cant_total_unidad_inv = (cant_total / Decimal("1000.0")).quantize(Decimal("0.01"))
-
-            stock_restante = max(Decimal("0.0"), stock_disponible - cant_total_unidad_inv)
-            alcanza = stock_disponible >= cant_total_unidad_inv
-            if not alcanza:
-                todos_alcanzan = False
-
-            cant_total_mostrada, unidad_mostrada = convertir_a_unidad_mayor(cant_total, unidad_base)
-
-            lista_ingredientes_resultado.append({
-                "id_ingrediente": id_ing,
-                "id_inventario": id_inv,
-                "nombre_ingrediente": ing_nombre,
-                "cantidad_por_nino": f"{cant_nino} {unidad_base}",
-                "cantidad_por_nino_valor": str(cant_nino),
-                "cantidad_total": f"{cant_total_mostrada} {unidad_mostrada}",
-                "cantidad_total_valor": str(cant_total_unidad_inv),
-                "unidad": unidad_inv,
-                "stock_actual": str(stock_disponible),
-                "stock_restante_proyectado": str(stock_restante.quantize(Decimal("0.01"))),
-                "alcanza": alcanza,
-            })
-
-        sugerencias_estructuradas.append({
-            "id_plato": None,
-            "nombre_plato": nombre_plato,
-            "id_seccion": id_seccion,
-            "seccion_nombre": seccion_nombre,
-            "componente": comp_resumen or "Bebida láctea, Alimento proteico, Cereal, Fruta",
-            "componentes_detalle": componentes_det,
-            "ninos_presentes": ninos_presentes,
-            "ingredientes": lista_ingredientes_resultado,
-            "pasos": s.get("pasos", [
-                "Desinfectar superficies, utensilios e ingredientes en la cocina escolar.",
-                "Realizar la cocción completa asegurando temperatura de inocuidad.",
-                "Porcionar de manera homogénea según las cantidades calculadas para los niños.",
-            ]),
-            "origen": "SUGERENCIA_IA",
-            "etiqueta": f"Sugerencia Inteligente para {seccion_nombre} ({ninos_presentes} raciones)",
-            "viable_con_inventario": todos_alcanzan,
-        })
-
-    # 5. Lista de platos base PAE estipulados para comparar (del catálogo oficial)
+    # 3. Evaluar platos base PAE estipulados contra el inventario real
+    mapa_suf_nombres = {normalizar_texto(it["nombre"]): it for it in ingredientes_suficientes}
     platos_base_pae = []
     for b in CATALOGO_20_MENUS_PAE:
         if b["seccion"].lower() == seccion_nombre.lower():
+            base_viable = bool(b["ingredientes"]) and all(
+                buscar_en_mapa_inventario(ing_b, mapa_suf_nombres) is not None
+                for ing_b in b["ingredientes"]
+            )
             platos_base_pae.append({
                 "id_plato": None,
                 "nombre_plato": b["nombre_plato"],
@@ -1007,15 +1411,36 @@ def sugerencias_recetas_ia(request):
                 "pasos": b["pasos"],
                 "origen": "PAE_ESTIPULADO",
                 "etiqueta": f"Menú Oficial PAE #{b['numeroMenu']}",
+                "viable_con_inventario": base_viable,
             })
 
-    todas_las_opciones = sugerencias_estructuradas + platos_base_pae
+    todas_las_opciones = sugerencias_estructuradas + [
+        p for p in platos_base_pae if p["viable_con_inventario"]
+    ]
 
-    texto_resumen = (
-        f"Se generaron {len(sugerencias_estructuradas)} propuestas nuevas y balanceadas para {seccion_nombre} "
-        f"calculadas para {ninos_presentes} niños de Primaria, basadas en el stock disponible y respetando "
-        "las normas nutricionales del PAE sin repetir los menús ya estipulados."
-    )
+    if inventario_suficiente:
+        texto_resumen = (
+            f"Se generaron {len(sugerencias_estructuradas)} propuestas adaptadas al inventario real disponible "
+            f"para {seccion_nombre} ({ninos_presentes} niños de Primaria), garantizando que todos los ingredientes "
+            "alcanzan con el stock actual y sin repetir los menús oficiales del PAE."
+        )
+    elif not mapa_inventario:
+        texto_resumen = (
+            f"No hay alimentos disponibles en el inventario de esta sede. "
+            f"No es posible generar recetas de {seccion_nombre} para {ninos_presentes} niños "
+            "hasta que se registren existencias en bodega."
+        )
+    elif ninos_maximos_atendibles > 0 and ninos_maximos_atendibles < ninos_presentes:
+        texto_resumen = (
+            f"No hay alimentos suficientes en el inventario para preparar {seccion_nombre} para {ninos_presentes} niños. "
+            f"Con las existencias actuales solo alcanza para un máximo aproximado de {ninos_maximos_atendibles} niños. "
+            "Ajusta la cantidad de raciones o abastece los ingredientes insuficientes."
+        )
+    else:
+        texto_resumen = (
+            f"No hay alimentos principales suficientes y coherentes en el inventario para preparar {seccion_nombre} "
+            f"para {ninos_presentes} niños. Verifica los ingredientes disponibles o registra nuevas existencias."
+        )
 
     # Sincronizar catálogo base en MongoDB Atlas si aplica
     try:
@@ -1032,9 +1457,16 @@ def sugerencias_recetas_ia(request):
             "id_seccion": id_seccion,
             "ninos_presentes": ninos_presentes,
             "preferencia": preferencia,
-            "motor_ia": "OpenAI GPT-4o-mini" if uso_openai else "Motor PAE Determinístico",
+            "motor_ia": (
+                "OpenAI GPT-4o-mini"
+                if uso_openai
+                else ("Motor PAE Determinístico" if inventario_suficiente else "Sin stock suficiente")
+            ),
+            "inventario_suficiente": inventario_suficiente,
+            "ninos_maximos_atendibles": ninos_maximos_atendibles,
             "total_sugerencias": len(sugerencias_estructuradas),
             "sugerencias": sugerencias_estructuradas,
+            "ingredientes_insuficientes": ingredientes_insuficientes,
             "platos_base_pae_consultados": len(platos_base_pae),
         })
     except Exception as e:
@@ -1047,8 +1479,21 @@ def sugerencias_recetas_ia(request):
             "id_seccion": id_seccion,
             "ninos_presentes": ninos_presentes,
             "id_sede": id_sede_final,
+            "inventario_suficiente": inventario_suficiente,
+            "ninos_maximos_atendibles": ninos_maximos_atendibles,
             "sugerencias": texto_resumen,
             "sugerencias_ia_estructuradas": sugerencias_estructuradas,
+            "ingredientes_disponibles_suficientes": [
+                {
+                    "id_ingrediente": it["id_ingrediente"],
+                    "nombre_ingrediente": it["nombre"],
+                    "stock_actual": str(it["cantidad_actual"]),
+                    "unidad": it["unidad"],
+                    "ninos_que_cubre": it["ninos_que_cubre"],
+                }
+                for it in ingredientes_suficientes
+            ],
+            "ingredientes_insuficientes": ingredientes_insuficientes,
             "platos_estipulados_pae": platos_base_pae,
             "todas_las_opciones": todas_las_opciones,
             "mongodb_atlas": {

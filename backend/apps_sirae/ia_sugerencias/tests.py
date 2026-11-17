@@ -213,4 +213,116 @@ class IASugerenciasRecetasTests(TestCase):
             registro_guardado = mock_hist.call_args[0][0]
             self.assertEqual(registro_guardado["motor_ia"], "Motor PAE Determinístico")
 
+    def test_sin_alimentos_suficientes_para_200_ninos_no_genera_recetas(self):
+        """Si el stock real no alcanza para 200 niños, NO debe dar recetas inviables."""
+        self.inv_huevos.cantidad_actual = Decimal("40.0")  # Solo alcanza para 40 niños
+        self.inv_huevos.save(update_fields=["cantidad_actual"])
+        self.inv_arroz.cantidad_actual = Decimal("2.0")    # 2 kg = 2000 g -> 44 niños
+        self.inv_arroz.save(update_fields=["cantidad_actual"])
+
+        with patch("apps_sirae.ia_sugerencias.views.generar_con_openai", return_value=None):
+            payload = {
+                "id_sede": self.sede.id_sede,
+                "ninos_presentes": 200,
+                "id_seccion": 1,
+            }
+            response = self.client.post("/api/ia/sugerencias-recetas/", payload, format="json")
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            data = response.json()
+
+            self.assertFalse(data["inventario_suficiente"])
+            self.assertEqual(data["sugerencias_ia_estructuradas"], [])
+            self.assertEqual(data["todas_las_opciones"], [])
+            self.assertEqual(data["ninos_maximos_atendibles"], 40)
+            self.assertEqual(len(data["ingredientes_insuficientes"]), 2)
+            self.assertIn("No hay alimentos suficientes", data["sugerencias"])
+
+    def test_sede_con_inventario_vacio_no_genera_recetas(self):
+        """Si la sede no tiene existencias en inventario, NO debe inventar stock ni dar recetas."""
+        sede_vacia = Sede.objects.create(
+            id_institucion=self.institucion,
+            nombre_sede="Sede Sin Stock",
+            estado="ACTIVO",
+        )
+        with patch("apps_sirae.ia_sugerencias.views.generar_con_openai", return_value=None):
+            payload = {
+                "id_sede": sede_vacia.id_sede,
+                "ninos_presentes": 200,
+                "id_seccion": 1,
+            }
+            response = self.client.post("/api/ia/sugerencias-recetas/", payload, format="json")
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            data = response.json()
+
+            self.assertFalse(data["inventario_suficiente"])
+            self.assertEqual(data["sugerencias_ia_estructuradas"], [])
+            self.assertEqual(data["ninos_maximos_atendibles"], 0)
+            self.assertIn("No hay alimentos disponibles", data["sugerencias"])
+
+    def test_recetas_se_adaptan_solo_a_ingredientes_con_stock_suficiente(self):
+        """La IA solo debe usar los ingredientes que alcanzan y excluir los insuficientes."""
+        tomate = Ingrediente.objects.create(
+            nombre_ingrediente="Tomate",
+            id_unidad_medida=self.unidad_kg,
+        )
+        # 0.5 kg = 500 g -> a 20 g/niño solo cubre 25 niños, NO alcanza para 200
+        Inventario.objects.create(
+            id_sede=self.sede,
+            id_institucion=self.institucion,
+            id_ingrediente=tomate.id_ingrediente,
+            cantidad_actual=Decimal("0.5"),
+            stock_minimo=Decimal("1.0"),
+            id_unidad_medida=self.unidad_kg.id_unidad_medida,
+        )
+
+        with patch("apps_sirae.ia_sugerencias.views.generar_con_openai", return_value=None):
+            payload = {
+                "id_sede": self.sede.id_sede,
+                "ninos_presentes": 200,
+                "id_seccion": 1,
+            }
+            response = self.client.post("/api/ia/sugerencias-recetas/", payload, format="json")
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            data = response.json()
+
+            self.assertTrue(data["inventario_suficiente"])
+            self.assertTrue(len(data["sugerencias_ia_estructuradas"]) >= 1)
+            for sug in data["sugerencias_ia_estructuradas"]:
+                self.assertTrue(sug["viable_con_inventario"])
+                nombres = [ing["nombre_ingrediente"].lower() for ing in sug["ingredientes"]]
+                self.assertNotIn("tomate", nombres)
+                for ing in sug["ingredientes"]:
+                    self.assertTrue(ing["alcanza"])
+
+            nombres_insuf = [i["nombre_ingrediente"].lower() for i in data["ingredientes_insuficientes"]]
+            self.assertIn("tomate", nombres_insuf)
+
+    def test_openai_con_ingredientes_inexistentes_es_descartado_y_adaptado(self):
+        """Si OpenAI sugiere ingredientes que no existen en inventario, el validador los descarta."""
+        respuesta_inviable = [
+            {
+                "nombre_plato": "Salmón con quinua y aguacate",
+                "componentes_detalle": {"Alimento proteico": "Salmón"},
+                "ingredientes_usados": ["Salmón", "Quinua", "Aguacate"],
+                "pasos": ["Cocinar salmón."],
+            }
+        ]
+        with patch("apps_sirae.ia_sugerencias.views.generar_con_openai", return_value=respuesta_inviable):
+            payload = {
+                "id_sede": self.sede.id_sede,
+                "ninos_presentes": 200,
+                "id_seccion": 1,
+            }
+            response = self.client.post("/api/ia/sugerencias-recetas/", payload, format="json")
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            data = response.json()
+
+            self.assertTrue(data["inventario_suficiente"])
+            for sug in data["sugerencias_ia_estructuradas"]:
+                self.assertNotIn("salmón", sug["nombre_plato"].lower())
+                self.assertTrue(sug["viable_con_inventario"])
+                for ing in sug["ingredientes"]:
+                    self.assertTrue(ing["alcanza"])
+
+
 
