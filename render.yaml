@@ -58,3 +58,9 @@ services:
         sync: false
       - key: EMAIL_TIMEOUT
         value: "10"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: MONGO_URI
+        sync: false
+      - key: MONGO_DB_NAME
+        value: "sirae_ia"

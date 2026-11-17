@@ -7,37 +7,81 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 _mongo_client = None
+_mongo_client_uri = None
 _mongo_db = None
+
+MONGO_URI_ENV_VARS = (
+    "MONGO_URI",
+    "MONGODB_URI",
+    "MONGO_URL",
+    "MONGODB_URL",
+    "MONGO_ATLAS_URI",
+    "MONGODB_ATLAS_URI",
+    "MONGO_CONNECTION_STRING",
+)
+
+MONGO_DB_NAME_ENV_VARS = (
+    "MONGO_DB_NAME",
+    "MONGODB_DB_NAME",
+    "MONGO_DATABASE",
+    "MONGODB_DATABASE",
+)
 
 
 def get_mongo_uri() -> str:
     """Obtiene la URI de conexión a MongoDB Atlas desde settings o variables de entorno."""
-    return getattr(settings, "MONGO_URI", "") or os.getenv("MONGO_URI", os.getenv("MONGODB_URI", "")).strip()
+    from_settings = str(getattr(settings, "MONGO_URI", "") or "").replace("\r", "").replace("\n", "").strip()
+    if from_settings:
+        return from_settings
+    if getattr(settings, "MONGO_DISABLE_ENV_FALLBACK", False):
+        return ""
+    for env_name in MONGO_URI_ENV_VARS:
+        val = os.getenv(env_name, "").replace("\r", "").replace("\n", "").strip()
+        if val:
+            return val
+    return ""
 
 
 def get_mongo_db_name() -> str:
     """Obtiene el nombre de la base de datos de MongoDB Atlas."""
-    return getattr(settings, "MONGO_DB_NAME", "") or os.getenv("MONGO_DB_NAME", "sirae_ia").strip()
+    from_settings = str(getattr(settings, "MONGO_DB_NAME", "") or "").strip()
+    if from_settings:
+        return from_settings
+    for env_name in MONGO_DB_NAME_ENV_VARS:
+        val = os.getenv(env_name, "").strip()
+        if val:
+            return val
+    return "sirae_ia"
 
 
 def get_mongo_client():
     """Retorna una instancia reutilizable del cliente de MongoDB Atlas."""
-    global _mongo_client
+    global _mongo_client, _mongo_client_uri
     uri = get_mongo_uri()
     if not uri:
         return None
 
-    if _mongo_client is None:
+    if _mongo_client is None or _mongo_client_uri != uri:
         try:
             from pymongo import MongoClient
-            _mongo_client = MongoClient(
-                uri,
-                serverSelectionTimeoutMS=3000,
-                connectTimeoutMS=3000,
-                socketTimeoutMS=5000,
-                retryWrites=True,
-                appname="SIRAE-Backend-IA",
-            )
+
+            client_kwargs: Dict[str, Any] = {
+                "serverSelectionTimeoutMS": 3000,
+                "connectTimeoutMS": 3000,
+                "socketTimeoutMS": 5000,
+                "retryWrites": True,
+                "appname": "SIRAE-Backend-IA",
+            }
+            uri_lower = uri.lower()
+            if uri_lower.startswith("mongodb+srv://") or "tls=true" in uri_lower or "ssl=true" in uri_lower:
+                try:
+                    import certifi
+                    client_kwargs["tlsCAFile"] = certifi.where()
+                except ImportError:
+                    pass
+
+            _mongo_client = MongoClient(uri, **client_kwargs)
+            _mongo_client_uri = uri
         except Exception as e:
             logger.warning("No se pudo inicializar MongoClient para MongoDB Atlas: %s", e)
             return None

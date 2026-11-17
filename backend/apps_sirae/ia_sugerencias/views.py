@@ -884,6 +884,7 @@ def sugerencias_recetas_ia(request):
         inventario_nombres=nombres_disponibles_inv,
         preferencia=preferencia,
     )
+    uso_openai = bool(sugerencias_crudas)
 
     if not sugerencias_crudas:
         plantillas = PLANTILLAS_INNOVADORAS_PAE.get(seccion_nombre, PLANTILLAS_INNOVADORAS_PAE["Desayuno"])
@@ -903,7 +904,8 @@ def sugerencias_recetas_ia(request):
         nombre_lower = nombre.lower().replace("sugerencia ia:", "").strip()
         if nombre_lower in NOMBRES_20_MENUS_BASE:
             # Modificar nombre para no repetir
-            nombre = f"Sugerencia IA Alternativa: {nombre} Estilo Casero Escolar"
+            s = dict(s)
+            s["nombre_plato"] = f"Sugerencia IA Alternativa: {nombre} Estilo Casero Escolar"
         sugerencias_filtradas.append(s)
 
     # 4. Construir la estructura completa con cálculos matemáticos y balance de inventario
@@ -1030,7 +1032,7 @@ def sugerencias_recetas_ia(request):
             "id_seccion": id_seccion,
             "ninos_presentes": ninos_presentes,
             "preferencia": preferencia,
-            "motor_ia": "OpenAI GPT-4o-mini" if sugerencias_crudas else "Motor PAE Determinístico",
+            "motor_ia": "OpenAI GPT-4o-mini" if uso_openai else "Motor PAE Determinístico",
             "total_sugerencias": len(sugerencias_estructuradas),
             "sugerencias": sugerencias_estructuradas,
             "platos_base_pae_consultados": len(platos_base_pae),
@@ -1210,7 +1212,10 @@ def historial_sugerencias_ia_view(request):
     Retorna el historial de sugerencias generadas por la IA almacenadas en MongoDB Atlas.
     Parámetros opcionales: limite, id_sede, seccion
     """
-    limite = int(request.query_params.get("limite", 20))
+    try:
+        limite = max(1, min(100, int(request.query_params.get("limite", 20))))
+    except (ValueError, TypeError):
+        limite = 20
     id_sede = request.query_params.get("id_sede")
     seccion = request.query_params.get("seccion")
 

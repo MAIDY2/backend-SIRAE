@@ -1,5 +1,7 @@
 from decimal import Decimal
-from django.test import TestCase
+import os
+from unittest.mock import patch
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 from rest_framework import status
 
@@ -9,6 +11,7 @@ from apps_sirae.ingredientes.models import Ingrediente
 from apps_sirae.unidades_medida.models import UnidadMedida
 from apps_sirae.inventario.models import Inventario
 from apps_sirae.salidas_inventario.models import SalidaInventario
+from apps_sirae.ia_sugerencias.mongodb import get_mongo_uri, get_mongo_db_name
 from apps_sirae.ia_sugerencias.views import CATALOGO_20_MENUS_PAE, NOMBRES_20_MENUS_BASE
 
 
@@ -173,4 +176,41 @@ class IASugerenciasRecetasTests(TestCase):
         data = response.json()
         self.assertEqual(data["status"], "success")
         self.assertIn("historial", data)
+
+    def test_historial_sugerencias_limite_invalido(self):
+        """Verifica que un parámetro limite inválido no genere error 500."""
+        response = self.client.get("/api/ia/historial/?limite=no_numerico")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["status"], "success")
+
+    @override_settings(MONGO_URI="", MONGO_DB_NAME="", MONGO_DISABLE_ENV_FALLBACK=False)
+    def test_resolucion_variables_entorno_alternativas_mongo(self):
+        """Verifica soporte de alias comunes en Render como MONGO_URL y MONGODB_DATABASE."""
+        env_clean = {k: "" for k in ("MONGO_URI", "MONGODB_URI", "MONGO_URL", "MONGODB_URL", "MONGO_ATLAS_URI", "MONGODB_ATLAS_URI", "MONGO_CONNECTION_STRING", "MONGO_DB_NAME", "MONGODB_DB_NAME", "MONGO_DATABASE", "MONGODB_DATABASE")}
+        env_clean["MONGO_URL"] = "mongodb+srv://user:pass@cluster.mongodb.net/?retryWrites=true&w=majority"
+        env_clean["MONGODB_DATABASE"] = "sirae_ia_prod"
+        with patch.dict(os.environ, env_clean, clear=False):
+            self.assertEqual(get_mongo_uri(), env_clean["MONGO_URL"])
+            self.assertEqual(get_mongo_db_name(), "sirae_ia_prod")
+
+    def test_sugerencias_registra_motor_deterministico_en_mongo(self):
+        """Verifica que al usar fallback determinístico se envíe motor_ia correcto a MongoDB."""
+        with patch("apps_sirae.ia_sugerencias.views.generar_con_openai", return_value=None), \
+             patch("apps_sirae.ia_sugerencias.views.sincronizar_catalogo_recetas", return_value=20) as mock_sync, \
+             patch("apps_sirae.ia_sugerencias.views.guardar_historial_sugerencia", return_value="65f000000000000000000001") as mock_hist:
+            payload = {
+                "id_sede": self.sede.id_sede,
+                "ninos_presentes": 120,
+                "id_seccion": 1,
+            }
+            response = self.client.post("/api/ia/sugerencias-recetas/", payload, format="json")
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            data = response.json()
+            self.assertTrue(data["mongodb_atlas"]["activo"])
+            self.assertEqual(data["mongodb_atlas"]["id_registro_historial"], "65f000000000000000000001")
+            mock_sync.assert_called_once()
+            mock_hist.assert_called_once()
+            registro_guardado = mock_hist.call_args[0][0]
+            self.assertEqual(registro_guardado["motor_ia"], "Motor PAE Determinístico")
+
 

@@ -431,5 +431,25 @@ else:
 # ==============================================================================
 # CONFIGURACIÓN DE MONGODB ATLAS (Módulo de Inteligencia Artificial)
 # ==============================================================================
-MONGO_URI = os.getenv("MONGO_URI", os.getenv("MONGODB_URI", "")).strip()
-MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "sirae_ia").strip()
+if "test" in sys.argv:
+    MONGO_URI = ""
+    MONGO_DISABLE_ENV_FALLBACK = True
+else:
+    MONGO_DISABLE_ENV_FALLBACK = False
+    MONGO_URI = (
+        os.getenv("MONGO_URI")
+        or os.getenv("MONGODB_URI")
+        or os.getenv("MONGO_URL")
+        or os.getenv("MONGODB_URL")
+        or os.getenv("MONGO_ATLAS_URI")
+        or os.getenv("MONGODB_ATLAS_URI")
+        or os.getenv("MONGO_CONNECTION_STRING")
+        or ""
+    ).replace("\r", "").replace("\n", "").strip()
+MONGO_DB_NAME = (
+    os.getenv("MONGO_DB_NAME")
+    or os.getenv("MONGODB_DB_NAME")
+    or os.getenv("MONGO_DATABASE")
+    or os.getenv("MONGODB_DATABASE")
+    or "sirae_ia"
+).strip()
