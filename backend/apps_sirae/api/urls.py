@@ -211,4 +211,6 @@ urlpatterns = [
         generar_imagen_receta_ia,
         name='ia-generar-imagen-receta',
     ),
+        # Reconocimiento Facial (SIRAE)
+    path('reconocimiento-facial/', include('apps_sirae.reconocimiento_facial.urls')),
 ]

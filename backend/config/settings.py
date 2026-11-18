@@ -137,6 +137,8 @@ INSTALLED_APPS = [
     "apps_sirae.preparacion_asignada",
     "apps_sirae.gramage",
     "apps_sirae.reportes",
+    "apps_sirae.reconocimiento_facial.apps.ReconocimientoFacialConfig",
+
 ]
 
 AUTH_USER_MODEL = "usuarios.Usuario"
