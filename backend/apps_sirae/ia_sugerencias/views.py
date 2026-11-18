@@ -1760,6 +1760,7 @@ def sugerencias_recetas_ia(request):
                 "tiene_insuficientes": alguno_insuficiente,
                 "alerta_inventario": alerta_receta,
                 "imagen_url": None,
+                "imagen": None,
                 "imagen_cloudinary_public_id": None,
                 "imagen_origen": None,
                 "guardada_en_cloudinary": False,
@@ -1812,6 +1813,7 @@ def sugerencias_recetas_ia(request):
                 ingredientes=sug.get("ingredientes"),
             )
             sug["imagen_url"] = img_info.get("imagen_url")
+            sug["imagen"] = img_info.get("imagen_url")
             sug["imagen_cloudinary_public_id"] = img_info.get("imagen_cloudinary_public_id")
             sug["imagen_origen"] = img_info.get("imagen_origen")
             sug["guardada_en_cloudinary"] = bool(img_info.get("guardada_en_cloudinary"))
@@ -2023,14 +2025,17 @@ def generar_imagen_receta_ia(request):
     if not resultado.get("guardada_en_cloudinary"):
         return Response(
             {
-                "status": "warning",
+                "status": "success" if resultado.get("imagen_url") else "warning",
                 "mensaje": (
-                    "No se pudo guardar la imagen en Cloudinary. Verifica CLOUDINARY_CLOUD_NAME, "
-                    "CLOUDINARY_API_KEY y CLOUDINARY_API_SECRET."
+                    "Imagen generada correctamente, pero Cloudinary no está configurado en el servidor. "
+                    "Verifica CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY y CLOUDINARY_API_SECRET (o CLOUDINARY_URL) en Render."
                 ),
+                "nombre_plato": nombre_plato,
+                "seccion": seccion_nombre,
+                "imagen": resultado.get("imagen_url"),
                 **resultado,
             },
-            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            status=status.HTTP_200_OK if resultado.get("imagen_url") else status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
     return Response(
@@ -2039,6 +2044,7 @@ def generar_imagen_receta_ia(request):
             "mensaje": "Imagen de la receta colombiana generada y guardada exitosamente en Cloudinary.",
             "nombre_plato": nombre_plato,
             "seccion": seccion_nombre,
+            "imagen": resultado.get("imagen_url"),
             **resultado,
         },
         status=status.HTTP_200_OK,

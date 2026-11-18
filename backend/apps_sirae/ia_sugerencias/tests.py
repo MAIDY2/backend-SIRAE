@@ -480,5 +480,23 @@ class IASugerenciasRecetasTests(TestCase):
             self.assertEqual(data["imagen_origen"], "ILUSTRACION_COLOMBIANA_CLOUDINARY")
             mock_upload.assert_called_once()
 
+    def test_imagen_nunca_es_nula_aunque_cloudinary_no_este_configurado(self):
+        """Si Cloudinary no está configurado en el servidor, debe devolver igual una URL IA válida."""
+        from apps_sirae.ia_sugerencias import imagenes as mod_img
+
+        mod_img._CACHE_IMAGENES.clear()
+        with patch("apps_sirae.ia_sugerencias.imagenes.cloudinary_configurado", return_value=False):
+            payload = {
+                "nombre_plato": "Ajiaco santafereño escolar de pollo",
+                "seccion": "Almuerzo",
+                "ingredientes": ["Pollo", "Papa", "Maíz", "Arroz"],
+            }
+            response = self.client.post("/api/ia/generar-imagen-receta/", payload, format="json")
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            data = response.json()
+            self.assertFalse(data["guardada_en_cloudinary"])
+            self.assertTrue(str(data["imagen_url"]).startswith("https://image.pollinations.ai/prompt/"))
+            self.assertEqual(data["imagen"], data["imagen_url"])
+
 
 

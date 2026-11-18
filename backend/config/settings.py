@@ -403,12 +403,32 @@ SWAGGER_SETTINGS = {
 }
 
 if cloudinary:
-    cloudinary.config(
-    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME", "tu_cloud_name"),
-    api_key=os.getenv("CLOUDINARY_API_KEY", "tu_api_key"),
-    api_secret=os.getenv("CLOUDINARY_API_SECRET", "tu_api_secret"),
-    secure=True,
-)
+    _cld_name = os.getenv("CLOUDINARY_CLOUD_NAME", "").strip().strip('"').strip("'")
+    _cld_key = os.getenv("CLOUDINARY_API_KEY", "").strip().strip('"').strip("'")
+    _cld_secret = os.getenv("CLOUDINARY_API_SECRET", "").strip().strip('"').strip("'")
+    _cld_url = os.getenv("CLOUDINARY_URL", "").strip().strip('"').strip("'")
+
+    _cld_placeholders = {"", "tu_cloud_name", "tu_api_key", "tu_api_secret"}
+    if (
+        _cld_name not in _cld_placeholders
+        and _cld_key not in _cld_placeholders
+        and _cld_secret not in _cld_placeholders
+    ):
+        cloudinary.config(
+            cloud_name=_cld_name,
+            api_key=_cld_key,
+            api_secret=_cld_secret,
+            secure=True,
+        )
+        CLOUDINARY_STORAGE = {
+            "CLOUD_NAME": _cld_name,
+            "API_KEY": _cld_key,
+            "API_SECRET": _cld_secret,
+        }
+    elif _cld_url:
+        cloudinary.config(cloudinary_url=_cld_url, secure=True)
+    else:
+        cloudinary.config(secure=True)
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
