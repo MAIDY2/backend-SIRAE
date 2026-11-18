@@ -2,7 +2,7 @@ import pickle
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -13,30 +13,28 @@ User = get_user_model()
 
 
 @api_view(['POST'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def register_face(request):
     """
-    Equivalente a @app.post('/register-face') de tu instructora.
-    Recibe: correo (o username) e image (base64).
+    Registra o actualiza la biometría facial de un usuario autenticado (desde Mi Perfil).
+    Por seguridad, solo un usuario con sesión iniciada puede vincular o renovar su rostro.
     """
-    correo = request.data.get('correo') or request.data.get('username')
-    image = request.data.get('image')
+    usuario = request.user
+    
+    # Si un superadministrador desea registrar el rostro de otro usuario:
+    correo_objetivo = request.data.get('correo')
+    if correo_objetivo and (usuario.is_superuser or getattr(getattr(usuario, 'rol', None), 'nombre', '') == 'Superadministrador'):
+        target = User.objects.filter(correo__iexact=str(correo_objetivo).strip()).first()
+        if target:
+            usuario = target
 
-    if not correo or not image:
+    image = request.data.get('image')
+    if not image:
         return Response(
-            {"detail": "Debe proporcionar el correo del usuario y la captura de imagen."},
+            {"detail": "Debe proporcionar la captura de imagen."},
             status=status.HTTP_400_BAD_REQUEST
         )
 
-    # 1. Obtener usuario existente en SIRAE
-    usuario = User.objects.filter(correo__iexact=correo.strip()).first()
-    if not usuario:
-        return Response(
-            {"detail": f"No se encontró un usuario con el correo '{correo}'."},
-            status=status.HTTP_404_NOT_FOUND
-        )
-
-    # 2. Generar el embedding facial con la función de la instructora
     embedding = image_to_embedding(image)
     if embedding is None:
         return Response(
@@ -44,7 +42,6 @@ def register_face(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
-    # 3. Serializar con pickle (igual a la instructora) y guardar en base de datos
     emb_serialized = pickle.dumps(embedding)
 
     UsuarioBiometria.objects.update_or_create(
@@ -61,6 +58,29 @@ def register_face(request):
     return Response({
         "msg": f"Rostro registrado exitosamente para {usuario.nombre} ({rol_nombre})",
         "usuario": usuario.correo
+    }, status=status.HTTP_200_OK)
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def eliminar_biometria(request):
+    """
+    Permite al usuario autenticado desvincular su biometría facial.
+    """
+    UsuarioBiometria.objects.filter(usuario=request.user).delete()
+    return Response({"detail": "Biometría eliminada exitosamente."}, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def estado_biometria(request):
+    """
+    Consulta si el usuario autenticado tiene su biometría facial registrada.
+    """
+    tiene_biometria = UsuarioBiometria.objects.filter(usuario=request.user, activo=True).exists()
+    return Response({
+        "tiene_biometria": tiene_biometria,
+        "correo": request.user.correo
     }, status=status.HTTP_200_OK)
 
 
