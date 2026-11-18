@@ -99,3 +99,59 @@ class Contrato(models.Model):
     def __str__(self):
         nom = self.institucion or (self.id_institucion.nombre_institucion if self.id_institucion else 'Sin institucion')
         return f"Contrato {self.numero_cor} - {nom} ({self.estado})"
+
+
+# ─────────────────────────────────────────────
+# Distribución de cupos por sede y grado
+# ─────────────────────────────────────────────
+
+class DistribucionSede(models.Model):
+    """Cupos asignados a una sede dentro de un contrato PAE."""
+    id_distribucion_sede = models.AutoField(primary_key=True)
+    id_contrato = models.ForeignKey(
+        Contrato,
+        on_delete=models.CASCADE,
+        db_column='id_contrato',
+        related_name='distribuciones_sede',
+    )
+    id_sede = models.ForeignKey(
+        'sedes.Sede',
+        on_delete=models.CASCADE,
+        db_column='id_sede',
+        related_name='distribuciones_contrato',
+    )
+    cupos_asignados = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = 'distribucion_sede'
+        managed = True
+        unique_together = ('id_contrato', 'id_sede')
+
+    def __str__(self):
+        return f"Contrato {self.id_contrato_id} – Sede {self.id_sede_id}: {self.cupos_asignados} cupos"
+
+
+class DistribucionGrado(models.Model):
+    """Cupos asignados a un grado dentro de una DistribucionSede."""
+    id_distribucion_grado = models.AutoField(primary_key=True)
+    id_distribucion_sede = models.ForeignKey(
+        DistribucionSede,
+        on_delete=models.CASCADE,
+        db_column='id_distribucion_sede',
+        related_name='grados',
+    )
+    id_grado = models.ForeignKey(
+        'grados.Grados',
+        on_delete=models.CASCADE,
+        db_column='id_grado',
+        related_name='distribuciones_contrato',
+    )
+    cupos_asignados = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = 'distribucion_grado'
+        managed = True
+        unique_together = ('id_distribucion_sede', 'id_grado')
+
+    def __str__(self):
+        return f"Sede {self.id_distribucion_sede_id} – Grado {self.id_grado_id}: {self.cupos_asignados} cupos"

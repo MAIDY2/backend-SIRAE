@@ -1,5 +1,8 @@
 from django.db import transaction
 from rest_framework import viewsets
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+
+import cloudinary.uploader
 
 from apps_sirae.ingredientes.api.serializers import IngredienteSerializer
 from apps_sirae.ingredientes.models import Ingrediente
@@ -9,6 +12,7 @@ from apps_sirae.usuarios.permissions import IsSuperAdminOrReadOnly
 class IngredienteApiViewset(viewsets.ModelViewSet):
     serializer_class = IngredienteSerializer
     permission_classes = [IsSuperAdminOrReadOnly]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_queryset(self):
         queryset = Ingrediente.objects.all()
@@ -33,14 +37,37 @@ class IngredienteApiViewset(viewsets.ModelViewSet):
 
         return queryset
 
+    def _subir_imagen_cloudinary(self):
+        """Sube imagen a Cloudinary si viene en el request. Retorna la URL o None."""
+        imagen = self.request.FILES.get('imagen_ingrediente')
+        if not imagen:
+            return None
+        try:
+            resultado = cloudinary.uploader.upload(
+                imagen,
+                folder='sirae_ingredientes/',
+                resource_type='image',
+            )
+            return resultado.get('secure_url')
+        except Exception:
+            return None
+
     @transaction.atomic
     def perform_create(self, serializer):
-        ingrediente = serializer.save()
+        imagen_url = self._subir_imagen_cloudinary()
+        kwargs = {}
+        if imagen_url:
+            kwargs['imagen_ingrediente'] = imagen_url
+        ingrediente = serializer.save(**kwargs)
         self._sincronizar_derivados(ingrediente)
 
     @transaction.atomic
     def perform_update(self, serializer):
-        ingrediente = serializer.save()
+        imagen_url = self._subir_imagen_cloudinary()
+        kwargs = {}
+        if imagen_url is not None:
+            kwargs['imagen_ingrediente'] = imagen_url
+        ingrediente = serializer.save(**kwargs)
         self._sincronizar_derivados(ingrediente)
 
     def _sincronizar_derivados(self, ingrediente):
