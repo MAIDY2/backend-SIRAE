@@ -5,6 +5,7 @@ from apps_sirae.ia_sugerencias.views import (
     descontar_inventario_ia,
     estado_mongodb_ia,
     historial_sugerencias_ia_view,
+    generar_imagen_receta_ia,
 )
 
 from apps_sirae.unidades_medida.api.router import router_unidades_medida
@@ -204,5 +205,10 @@ urlpatterns = [
         'ia/historial/',
         historial_sugerencias_ia_view,
         name='ia-historial',
+    ),
+    path(
+        'ia/generar-imagen-receta/',
+        generar_imagen_receta_ia,
+        name='ia-generar-imagen-receta',
     ),
 ]

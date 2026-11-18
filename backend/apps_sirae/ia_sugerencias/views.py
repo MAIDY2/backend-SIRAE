@@ -3,6 +3,7 @@ import logging
 import os
 import random
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
@@ -24,6 +25,7 @@ from apps_sirae.salidas_inventario.models import SalidaInventario
 from apps_sirae.secciones_menu.models import SeccionMenu
 from apps_sirae.sedes.models import Sede
 from apps_sirae.unidades_medida.models import UnidadMedida
+from apps_sirae.ia_sugerencias.imagenes import generar_y_subir_imagen_receta
 from apps_sirae.ia_sugerencias.mongodb import (
     guardar_historial_sugerencia,
     obtener_historial_sugerencias,
@@ -452,32 +454,39 @@ GRAMAJES_POR_NINO_PRIMARIA = {
     "arepa": {"cantidad": Decimal("50.0"), "unidad": "g", "descripcion": "Arepa de maíz"},
     "harina de maíz": {"cantidad": Decimal("40.0"), "unidad": "g", "descripcion": "Harina precocida"},
     "harina de trigo": {"cantidad": Decimal("35.0"), "unidad": "g", "descripcion": "Harina de trigo"},
-    "papa": {"cantidad": Decimal("70.0"), "unidad": "g", "descripcion": "Papa pastusa o capira"},
+    "papa": {"cantidad": Decimal("70.0"), "unidad": "g", "descripcion": "Papa pastusa, sabanera o criolla"},
     "yuca": {"cantidad": Decimal("60.0"), "unidad": "g", "descripcion": "Yuca fresca limpia"},
     "plátano": {"cantidad": Decimal("50.0"), "unidad": "g", "descripcion": "Plátano verde o maduro"},
+    "maíz": {"cantidad": Decimal("40.0"), "unidad": "g", "descripcion": "Maíz tierno o mazorca desgranada"},
     "avena": {"cantidad": Decimal("25.0"), "unidad": "g", "descripcion": "Avena en hojuelas o molida"},
     "galleta": {"cantidad": Decimal("30.0"), "unidad": "g", "descripcion": "Galleta tipo cracker o dulce"},
+    "pan de queso": {"cantidad": Decimal("45.0"), "unidad": "g", "descripcion": "Pan de queso o almojábana escolar"},
     "pan": {"cantidad": Decimal("40.0"), "unidad": "g", "descripcion": "Pan escolar"},
     # Lácteos y Líquidos
     "leche": {"cantidad": Decimal("200.0"), "unidad": "ml", "descripcion": "Leche entera pasteurizada"},
     "leche líquida": {"cantidad": Decimal("200.0"), "unidad": "ml", "descripcion": "Leche pasteurizada"},
     "yogurt": {"cantidad": Decimal("150.0"), "unidad": "ml", "descripcion": "Yogurt con probióticos"},
-    "chocolate": {"cantidad": Decimal("15.0"), "unidad": "g", "descripcion": "Pastilla o cocoa"},
+    "chocolate": {"cantidad": Decimal("15.0"), "unidad": "g", "descripcion": "Pastilla de chocolate santafereño o cocoa"},
     # Verduras y Frutas
-    "tomate": {"cantidad": Decimal("20.0"), "unidad": "g", "descripcion": "Tomate maduro para guiso"},
-    "cebolla": {"cantidad": Decimal("15.0"), "unidad": "g", "descripcion": "Cebolla cabezona o larga"},
+    "tomate": {"cantidad": Decimal("20.0"), "unidad": "g", "descripcion": "Tomate chonto maduro para hogao"},
+    "cebolla": {"cantidad": Decimal("15.0"), "unidad": "g", "descripcion": "Cebolla larga o cabezona para hogao"},
     "zanahoria": {"cantidad": Decimal("25.0"), "unidad": "g", "descripcion": "Zanahoria cruda limpia"},
+    "arvejas": {"cantidad": Decimal("20.0"), "unidad": "g", "descripcion": "Arveja verde fresca"},
     "pimentón": {"cantidad": Decimal("10.0"), "unidad": "g", "descripcion": "Pimentón fresco"},
+    "cilantro": {"cantidad": Decimal("3.0"), "unidad": "g", "descripcion": "Cilantro fresco picado"},
     "fruta": {"cantidad": Decimal("100.0"), "unidad": "g", "descripcion": "Fruta entera o en porción"},
     "banano": {"cantidad": Decimal("1.0"), "unidad": "und", "descripcion": "1 unidad mediana"},
     "mango": {"cantidad": Decimal("100.0"), "unidad": "g", "descripcion": "Mango fresco en porción"},
+    "guayaba": {"cantidad": Decimal("80.0"), "unidad": "g", "descripcion": "Guayaba fresca colombiana"},
     "papaya": {"cantidad": Decimal("100.0"), "unidad": "g", "descripcion": "Papaya fresca en dados"},
     "mandarina": {"cantidad": Decimal("1.0"), "unidad": "und", "descripcion": "1 unidad fresca"},
     "manzana": {"cantidad": Decimal("1.0"), "unidad": "und", "descripcion": "1 unidad fresca"},
     # Grasas y Condimentos
     "aceite vegetal": {"cantidad": Decimal("5.0"), "unidad": "ml", "descripcion": "Aceite vegetal comestible"},
     "mantequilla": {"cantidad": Decimal("5.0"), "unidad": "g", "descripcion": "Mantequilla o margarina"},
+    "panela": {"cantidad": Decimal("12.0"), "unidad": "g", "descripcion": "Panela rallada o en bloque"},
     "azúcar": {"cantidad": Decimal("10.0"), "unidad": "g", "descripcion": "Azúcar para bebida"},
+    "canela": {"cantidad": Decimal("0.5"), "unidad": "g", "descripcion": "Canela en astilla o molida"},
     "sal": {"cantidad": Decimal("1.5"), "unidad": "g", "descripcion": "Sal yodada fluorada"},
     "ajo": {"cantidad": Decimal("1.0"), "unidad": "g", "descripcion": "Ajo fresco"},
 }
@@ -485,23 +494,28 @@ GRAMAJES_POR_NINO_PRIMARIA = {
 
 def resolver_gramaje_por_nino(nombre_ingrediente: str, seccion_nombre: str) -> dict:
     """Busca o infiere el gramaje unitario por niño para el ingrediente según la resolución PAE."""
-    nombre_low = nombre_ingrediente.strip().lower()
+    nombre_norm = normalizar_texto(nombre_ingrediente)
     for clave, datos in GRAMAJES_POR_NINO_PRIMARIA.items():
-        if clave in nombre_low or nombre_low in clave:
+        clave_norm = normalizar_texto(clave)
+        if clave_norm == nombre_norm:
+            return datos
+    for clave, datos in GRAMAJES_POR_NINO_PRIMARIA.items():
+        clave_norm = normalizar_texto(clave)
+        if clave_norm in nombre_norm or nombre_norm in clave_norm:
             return datos
 
     # Valores por defecto razonables según palabras clave
-    if any(k in nombre_low for k in ["pollo", "carne", "cerdo", "pescado", "atun"]):
+    if any(k in nombre_norm for k in ["pollo", "carne", "cerdo", "pescado", "atun"]):
         return {"cantidad": Decimal("60.0"), "unidad": "g", "descripcion": "Porción proteica estándar"}
-    if any(k in nombre_low for k in ["huevo"]):
+    if any(k in nombre_norm for k in ["huevo"]):
         return {"cantidad": Decimal("1.0"), "unidad": "und", "descripcion": "1 unidad"}
-    if any(k in nombre_low for k in ["arroz", "pasta", "harina", "arepa"]):
+    if any(k in nombre_norm for k in ["arroz", "pasta", "harina", "arepa", "maiz", "pan"]):
         return {"cantidad": Decimal("45.0"), "unidad": "g", "descripcion": "Cereal base"}
-    if any(k in nombre_low for k in ["leche", "yogurt", "jugo"]):
+    if any(k in nombre_norm for k in ["leche", "yogur", "jugo"]):
         return {"cantidad": Decimal("200.0"), "unidad": "ml", "descripcion": "Bebida láctea/líquida"}
-    if any(k in nombre_low for k in ["aceite"]):
+    if any(k in nombre_norm for k in ["aceite"]):
         return {"cantidad": Decimal("5.0"), "unidad": "ml", "descripcion": "Grasa vegetal"}
-    if any(k in nombre_low for k in ["sal"]):
+    if any(k in nombre_norm for k in ["sal"]):
         return {"cantidad": Decimal("1.5"), "unidad": "g", "descripcion": "Condimento salino"}
 
     return {"cantidad": Decimal("25.0"), "unidad": "g", "descripcion": "Porción complementaria"}
@@ -642,17 +656,88 @@ def clasificar_grupo_alimento(nombre_ingrediente: str) -> str:
     return "otro"
 
 
+def clasificar_estado_stock(
+    stock_actual: Decimal,
+    cant_requerida: Decimal,
+    stock_minimo: Decimal = Decimal("0.00"),
+) -> dict:
+    """
+    Evalúa el estado real de stock de un ingrediente frente al consumo requerido:
+    - AGOTADO ("No hay"): stock_actual <= 0
+    - INSUFICIENTE ("Bajo monto / Insuficiente"): 0 < stock_actual < cant_requerida
+    - BAJO_STOCK ("Bajo monto"): alcanza para la preparación, pero el stock actual o el restante
+      proyectado queda en o por debajo del stock mínimo (o queda exactamente en 0)
+    - DISPONIBLE ("Disponible"): alcanza con holgura por encima del stock mínimo
+    """
+    stock_actual = Decimal(str(stock_actual or 0))
+    cant_requerida = Decimal(str(cant_requerida or 0))
+    stock_minimo = Decimal(str(stock_minimo or 0))
+
+    stock_restante = max(Decimal("0.00"), stock_actual - cant_requerida).quantize(Decimal("0.01"))
+    faltante = max(Decimal("0.00"), cant_requerida - stock_actual).quantize(Decimal("0.01"))
+
+    if stock_actual <= Decimal("0.00"):
+        return {
+            "alcanza": False,
+            "agotado": True,
+            "stock_bajo": True,
+            "estado_stock": "AGOTADO",
+            "estado_stock_label": "No hay",
+            "stock_restante_proyectado": Decimal("0.00"),
+            "faltante": cant_requerida.quantize(Decimal("0.01")),
+        }
+
+    if stock_actual < cant_requerida:
+        return {
+            "alcanza": False,
+            "agotado": False,
+            "stock_bajo": True,
+            "estado_stock": "INSUFICIENTE",
+            "estado_stock_label": "Bajo monto / Insuficiente",
+            "stock_restante_proyectado": Decimal("0.00"),
+            "faltante": faltante,
+        }
+
+    queda_bajo = (
+        (stock_minimo > Decimal("0.00") and (stock_actual <= stock_minimo or stock_restante <= stock_minimo))
+        or (stock_restante <= Decimal("0.00"))
+    )
+    if queda_bajo:
+        return {
+            "alcanza": True,
+            "agotado": False,
+            "stock_bajo": True,
+            "estado_stock": "BAJO_STOCK",
+            "estado_stock_label": "Bajo monto",
+            "stock_restante_proyectado": stock_restante,
+            "faltante": Decimal("0.00"),
+        }
+
+    return {
+        "alcanza": True,
+        "agotado": False,
+        "stock_bajo": False,
+        "estado_stock": "DISPONIBLE",
+        "estado_stock_label": "Disponible",
+        "stock_restante_proyectado": stock_restante,
+        "faltante": Decimal("0.00"),
+    }
+
+
 def evaluar_inventario_para_ninos(
     mapa_inventario: dict,
     ninos_presentes: int,
     seccion_nombre: str,
-) -> tuple[list[dict], list[dict], int]:
+) -> tuple[list[dict], list[dict], list[dict], list[dict], int]:
     """
-    Evalúa cada alimento del inventario real contra el consumo requerido para `ninos_presentes`.
-    Retorna: (ingredientes_suficientes, ingredientes_insuficientes, ninos_maximos_atendibles).
+    Evalúa cada alimento del inventario real (incluyendo stock 0 y stock_minimo) contra el consumo
+    requerido para `ninos_presentes`.
+    Retorna: (suficientes, bajo_stock, insuficientes, agotados, ninos_maximos_atendibles).
     """
     suficientes = []
+    bajo_stock = []
     insuficientes = []
+    agotados = []
     max_ninos_principales = []
 
     for datos_inv in mapa_inventario.values():
@@ -665,7 +750,8 @@ def evaluar_inventario_para_ninos(
         unidad_inv = datos_inv["unidad"]
         factor_inv = datos_inv.get("factor_conversion_base")
         magnitud_inv = datos_inv.get("tipo_magnitud")
-        stock_actual = datos_inv["cantidad_actual"]
+        stock_actual = Decimal(str(datos_inv["cantidad_actual"] or 0))
+        stock_minimo = Decimal(str(datos_inv.get("stock_minimo") or 0))
 
         cant_req_inv = convertir_cantidad_a_unidad_inventario(
             cant_total_base, unidad_base, unidad_inv, factor_inv, magnitud_inv
@@ -673,69 +759,233 @@ def evaluar_inventario_para_ninos(
         stock_en_base = convertir_stock_a_unidad_base(
             stock_actual, unidad_inv, unidad_base, factor_inv, magnitud_inv
         )
-        ninos_que_cubre = int(stock_en_base // cant_nino) if cant_nino > 0 else 0
+        ninos_que_cubre = int(stock_en_base // cant_nino) if (cant_nino > 0 and stock_en_base > 0) else 0
         grupo = clasificar_grupo_alimento(nombre)
 
         if grupo != "condimento" and ninos_que_cubre > 0:
             max_ninos_principales.append(ninos_que_cubre)
 
-        if stock_actual >= cant_req_inv and ninos_que_cubre >= ninos_presentes:
-            suficientes.append({
+        estado_info = clasificar_estado_stock(stock_actual, cant_req_inv, stock_minimo)
+        alcanza_real = estado_info["alcanza"] and ninos_que_cubre >= ninos_presentes
+
+        if alcanza_real:
+            item_suf = {
                 **datos_inv,
                 "grupo": grupo,
                 "cantidad_por_nino": cant_nino,
                 "unidad_base": unidad_base,
                 "cantidad_requerida_inv": cant_req_inv,
                 "ninos_que_cubre": ninos_que_cubre,
-            })
+                "stock_minimo": stock_minimo,
+                "stock_restante_proyectado": estado_info["stock_restante_proyectado"],
+                "stock_bajo": estado_info["stock_bajo"],
+                "agotado": False,
+                "estado_stock": estado_info["estado_stock"],
+                "estado_stock_label": estado_info["estado_stock_label"],
+            }
+            suficientes.append(item_suf)
+            if estado_info["estado_stock"] == "BAJO_STOCK":
+                bajo_stock.append({
+                    "id_ingrediente": datos_inv["id_ingrediente"],
+                    "nombre_ingrediente": nombre,
+                    "stock_actual": str(stock_actual),
+                    "stock_minimo": str(stock_minimo),
+                    "cantidad_requerida": str(cant_req_inv),
+                    "stock_restante_proyectado": str(estado_info["stock_restante_proyectado"]),
+                    "unidad": unidad_inv,
+                    "ninos_que_cubre": ninos_que_cubre,
+                    "estado_stock": "BAJO_STOCK",
+                    "estado_stock_label": "Bajo monto",
+                    "grupo": grupo,
+                })
         else:
-            faltante = max(Decimal("0.0"), cant_req_inv - stock_actual).quantize(Decimal("0.01"))
-            insuficientes.append({
+            # Si falló por ninos_que_cubre pero stock_actual > 0, marcar como INSUFICIENTE
+            estado_final = "AGOTADO" if stock_actual <= Decimal("0.00") else "INSUFICIENTE"
+            label_final = "No hay" if estado_final == "AGOTADO" else "Bajo monto / Insuficiente"
+            registro_insuf = {
                 "id_ingrediente": datos_inv["id_ingrediente"],
                 "nombre_ingrediente": nombre,
                 "stock_actual": str(stock_actual),
+                "stock_minimo": str(stock_minimo),
                 "cantidad_requerida": str(cant_req_inv),
-                "faltante": str(faltante),
+                "faltante": str(estado_info["faltante"]),
                 "unidad": unidad_inv,
                 "ninos_que_cubre": ninos_que_cubre,
+                "alcanza": False,
+                "agotado": estado_final == "AGOTADO",
+                "stock_bajo": True,
+                "estado_stock": estado_final,
+                "estado_stock_label": label_final,
                 "grupo": grupo,
-            })
+            }
+            insuficientes.append(registro_insuf)
+            if estado_final == "AGOTADO":
+                agotados.append(registro_insuf)
 
     ninos_maximos = min(max_ninos_principales) if max_ninos_principales else 0
-    return suficientes, insuficientes, ninos_maximos
+    return suficientes, bajo_stock, insuficientes, agotados, ninos_maximos
 
 
 def tiene_alimentos_principales_para_seccion(
     ingredientes_suficientes: list[dict],
     seccion_nombre: str,
+    mapa_inventario: dict | None = None,
 ) -> bool:
-    """Valida que existan alimentos principales suficientes y coherentes para el momento del día."""
-    grupos = {item["grupo"] for item in ingredientes_suficientes}
+    """
+    Valida que existan alimentos principales suficientes y balanceados para el momento del día.
+    Si la sede maneja varios grupos principales en bodega, exige al menos 2 grupos principales
+    suficientes para no declarar un menú completo viable con un solo ingrediente sobrado.
+    """
     if seccion_nombre == "Desayuno":
-        return bool(grupos & {"proteina_desayuno", "cereal", "lacteo_bebida", "fruta"})
+        objetivo = {"proteina_desayuno", "cereal", "lacteo_bebida", "fruta"}
+    elif seccion_nombre == "Merienda":
+        objetivo = {"lacteo_bebida", "cereal", "fruta", "proteina_desayuno"}
+    else:
+        objetivo = {"proteina_almuerzo", "proteina_desayuno", "cereal", "verdura"}
+
+    grupos_suf = {item["grupo"] for item in ingredientes_suficientes} & objetivo
+    if not grupos_suf:
+        return False
+
+    if mapa_inventario:
+        grupos_en_sede = {
+            clasificar_grupo_alimento(it["nombre"])
+            for it in mapa_inventario.values()
+        } & objetivo
+        if len(grupos_en_sede) >= 2:
+            return len(grupos_suf) >= 2
+
+    return True
+
+
+def _formatear_nombre_colombiano_adaptado(
+    seccion_nombre: str,
+    prot_des: list[str],
+    prot_alm: list[str],
+    cereales: list[str],
+    lacteos: list[str],
+    frutas: list[str],
+    verduras: list[str],
+) -> tuple[str, list[str]]:
+    """Genera nombre y pasos auténticos de gastronomía colombiana según los alimentos disponibles."""
+    tiene_hogao = any(
+        "tomate" in normalizar_texto(v) or "cebolla" in normalizar_texto(v) for v in verduras
+    )
+    hogao_txt = " con hogao criollo" if tiene_hogao else ""
+
+    if seccion_nombre == "Desayuno":
+        cereal_norm = normalizar_texto(cereales[0]) if cereales else ""
+        prot_norm = normalizar_texto(prot_des[0]) if prot_des else ""
+        if prot_des and cereales:
+            if "arroz" in cereal_norm and "huevo" in prot_norm:
+                titulo = f"Sugerencia IA: Calentado escolar colombiano de {cereales[0]} con {prot_des[0]}{hogao_txt}"
+            elif any(k in cereal_norm for k in ["harina", "maiz", "arepa"]):
+                titulo = f"Sugerencia IA: {prot_des[0]} campesinos{hogao_txt} con arepa colombiana de {cereales[0]}"
+            elif "papa" in cereal_norm and "huevo" in prot_norm:
+                titulo = f"Sugerencia IA: Caldo escolar santafereño de {cereales[0]} con {prot_des[0]}"
+            else:
+                titulo = f"Sugerencia IA: Desayuno típico colombiano de {prot_des[0]}{hogao_txt} con {cereales[0]}"
+            pasos = [
+                f"Preparar un guiso criollo suave{hogao_txt} y cocinar completamente {prot_des[0]} al estilo casero colombiano.",
+                f"Alistar y cocinar {cereales[0]} caliente (arepa asada en plancha o calentado suave) cuidando textura e inocuidad.",
+                "Servir con bebida escolar y porcionar uniformemente según los gramajes PAE.",
+            ]
+        elif lacteos and cereales:
+            titulo = f"Sugerencia IA: Desayuno tradicional colombiano de {lacteos[0]} caliente con {cereales[0]}"
+            pasos = [
+                f"Preparar {lacteos[0]} tibia al estilo tradicional colombiano con dulzor suave.",
+                f"Asar o cocinar {cereales[0]} hasta lograr cocción pareja y apetitosa.",
+                "Servir caliente en porciones estandarizadas del PAE.",
+            ]
+        elif prot_des:
+            titulo = f"Sugerencia IA: Desayuno criollo proteico de {prot_des[0]}{hogao_txt}"
+            pasos = [
+                f"Preparar {prot_des[0]} bien cocidos al estilo casero colombiano{hogao_txt}.",
+                "Verificar temperatura de inocuidad y servir en raciones uniformes.",
+            ]
+        else:
+            principales = cereales + frutas + lacteos
+            titulo = f"Sugerencia IA: Desayuno escolar colombiano de {', '.join(principales[:2])}"
+            pasos = [
+                f"Alistar, lavar y preparar {', '.join(principales[:2])} siguiendo prácticas tradicionales de cocina escolar colombiana.",
+                "Porcionar según gramajes PAE y entregar caliente o fresco según corresponda.",
+            ]
+        return titulo, pasos
+
     if seccion_nombre == "Merienda":
-        return bool(grupos & {"lacteo_bebida", "cereal", "fruta", "proteina_desayuno"})
-    # Almuerzo
-    return bool(grupos & {"proteina_almuerzo", "proteina_desayuno", "cereal", "verdura"})
+        principales = lacteos + cereales + frutas + prot_des
+        lacteo_norm = normalizar_texto(lacteos[0]) if lacteos else ""
+        cereal_norm = normalizar_texto(cereales[0]) if cereales else ""
+        if lacteos and "avena" in cereal_norm:
+            titulo = f"Sugerencia IA: Avena colombiana en {lacteos[0]} con acompañamiento escolar"
+        elif lacteos and cereales:
+            titulo = f"Sugerencia IA: Media mañana colombiana de {lacteos[0]} con {cereales[0]}"
+        elif frutas and cereales:
+            titulo = f"Sugerencia IA: Refrigerio colombiano de {cereales[0]} con {frutas[0]} fresca"
+        elif "yogur" in lacteo_norm and frutas:
+            titulo = f"Sugerencia IA: Yogurt escolar colombiano con {frutas[0]} fresca"
+        else:
+            titulo = f"Sugerencia IA: Refrigerio típico colombiano de {' con '.join(principales[:2])}"
+        pasos = [
+            f"Alistar y desinfectar los ingredientes frescos para la media mañana colombiana: {', '.join(principales[:3])}.",
+            f"Preparar y porcionar {' con '.join(principales[:2])} conservando cadena de frío o temperatura adecuada.",
+            "Entregar en raciones individuales higiénicas conforme al PAE Colombia.",
+        ]
+        return titulo, pasos
+
+    # Almuerzo colombiano
+    proteinas = prot_alm + prot_des
+    if proteinas and cereales:
+        p_norm = normalizar_texto(proteinas[0])
+        c_norm = normalizar_texto(cereales[0])
+        if any(k in p_norm for k in ["frijol", "lenteja", "garbanzo"]):
+            titulo = f"Sugerencia IA: Guiso colombiano de {proteinas[0]}{hogao_txt} con {cereales[0]}"
+        elif any(k in p_norm for k in ["pollo", "carne", "cerdo"]):
+            titulo = f"Sugerencia IA: Sudado criollo colombiano de {proteinas[0]}{hogao_txt} con {cereales[0]}"
+        elif "huevo" in p_norm and "arroz" in c_norm:
+            titulo = f"Sugerencia IA: Seco escolar colombiano de {cereales[0]} con {proteinas[0]}{hogao_txt}"
+        else:
+            titulo = f"Sugerencia IA: Almuerzo tradicional colombiano de {proteinas[0]}{hogao_txt} con {cereales[0]}"
+        pasos = [
+            f"Sofreír suavemente el guiso criollo{hogao_txt} y cocinar completamente {proteinas[0]} hasta que quede jugoso y tierno.",
+            f"Preparar {cereales[0]} al estilo tradicional colombiano en olla institucional limpia.",
+            "Servir el almuerzo caliente acompañado de verdura o bebida según disponibilidad y gramajes PAE.",
+        ]
+    elif proteinas:
+        titulo = f"Sugerencia IA: Guiso criollo colombiano de {proteinas[0]}{hogao_txt}"
+        pasos = [
+            f"Cocinar completamente {proteinas[0]} en guiso criollo suave{hogao_txt} con poca sal.",
+            "Servir caliente respetando las porciones PAE.",
+        ]
+    else:
+        principales = cereales + verduras
+        titulo = f"Sugerencia IA: Almuerzo campesino colombiano de {' y '.join(principales[:2])}"
+        pasos = [
+            f"Cocinar {' y '.join(principales[:2])} con sazón casera colombiana suave y baja en sodio.",
+            "Porcionar de forma homogénea y servir caliente.",
+        ]
+    return titulo, pasos
 
 
 def construir_sugerencias_adaptadas_al_inventario(
     seccion_nombre: str,
     ingredientes_suficientes: list[dict],
     ninos_presentes: int,
+    mapa_inventario: dict | None = None,
 ) -> list[dict]:
     """
-    Construye propuestas 100% viables usando ÚNICAMENTE los ingredientes que sí alcanzan
-    en el inventario real para los `ninos_presentes`. Si no hay alimentos suficientes y coherentes
-    para el momento solicitado, retorna lista vacía.
+    Construye propuestas de gastronomía colombiana 100% viables usando ÚNICAMENTE los ingredientes
+    que sí alcanzan en el inventario real para los `ninos_presentes`.
     """
-    if not tiene_alimentos_principales_para_seccion(ingredientes_suficientes, seccion_nombre):
+    if not tiene_alimentos_principales_para_seccion(
+        ingredientes_suficientes, seccion_nombre, mapa_inventario=mapa_inventario
+    ):
         return []
 
     mapa_suf = {normalizar_texto(it["nombre"]): it for it in ingredientes_suficientes}
     sugerencias: list[dict] = []
 
-    # 1. Intentar primero plantillas innovadoras cuyos ingredientes estén 100% disponibles
+    # 1. Intentar primero plantillas colombianas cuyos ingredientes estén 100% disponibles
     plantillas = PLANTILLAS_INNOVADORAS_PAE.get(seccion_nombre, PLANTILLAS_INNOVADORAS_PAE["Desayuno"])
     for p in plantillas:
         ingredientes_match = []
@@ -756,9 +1006,9 @@ def construir_sugerencias_adaptadas_al_inventario(
             })
 
     if sugerencias:
-        return sugerencias
+        return sugerencias[:2]
 
-    # 2. Adaptación dinámica estricta a los alimentos realmente disponibles en bodega
+    # 2. Adaptación dinámica colombiana con los alimentos realmente disponibles en bodega
     por_grupo: dict[str, list[dict]] = {
         "proteina_desayuno": [],
         "proteina_almuerzo": [],
@@ -790,21 +1040,21 @@ def construir_sugerencias_adaptadas_al_inventario(
                 res.append(x)
         return res
 
+    titulo, pasos_base = _formatear_nombre_colombiano_adaptado(
+        seccion_nombre=seccion_nombre,
+        prot_des=prot_des,
+        prot_alm=prot_alm,
+        cereales=cereales_nombres,
+        lacteos=lacteos_nombres,
+        frutas=frutas_nombres,
+        verduras=verduras_nombres,
+    )
+
     if seccion_nombre == "Desayuno":
         principales = _dedup(prot_des + cereales_nombres + lacteos_nombres + frutas_nombres)
         if not principales:
             return []
-
         usados = _dedup(principales + verduras_nombres[:2] + condimentos_nombres)
-        if prot_des and cereales_nombres:
-            titulo = f"Sugerencia IA: Preparación matutina de {prot_des[0]} con {cereales_nombres[0]} adaptada al inventario"
-        elif lacteos_nombres and cereales_nombres:
-            titulo = f"Sugerencia IA: Desayuno escolar de {lacteos_nombres[0]} con {cereales_nombres[0]} adaptado al inventario"
-        elif prot_des:
-            titulo = f"Sugerencia IA: Desayuno proteico de {prot_des[0]} adaptado al inventario"
-        else:
-            titulo = f"Sugerencia IA: Desayuno escolar de {', '.join(principales[:2])} adaptado al inventario"
-
         componentes = {
             "Bebida con leche": ", ".join(lacteos_nombres) if lacteos_nombres else "Agua potable",
             "Alimento proteico": ", ".join(prot_des) if prot_des else "—",
@@ -812,25 +1062,11 @@ def construir_sugerencias_adaptadas_al_inventario(
             "Fruta": ", ".join(frutas_nombres) if frutas_nombres else "—",
             "Agua": "Agua potable tratada",
         }
-        pasos = [
-            f"Alistar y verificar las cantidades exactas para {ninos_presentes} raciones usando únicamente el inventario disponible: {', '.join(usados)}.",
-            f"Cocinar y preparar {', '.join(principales[:2])} asegurando cocción completa e inocuidad alimentaria.",
-            "Porcionar de forma uniforme según los gramajes PAE y servir caliente para el desayuno escolar.",
-        ]
-        sugerencias.append({
-            "nombre_plato": titulo,
-            "componentes_detalle": componentes,
-            "ingredientes_usados": usados,
-            "pasos": pasos,
-        })
-
     elif seccion_nombre == "Merienda":
         principales = _dedup(lacteos_nombres + cereales_nombres + frutas_nombres + prot_des)
         if not principales:
             return []
-
         usados = _dedup(principales + condimentos_nombres[:2])
-        titulo = f"Sugerencia IA: Refrigerio escolar de {' con '.join(principales[:2])} adaptado al inventario"
         componentes = {
             "Bebida con leche": ", ".join(lacteos_nombres) if lacteos_nombres else "Agua potable",
             "Alimento proteico": ", ".join(prot_des) if prot_des else "—",
@@ -838,33 +1074,12 @@ def construir_sugerencias_adaptadas_al_inventario(
             "Fruta": ", ".join(frutas_nombres) if frutas_nombres else "—",
             "Agua": "Agua potable tratada",
         }
-        pasos = [
-            f"Alistar y desinfectar los ingredientes disponibles para {ninos_presentes} meriendas: {', '.join(usados)}.",
-            f"Preparar y porcionar {', '.join(principales[:2])} conforme al gramaje PAE vigente.",
-            "Entregar en porciones individuales limpias durante la jornada escolar.",
-        ]
-        sugerencias.append({
-            "nombre_plato": titulo,
-            "componentes_detalle": componentes,
-            "ingredientes_usados": usados,
-            "pasos": pasos,
-        })
-
     else:
-        # Almuerzo: acepta proteínas de almuerzo y, si no hay, huevos/queso como proteína alternativa
         proteinas = _dedup(prot_alm + prot_des)
         principales = _dedup(proteinas + cereales_nombres + verduras_nombres)
         if not principales:
             return []
-
         usados = _dedup(principales + frutas_nombres[:1] + lacteos_nombres[:1] + condimentos_nombres)
-        if proteinas and cereales_nombres:
-            titulo = f"Sugerencia IA: Almuerzo escolar de {proteinas[0]} con {cereales_nombres[0]} adaptado al inventario"
-        elif proteinas:
-            titulo = f"Sugerencia IA: Plato proteico escolar de {proteinas[0]} adaptado al inventario"
-        else:
-            titulo = f"Sugerencia IA: Preparación de almuerzo con {' y '.join(principales[:2])} adaptada al inventario"
-
         componentes = {
             "Bebida con leche": ", ".join(lacteos_nombres) if lacteos_nombres else "Agua potable",
             "Alimento proteico": ", ".join(proteinas) if proteinas else "—",
@@ -872,19 +1087,54 @@ def construir_sugerencias_adaptadas_al_inventario(
             "Verdura / Fruta": ", ".join(verduras_nombres + frutas_nombres) if (verduras_nombres or frutas_nombres) else "—",
             "Agua": "Agua potable tratada",
         }
-        pasos = [
-            f"Alistar y pesar los ingredientes disponibles con stock suficiente para {ninos_presentes} almuerzos: {', '.join(usados)}.",
-            f"Realizar la cocción completa de {', '.join(principales[:3])} cuidando higiene y temperatura de inocuidad.",
-            "Servir las raciones calientes y homogéneas de acuerdo con los gramajes PAE.",
-        ]
-        sugerencias.append({
-            "nombre_plato": titulo,
-            "componentes_detalle": componentes,
-            "ingredientes_usados": usados,
-            "pasos": pasos,
-        })
 
+    pasos = [
+        f"Alistar y pesar las cantidades exactas para {ninos_presentes} raciones escolares con: {', '.join(usados)}.",
+        *pasos_base,
+    ]
+    sugerencias.append({
+        "nombre_plato": titulo,
+        "componentes_detalle": componentes,
+        "ingredientes_usados": usados,
+        "pasos": pasos,
+    })
     return sugerencias
+
+
+def construir_sugerencias_referencia_colombianas(
+    seccion_nombre: str,
+    mapa_inventario: dict,
+    ninos_presentes: int,
+) -> list[dict]:
+    """
+    Cuando el inventario NO alcanza para los `ninos_presentes` (o está agotado), selecciona
+    1 o 2 recetas tradicionales colombianas de referencia priorizando las que más coinciden
+    con los productos registrados en la sede, para que el usuario vea claramente qué ingredientes
+    están en 'Bajo monto / Insuficiente' o 'No hay' (agotados).
+    """
+    plantillas = PLANTILLAS_INNOVADORAS_PAE.get(seccion_nombre, PLANTILLAS_INNOVADORAS_PAE["Desayuno"])
+
+    puntuadas = []
+    for p in plantillas:
+        coincidencias = 0
+        for ing_req in p["ingredientes_clave"]:
+            match = buscar_en_mapa_inventario(ing_req, mapa_inventario)
+            if match:
+                coincidencias += 2 if Decimal(str(match.get("cantidad_actual") or 0)) > 0 else 1
+        puntuadas.append((coincidencias, p))
+
+    puntuadas.sort(key=lambda par: par[0], reverse=True)
+    seleccionadas = [p for _, p in puntuadas[:2]]
+
+    return [
+        {
+            "nombre_plato": f"Sugerencia IA: {p['nombre']}",
+            "componentes_detalle": p["componentes_detalle"],
+            "ingredientes_usados": list(p["ingredientes_clave"]),
+            "pasos": p["pasos"],
+        }
+        for p in seleccionadas
+    ]
 
 
 def convertir_a_unidad_mayor(cantidad: Decimal, unidad: str) -> tuple[Decimal, str]:
@@ -917,140 +1167,172 @@ def obtener_nombre_seccion(id_seccion: int) -> str:
 
 
 # ==============================================================================
-# MOTOR DETERMINÍSTICO DE PROPUESTAS INNOVADORAS POR MOMENTO (FALLBACK INTELIGENTE)
+# MOTOR DETERMINÍSTICO DE RECETAS COLOMBIANAS PAE POR MOMENTO (FALLBACK INTELIGENTE)
 # ==============================================================================
 PLANTILLAS_INNOVADORAS_PAE = {
     "Desayuno": [
         {
-            "nombre": "Huevos campesinos al gratín con arepa tostada y chocolate en leche",
+            "nombre": "Calentado escolar paisa de arroz y lentejas con huevos en hogao, arepa asada y chocolate en leche",
             "componentes_detalle": {
-                "Bebida con leche": "Chocolate caliente en leche",
-                "Alimento proteico": "Huevos campesinos con tomate y queso",
-                "Cereal acompañante": "Arepa de maíz tostada",
-                "Fruta": "Fruta fresca de temporada",
+                "Bebida con leche": "Chocolate santafereño espumoso en leche",
+                "Alimento proteico": "Huevos revueltos con hogao criollo y lentejas",
+                "Cereal acompañante": "Calentado de arroz blanco con arepa de maíz asada",
+                "Fruta": "Fruta fresca colombiana de temporada",
                 "Agua": "Agua potable tratada",
             },
-            "ingredientes_clave": ["Huevos", "Tomate", "Cebolla", "Queso", "Harina de maíz", "Chocolate", "Leche líquida", "Aceite vegetal", "Sal"],
+            "ingredientes_clave": ["Arroz", "Lentejas", "Huevos", "Tomate", "Cebolla", "Harina de maíz", "Chocolate", "Leche líquida", "Aceite vegetal", "Sal"],
             "pasos": [
-                "Preparar el chocolate espumoso en leche líquida caliente.",
-                "Batir los huevos y sofreír con tomate maduro, cebolla picada y cubitos de queso.",
-                "Asar las arepas de maíz en plancha limpia y servir recién tostadas con agua potable.",
+                "Preparar el chocolate santafereño batido en leche líquida caliente.",
+                "Elaborar un hogao suave con tomate chonto, cebolla larga y poco aceite; mezclar con el arroz y las lentejas tiernas para formar el calentado.",
+                "Cocinar completamente los huevos revueltos, asar la arepa de maíz en plancha limpia y servir todo caliente.",
             ],
         },
         {
-            "nombre": "Huevos revueltos a la huerta con porción de arroz blanco y colada de avena",
+            "nombre": "Huevos campesinos con hogao criollo y queso campesino, arepa boyacense asada y avena tibia con canela",
             "componentes_detalle": {
-                "Bebida con leche": "Colada de avena tibia",
-                "Alimento proteico": "Huevos revueltos con zanahoria rallada",
-                "Cereal acompañante": "Arroz blanco ligero",
-                "Fruta": "Banano",
+                "Bebida con leche": "Avena colombiana tibia con leche y canela",
+                "Alimento proteico": "Huevos en hogao criollo con queso campesino",
+                "Cereal acompañante": "Arepa de maíz asada en plancha",
+                "Fruta": "Banano criollo",
                 "Agua": "Agua potable tratada",
             },
-            "ingredientes_clave": ["Huevos", "Zanahoria", "Arroz", "Avena", "Leche líquida", "Banano", "Aceite vegetal", "Sal"],
+            "ingredientes_clave": ["Huevos", "Tomate", "Cebolla", "Queso", "Harina de maíz", "Avena", "Leche líquida", "Banano", "Aceite vegetal", "Sal"],
             "pasos": [
-                "Cocinar la avena en leche líquida con canela y azúcar suave.",
-                "Saltear la zanahoria rallada finamente e integrar a los huevos revueltos bien cocidos.",
-                "Servir acompañado de una porción moderada de arroz blanco y banano fresco.",
+                "Cocinar la avena en leche líquida con astilla de canela y dulzor moderado hasta espesar suavemente.",
+                "Preparar el hogao de tomate y cebolla, agregar los huevos batidos y cubitos de queso campesino hasta cocción completa.",
+                "Asar las arepas de maíz hasta dorar y servir con el banano fresco lavado.",
             ],
         },
         {
-            "nombre": "Tortilla escolar dorada de huevo y queso con masitas de maíz y leche tibia",
+            "nombre": "Caldo escolar santafereño de papa con huevo pochado, cilantro, arepa de maíz y leche tibia",
             "componentes_detalle": {
-                "Bebida con leche": "Leche líquida tibia con panela o cocoa",
-                "Alimento proteico": "Tortilla de huevo y queso",
-                "Cereal acompañante": "Masitas horneadas de maíz",
-                "Fruta": "Mandarina",
+                "Bebida con leche": "Leche líquida tibia pasteurizada",
+                "Alimento proteico": "Huevo cocido en caldo santafereño",
+                "Cereal acompañante": "Papa sabanera en caldo con arepa de maíz",
+                "Fruta": "Mandarina fresca",
                 "Agua": "Agua potable tratada",
             },
-            "ingredientes_clave": ["Huevos", "Queso", "Harina de maíz", "Leche líquida", "Mandarina", "Aceite vegetal", "Sal"],
+            "ingredientes_clave": ["Papa", "Huevos", "Cebolla", "Cilantro", "Harina de maíz", "Leche líquida", "Mandarina", "Sal"],
             "pasos": [
-                "Servir la leche líquida pasteurizada tibia.",
-                "Elaborar las tortillas de huevo con queso campesino rallado hasta dorar por ambos lados.",
-                "Hornear las masitas de maíz y acompañar con mandarina limpia.",
+                "Hervir las papas peladas en agua con cebolla larga y sal moderada hasta que estén blandas.",
+                "Incorporar los huevos cuidadosamente y cocinar hasta lograr cocción completa, finalizando con cilantro fresco picado.",
+                "Acompañar con arepa de maíz asada, vaso de leche tibia y mandarina limpia.",
             ],
         },
     ],
     "Almuerzo": [
         {
-            "nombre": "Guiso dorado de pollo con arveja y zanahoria, arroz parbolizado y ensalada",
+            "nombre": "Sudado criollo colombiano de pollo con papa, yuca y hogao, arroz blanco y ensalada de zanahoria",
             "componentes_detalle": {
-                "Bebida con leche": "Jugo de fruta en leche líquida",
-                "Alimento proteico": "Pechuga de pollo en guiso suave de verduras",
-                "Cereal acompañante": "Arroz con cilantro",
-                "Fruta": "Ensalada de zanahoria y tomate",
+                "Bebida con leche": "Jugo natural de fruta en leche líquida",
+                "Alimento proteico": "Pollo sudado criollo en hogao con papa y yuca",
+                "Cereal acompañante": "Arroz blanco tradicional colombiano",
+                "Verdura / Fruta": "Ensalada fresca de zanahoria rallada y tomate",
                 "Agua": "Agua potable tratada",
             },
-            "ingredientes_clave": ["Pollo", "Zanahoria", "Tomate", "Cebolla", "Arroz", "Leche líquida", "Aceite vegetal", "Sal"],
+            "ingredientes_clave": ["Pollo", "Papa", "Yuca", "Tomate", "Cebolla", "Cilantro", "Arroz", "Zanahoria", "Leche líquida", "Aceite vegetal", "Sal"],
             "pasos": [
-                "Cocinar el pollo en julianas con guiso casero de tomate, cebolla y zanahoria.",
-                "Preparar el arroz blanco con ajo y un toque de cilantro.",
-                "Servir con jugo de fruta en leche líquida y ensalada fresca.",
+                "Sofreír el hogao criollo con tomate chonto, cebolla larga y ajo; dorar suavemente el pollo e incorporar papa y yuca hasta ablandar.",
+                "Preparar el arroz blanco tradicional suelto y aromatizado con ajo y poca sal.",
+                "Finalizar el sudado con cilantro fresco picado y servir caliente con ensalada de zanahoria y jugo en leche.",
             ],
         },
         {
-            "nombre": "Potaje escolar de lentejas con trocitos de carne, arroz blanco y papas al vapor",
+            "nombre": "Arroz campesino atollado escolar con pollo desmechado, arveja, zanahoria y plátano maduro",
             "componentes_detalle": {
-                "Bebida con leche": "Refresco de avena fría",
-                "Alimento proteico": "Potaje de lentejas con carne magra",
-                "Cereal acompañante": "Arroz blanco",
-                "Fruta": "Papaya picada",
+                "Bebida con leche": "Sorbete colombiano de fruta en leche",
+                "Alimento proteico": "Pollo desmechado guisado en hogao",
+                "Cereal acompañante": "Arroz campesino con verduras y tajadas de plátano",
+                "Verdura / Fruta": "Zanahoria y arvejas tiernas",
                 "Agua": "Agua potable tratada",
             },
-            "ingredientes_clave": ["Carne de res", "Lentejas", "Papa", "Arroz", "Avena", "Leche líquida", "Tomate", "Cebolla", "Aceite vegetal", "Sal"],
+            "ingredientes_clave": ["Pollo", "Arroz", "Zanahoria", "Arvejas", "Tomate", "Cebolla", "Plátano", "Leche líquida", "Aceite vegetal", "Sal"],
             "pasos": [
-                "Remojar y cocinar las lentejas con dados de carne magra, papa y guiso aromático.",
-                "Preparar el arroz blanco tradicional.",
-                "Servir con refresco de avena en leche líquida y porción de papaya.",
+                "Cocinar la pechuga de pollo en caldo aromático, desmechar y guisar con hogao de tomate y cebolla.",
+                "Cocinar el arroz en el caldo del pollo junto con zanahoria en cubitos y arvejas tiernas hasta quedar jugoso.",
+                "Integrar el pollo desmechado y servir con plátano cocido o asado y bebida en leche.",
             ],
         },
         {
-            "nombre": "Pasta a la jardinera con pollo desmechado, salsa de tomate natural y fruta",
+            "nombre": "Frijolada antioqueña escolar con carne molida en hogao, arroz blanco, plátano y avena fría",
             "componentes_detalle": {
-                "Bebida con leche": "Bebida láctea de fruta",
-                "Alimento proteico": "Pollo desmechado en salsa de tomate natural",
-                "Cereal acompañante": "Pasta corta",
-                "Fruta": "Mango fresco",
+                "Bebida con leche": "Refresco colombiano de avena fría",
+                "Alimento proteico": "Fríjoles antioqueños calados con carne molida en hogao",
+                "Cereal acompañante": "Arroz blanco tradicional y plátano cocido",
+                "Verdura / Fruta": "Papaya fresca en dados",
                 "Agua": "Agua potable tratada",
             },
-            "ingredientes_clave": ["Pollo", "Pasta", "Tomate", "Cebolla", "Zanahoria", "Leche líquida", "Mango", "Aceite vegetal", "Sal"],
+            "ingredientes_clave": ["Frijoles", "Carne molida", "Plátano", "Arroz", "Tomate", "Cebolla", "Avena", "Leche líquida", "Aceite vegetal", "Sal"],
             "pasos": [
-                "Cocinar la pechuga de pollo y desmechar.",
-                "Elaborar una salsa de tomate casera con zanahoria y cebolla e incorporar el pollo y la pasta.",
-                "Acompañar con mango porcionado y bebida láctea.",
+                "Remojar y cocinar los fríjoles con plátano picado y zanahoria hasta espesar el caldo al estilo antioqueño.",
+                "Preparar la carne molida magra con hogao criollo de tomate y cebolla hasta cocción completa.",
+                "Servir los fríjoles con arroz blanco caliente, carne en hogao y refresco frío de avena en leche.",
+            ],
+        },
+        {
+            "nombre": "Ajiaco santafereño escolar de pollo con papa, maíz tierno, arroz blanco y ensalada",
+            "componentes_detalle": {
+                "Bebida con leche": "Bebida láctea o jugo natural",
+                "Alimento proteico": "Pollo desmechado en caldo suave de ajiaco",
+                "Cereal acompañante": "Papas en ajiaco y porción de arroz blanco",
+                "Verdura / Fruta": "Maíz tierno y zanahoria",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Pollo", "Papa", "Maíz", "Cebolla", "Cilantro", "Arroz", "Zanahoria", "Sal"],
+            "pasos": [
+                "Cocinar el pollo con cebolla larga, ajo y cilantro; retirar, desmechar y reservar el caldo.",
+                "Agregar al caldo las papas en rodajas y el maíz tierno hasta que la papa espese naturalmente la sopa.",
+                "Incorporar el pollo desmechado y servir caliente acompañado de arroz blanco y agua potable.",
             ],
         },
     ],
     "Merienda": [
         {
-            "nombre": "Colada tibia de fécula de maíz en leche con galletas integrales y fruta",
+            "nombre": "Mazamorra escolar de maíz en leche con pan de queso y banano criollo",
             "componentes_detalle": {
-                "Bebida con leche": "Colada de maizena en leche",
+                "Bebida con leche": "Colada / mazamorra suave de maíz en leche",
                 "Alimento proteico": "—",
-                "Cereal acompañante": "Galletas escolares",
-                "Fruta": "Manzana fresca",
+                "Cereal acompañante": "Pan de queso o almojábana escolar",
+                "Fruta": "Banano criollo",
                 "Agua": "Agua potable tratada",
             },
-            "ingredientes_clave": ["Leche líquida", "Harina de maíz", "Azúcar", "Galleta", "Manzana"],
+            "ingredientes_clave": ["Leche líquida", "Harina de maíz", "Azúcar", "Pan de queso", "Banano"],
             "pasos": [
-                "Hervir la leche líquida con fécula o maizena y azúcar suave hasta espesar.",
-                "Entregar con porción individual de galletas.",
-                "Acompañar con manzana desinfectada.",
+                "Hervir la leche líquida con harina o fécula de maíz y dulzor suave hasta obtener textura cremosa tradicional.",
+                "Servir tibia acompañada de pan de queso horneado.",
+                "Entregar con banano criollo lavado e individual.",
             ],
         },
         {
-            "nombre": "Yogurt con trocitos de papaya fresca y arepitas dulces de maíz",
+            "nombre": "Avena fría vallecaucana con canela, arepitas dulces de maíz y dados de papaya fresca",
             "componentes_detalle": {
-                "Bebida con leche": "Yogurt de frutas",
+                "Bebida con leche": "Avena fría colombiana con canela",
                 "Alimento proteico": "—",
-                "Cereal acompañante": "Arepitas dulces horneadas",
-                "Fruta": "Papaya picada",
+                "Cereal acompañante": "Arepitas dulces de maíz asadas",
+                "Fruta": "Papaya fresca en dados",
                 "Agua": "Agua potable tratada",
             },
-            "ingredientes_clave": ["Yogurt", "Papaya", "Harina de maíz", "Leche líquida", "Azúcar"],
+            "ingredientes_clave": ["Avena", "Leche líquida", "Canela", "Azúcar", "Harina de maíz", "Papaya"],
             "pasos": [
-                "Servir el yogurt refrigerado.",
-                "Asar las arepitas dulces de maíz en plancha limpia.",
-                "Servir con dados de papaya fresca.",
+                "Cocinar la avena en leche líquida con astilla de canela y azúcar suave, licuar y refrigerar al estilo vallecaucano.",
+                "Asar arepitas delgadas de maíz en plancha limpia.",
+                "Servir con dados frescos de papaya desinfectada.",
+            ],
+        },
+        {
+            "nombre": "Yogurt escolar con mango colombiano fresco y galletas integrales",
+            "componentes_detalle": {
+                "Bebida con leche": "Yogurt frío con probióticos",
+                "Alimento proteico": "—",
+                "Cereal acompañante": "Galletas escolares",
+                "Fruta": "Mango fresco colombiano",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Yogurt", "Mango", "Galleta"],
+            "pasos": [
+                "Servir el yogurt frío respetando la cadena de refrigeración.",
+                "Lavar, desinfectar y porcionar el mango colombiano fresco en cubos.",
+                "Entregar acompañado de galletas escolares individuales.",
             ],
         },
     ],
@@ -1063,7 +1345,7 @@ def generar_con_openai(
     inventario_nombres: list[str],
     preferencia: str,
 ) -> list[dict] | None:
-    """Invoca la API de OpenAI para generar recetas innovadoras y coherentes."""
+    """Invoca la API de OpenAI para generar recetas de gastronomía colombiana coherentes con el PAE."""
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         return None
@@ -1080,39 +1362,45 @@ def generar_con_openai(
         ejemplos_str = "\n".join(ejemplos_base[:8])
 
         prompt_sistema = (
-            "Eres un nutricionista experto y chef del Programa de Alimentación Escolar (PAE) en Colombia. "
-            "Tu misión es proponer menús escolares saludables, nutritivos, viables en cocinas institucionales "
-            "y estrictamente coherentes con el momento del día solicitado."
+            "Eres un nutricionista experto y chef de gastronomía tradicional colombiana del Programa de Alimentación "
+            "Escolar (PAE) en Colombia. Tu misión es proponer menús escolares auténticamente colombianos (como calentado "
+            "escolar, huevos en hogao criollo, arepas de maíz, caldo santafereño, sudado criollo, arroz campesino "
+            "atollado, frijolada antioqueña, ajiaco santafereño, avena vallecaucana con canela, mazamorra o colada en "
+            "leche), saludables, nutritivos, viables en cocinas escolares y estrictamente coherentes con el momento del día."
         )
 
         reglas_momento = ""
         if seccion_nombre == "Desayuno":
             reglas_momento = (
-                "REGLA OBLIGATORIA PARA DESAYUNO: Debe ser una comida matutina ligera y nutritiva basada en: "
-                "Huevos (pericos, revueltos, rancheros, en torta), quesos, arepas, masas, avena, chocolate en leche, "
-                "café con leche, porción ligera de arroz o pan, y fruta. "
+                "REGLA OBLIGATORIA PARA DESAYUNO COLOMBIANO: Debe ser una comida matutina tradicional colombiana, "
+                "ligera y nutritiva basada en: Huevos (en hogao criollo, campesinos, revueltos, en caldo de papa), "
+                "queso campesino, arepas de maíz, calentado escolar ligero, avena tibia con canela, chocolate "
+                "santafereño en leche o leche tibia, y fruta tropical colombiana. "
                 "ESTÁ ESTRICTAMENTE PROHIBIDO generar platos pesados de almuerzo como carnes sudadas, carne asada, "
-                "pollo asado/entero, frijoles o sancochos pesados."
+                "pollo asado/entero, frijoladas o sancochos pesados."
             )
         elif seccion_nombre == "Merienda":
             reglas_momento = (
-                "REGLA OBLIGATORIA PARA MERIENDA: Debe ser un refrigerio complementario ligero: "
-                "Bebida láctea (yogurt, leche, colada, avena) + Cereal ligero (galleta, torta, pan, masita) + Fruta fresca."
+                "REGLA OBLIGATORIA PARA MERIENDA COLOMBIANA (MEDIA MAÑANA / ONCES): Debe ser un refrigerio típico "
+                "colombiano ligero: Bebida láctea (avena fría con canela, mazamorra/colada de maíz en leche, yogurt, "
+                "leche) + Cereal tradicional (pan de queso, almojábana, arepitas dulces, galleta) + Fruta fresca "
+                "colombiana (banano, mango, papaya, guayaba, mandarina)."
             )
         else:
             reglas_momento = (
-                "REGLA OBLIGATORIA PARA ALMUERZO: Debe ser un plato fuerte completo compuesto por: "
-                "Alimento proteico (pollo, carne, cerdo, pescado, huevo) + Cereal (arroz, pasta) + "
-                "Leguminosa o verdura + Acompañante + Jugo o agua."
+                "REGLA OBLIGATORIA PARA ALMUERZO COLOMBIANO: Debe ser un almuerzo casero colombiano balanceado: "
+                "Alimento proteico en preparación criolla (sudado de pollo, carne en hogao, frijolada, lentejas "
+                "guisadas, ajiaco escolar) + Cereal/tubérculo (arroz blanco o campesino, papa, yuca, plátano) + "
+                "Verdura/ensalada + Bebida natural o en leche y agua potable."
             )
 
         prompt_usuario = f"""
-Genera 1 o 2 propuestas de preparaciones escolares para el momento: **{seccion_nombre}**.
+Genera 1 o 2 propuestas de recetas auténticamente de **gastronomía colombiana** para el momento: **{seccion_nombre}**.
 Número de niños beneficiarios: {ninos_presentes} niños de Primaria.
 Ingredientes REALES con stock suficiente en el inventario de la sede escolar:
 {", ".join(inventario_nombres)}
 
-Preferencia adicional: {preferencia if preferencia else "Sin preferencia específica"}
+Preferencia adicional: {preferencia if preferencia else "Cocina casera tradicional colombiana PAE"}
 
 {reglas_momento}
 
@@ -1121,17 +1409,17 @@ REGLA CRÍTICA DE INVENTARIO REAL:
 - **ESTÁ PROHIBIDO** agregar ingredientes que no estén en esa lista (ni siquiera leche, fruta, queso, tomate, sal o aceite si no aparecen listados).
 - Si con los ingredientes listados no es posible preparar una comida coherente para {seccion_nombre}, devuelve `"sugerencias": []`.
 
-REGLA DE ORIGINALIDAD:
+REGLA DE ORIGINALIDAD Y RAÍZ COLOMBIANA:
 Los siguientes menús ya están formalmente registrados en el ciclo oficial del PAE para este momento:
 {ejemplos_str}
-Tus propuestas deben inspirarse en el balance del PAE, pero **NO deben repetir ninguno de los anteriores**.
-Deben ser preparaciones NUEVAS, DIFERENTES, apetitosas y viables con lo disponible.
+Tus propuestas deben inspirarse en la cocina tradicional colombiana y en el balance del PAE, pero **NO deben repetir ninguno de los anteriores**.
+Usa nombres y técnicas propias de la cocina colombiana (hogao criollo, sudado, calentado, ajiaco, avena con canela, arepa asada, etc.).
 
 Responde ÚNICAMENTE un objeto JSON válido con la siguiente estructura:
 {{
   "sugerencias": [
     {{
-      "nombre_plato": "Nombre apetitoso de la preparación",
+      "nombre_plato": "Nombre tradicional colombiano apetitoso de la preparación",
       "componentes_detalle": {{
         "Bebida con leche": "...",
         "Alimento proteico": "...",
@@ -1170,24 +1458,37 @@ Responde ÚNICAMENTE un objeto JSON válido con la siguiente estructura:
 
 
 # ==============================================================================
-# ENDPOINT PRINCIPAL: SUGERENCIAS DE RECETAS CON IA E IMPACTO EN INVENTARIO
+# ENDPOINT PRINCIPAL: SUGERENCIAS DE RECETAS COLOMBIANAS CON IA, STOCK REAL E IMAGEN
 # ==============================================================================
 @api_view(["POST", "GET"])
 @permission_classes([AllowAny])
 def sugerencias_recetas_ia(request):
     """
     POST /api/ia/sugerencias-recetas/
-    Genera menús escolares innovadores coherentes con el momento del día (Desayuno, Almuerzo, Merienda),
-    basados en el inventario real de la sede, sin repetir los 20 menús base del PAE,
-    y calcula el consumo total y descuento proyectado para N niños de primaria.
+    Genera menús escolares de gastronomía colombiana coherentes con el momento del día
+    (Desayuno, Almuerzo, Merienda), valida estrictamente el inventario real de la sede
+    (reportando Disponible, Bajo monto / stock_minimo, Insuficiente y Agotado / No hay),
+    y genera una imagen representativa de la receta guardada en Cloudinary.
     """
     data = request.data if request.method == "POST" else request.query_params
 
-    # Parámetros recibidos
+    # Parámetros recibidos (soporta alias comunes del frontend)
     raw_sede = data.get("id_sede") or data.get("sede")
-    raw_ninos = data.get("ninos_presentes") or data.get("ninos") or 100
+    raw_ninos = (
+        data.get("ninos_presentes")
+        or data.get("estudiantes")
+        or data.get("cantidad_estudiantes")
+        or data.get("ninos")
+        or 100
+    )
     raw_seccion = data.get("id_seccion") or data.get("seccion") or 1
     preferencia = str(data.get("preferencia") or "").strip()
+
+    raw_gen_img = data.get("generar_imagen", True)
+    if isinstance(raw_gen_img, bool):
+        generar_imagen = raw_gen_img
+    else:
+        generar_imagen = str(raw_gen_img).strip().lower() not in {"0", "false", "no", "off"}
 
     try:
         ninos_presentes = max(1, int(raw_ninos))
@@ -1201,7 +1502,7 @@ def sugerencias_recetas_ia(request):
 
     seccion_nombre = obtener_nombre_seccion(id_seccion)
 
-    # 1. Obtener inventario REAL de la sede (sin simular stock inexistente)
+    # 1. Obtener inventario REAL de la sede (incluyendo stock en 0 y stock_minimo; NUNCA sumar otras sedes)
     id_sede_final = None
     if raw_sede:
         try:
@@ -1215,21 +1516,29 @@ def sugerencias_recetas_ia(request):
     items_inventario_db = []
     if id_sede_final:
         items_inventario_db = list(
-            Inventario.objects.filter(id_sede_id=id_sede_final, cantidad_actual__gt=0)
+            Inventario.objects.filter(id_sede_id=id_sede_final).order_by("id_inventario")
         )
     elif getattr(request.user, "id_institucion_id", None):
+        inst_id = request.user.id_institucion_id
         items_inventario_db = list(
             Inventario.objects.filter(
-                id_institucion_id=request.user.id_institucion_id,
-                cantidad_actual__gt=0,
+                id_institucion_id=inst_id,
+                id_sede__isnull=True,
+            ).order_by("id_inventario")
+        )
+        if not items_inventario_db:
+            primera_sede = (
+                Sede.objects.filter(id_institucion_id=inst_id, estado="ACTIVO")
+                .order_by("id_sede")
+                .first()
             )
-        )
-    else:
-        items_inventario_db = list(
-            Inventario.objects.filter(cantidad_actual__gt=0)[:100]
-        )
+            if primera_sede:
+                id_sede_final = primera_sede.id_sede
+                items_inventario_db = list(
+                    Inventario.objects.filter(id_sede_id=id_sede_final).order_by("id_inventario")
+                )
 
-    # Mapeo de inventario REAL: clave normalizada -> datos
+    # Mapeo de inventario REAL de la sede: clave normalizada -> datos (incluye stock_minimo y cantidad 0)
     mapa_inventario = {}
     if items_inventario_db:
         ids_ing = [it.id_ingrediente for it in items_inventario_db]
@@ -1250,27 +1559,36 @@ def sugerencias_recetas_ia(request):
             factor_base = u_obj.factor_conversion_base if u_obj else Decimal("1.0")
             tipo_mag = u_obj.tipo_magnitud if u_obj else None
             clave = normalizar_texto(nombre_ing)
+            cant_actual = Decimal(str(item.cantidad_actual or 0))
+            stock_min = Decimal(str(item.stock_minimo or 0))
 
-            # Si hubiera varios registros del mismo ingrediente en la consulta, sumar cantidades de la misma unidad
+            # Consolidar únicamente registros duplicados del mismo ingrediente dentro de la MISMA sede
             if clave in mapa_inventario and mapa_inventario[clave]["unidad"] == u_abrev:
-                mapa_inventario[clave]["cantidad_actual"] += Decimal(item.cantidad_actual)
+                mapa_inventario[clave]["cantidad_actual"] += cant_actual
+                mapa_inventario[clave]["stock_minimo"] = max(mapa_inventario[clave]["stock_minimo"], stock_min)
             elif clave not in mapa_inventario:
                 mapa_inventario[clave] = {
                     "id_inventario": item.id_inventario,
                     "id_ingrediente": item.id_ingrediente,
                     "nombre": nombre_ing,
-                    "cantidad_actual": Decimal(item.cantidad_actual),
+                    "cantidad_actual": cant_actual,
+                    "stock_minimo": stock_min,
                     "unidad": u_abrev,
                     "factor_conversion_base": factor_base,
                     "tipo_magnitud": tipo_mag,
                 }
 
-    # Evaluar qué alimentos realmente alcanzan para los `ninos_presentes`
-    ingredientes_suficientes, ingredientes_insuficientes, ninos_maximos_atendibles = (
-        evaluar_inventario_para_ninos(mapa_inventario, ninos_presentes, seccion_nombre)
-    )
+    # Evaluar TODOS los alimentos de la sede contra los `ninos_presentes`
+    (
+        ingredientes_suficientes,
+        ingredientes_bajo_stock,
+        ingredientes_insuficientes,
+        ingredientes_agotados,
+        ninos_maximos_atendibles,
+    ) = evaluar_inventario_para_ninos(mapa_inventario, ninos_presentes, seccion_nombre)
+
     hay_base_suficiente = tiene_alimentos_principales_para_seccion(
-        ingredientes_suficientes, seccion_nombre
+        ingredientes_suficientes, seccion_nombre, mapa_inventario=mapa_inventario
     )
 
     nombres_suficientes_prompt = [
@@ -1278,15 +1596,19 @@ def sugerencias_recetas_ia(request):
         for it in ingredientes_suficientes
     ]
 
-    # 2. Generar sugerencias SOLO si hay alimentos reales suficientes para los N niños
-    def _estructurar_y_validar(candidatas: list[dict]) -> list[dict]:
-        """Calcula gramajes/stock real y conserva ÚNICAMENTE recetas 100% viables con el inventario."""
-        viables = []
+    # 2. Estructurar y validar recetas con el estado REAL de cada ingrediente
+    def _estructurar_y_validar(candidatas: list[dict], solo_viables: bool = True) -> list[dict]:
+        """
+        Calcula gramajes, consumo proyectado y estado real de stock (DISPONIBLE, BAJO_STOCK,
+        INSUFICIENTE, AGOTADO) para cada ingrediente. Si `solo_viables=True`, conserva solo
+        las recetas donde todos los ingredientes alcanzan.
+        """
+        resultados = []
         for idx, s in enumerate(candidatas, start=1):
             nombre_plato = str(s.get("nombre_plato") or f"Sugerencia IA #{idx}").strip()
             nombre_lower = nombre_plato.lower().replace("sugerencia ia:", "").strip()
             if nombre_lower in NOMBRES_20_MENUS_BASE:
-                nombre_plato = f"Sugerencia IA Alternativa: {nombre_plato} Estilo Casero Escolar"
+                nombre_plato = f"Sugerencia IA Alternativa: {nombre_plato} al Estilo Criollo Colombiano"
 
             componentes_det = s.get("componentes_detalle", {})
             comp_resumen = ", ".join(f"{k}: {v}" for k, v in componentes_det.items() if v and v != "—")
@@ -1296,6 +1618,11 @@ def sugerencias_recetas_ia(request):
 
             lista_ingredientes_resultado = []
             todos_alcanzan = True
+            alguno_bajo_stock = False
+            alguno_agotado = False
+            alguno_insuficiente = False
+            faltantes_nombres = []
+            bajo_monto_nombres = []
 
             for ing_nombre in ing_usados:
                 ing_low = str(ing_nombre).strip().lower()
@@ -1307,7 +1634,8 @@ def sugerencias_recetas_ia(request):
 
                 item_inv = buscar_en_mapa_inventario(ing_nombre, mapa_inventario)
                 if item_inv:
-                    stock_disponible = item_inv["cantidad_actual"]
+                    stock_disponible = Decimal(str(item_inv["cantidad_actual"] or 0))
+                    stock_minimo = Decimal(str(item_inv.get("stock_minimo") or 0))
                     unidad_inv = item_inv["unidad"]
                     factor_inv = item_inv.get("factor_conversion_base")
                     magnitud_inv = item_inv.get("tipo_magnitud")
@@ -1316,56 +1644,127 @@ def sugerencias_recetas_ia(request):
                     cant_total_unidad_inv = convertir_cantidad_a_unidad_inventario(
                         cant_total, unidad_base, unidad_inv, factor_inv, magnitud_inv
                     )
-                    alcanza = stock_disponible >= cant_total_unidad_inv
+                    stock_en_base = convertir_stock_a_unidad_base(
+                        stock_disponible, unidad_inv, unidad_base, factor_inv, magnitud_inv
+                    )
+                    ninos_cubre = int(stock_en_base // cant_nino) if (cant_nino > 0 and stock_en_base > 0) else 0
                 else:
-                    # El ingrediente NO existe en el inventario real: stock 0 y NO alcanza
-                    stock_disponible = Decimal("0.0")
+                    # El ingrediente NO existe en el inventario real de esta sede -> AGOTADO ("No hay")
+                    stock_disponible = Decimal("0.00")
+                    stock_minimo = Decimal("0.00")
                     unidad_inv = unidad_base
                     id_ing = None
                     id_inv = None
                     cant_total_unidad_inv = cant_total.quantize(Decimal("0.01"))
-                    alcanza = False
+                    ninos_cubre = 0
 
-                stock_restante = max(Decimal("0.0"), stock_disponible - cant_total_unidad_inv)
+                estado_info = clasificar_estado_stock(stock_disponible, cant_total_unidad_inv, stock_minimo)
+                alcanza = estado_info["alcanza"] and (ninos_cubre >= ninos_presentes if item_inv else False)
+                estado_stock = estado_info["estado_stock"]
+                estado_label = estado_info["estado_stock_label"]
+                agotado = estado_info["agotado"]
+                stock_bajo = estado_info["stock_bajo"]
+
+                if not alcanza and estado_stock in {"DISPONIBLE", "BAJO_STOCK"}:
+                    estado_stock = "AGOTADO" if stock_disponible <= Decimal("0.00") else "INSUFICIENTE"
+                    estado_label = "No hay" if estado_stock == "AGOTADO" else "Bajo monto / Insuficiente"
+                    agotado = estado_stock == "AGOTADO"
+                    stock_bajo = True
+
+                nombre_final = item_inv["nombre"] if item_inv else ing_nombre
                 if not alcanza:
                     todos_alcanzan = False
+                    faltantes_nombres.append(nombre_final)
+                if agotado:
+                    alguno_agotado = True
+                if estado_stock == "INSUFICIENTE":
+                    alguno_insuficiente = True
+                if stock_bajo:
+                    alguno_bajo_stock = True
+                    if alcanza:
+                        bajo_monto_nombres.append(nombre_final)
 
                 cant_total_mostrada, unidad_mostrada = convertir_a_unidad_mayor(cant_total, unidad_base)
 
                 lista_ingredientes_resultado.append({
                     "id_ingrediente": id_ing,
                     "id_inventario": id_inv,
-                    "nombre_ingrediente": item_inv["nombre"] if item_inv else ing_nombre,
+                    "nombre_ingrediente": nombre_final,
                     "cantidad_por_nino": f"{cant_nino} {unidad_base}",
                     "cantidad_por_nino_valor": str(cant_nino),
                     "cantidad_total": f"{cant_total_mostrada} {unidad_mostrada}",
                     "cantidad_total_valor": str(cant_total_unidad_inv),
                     "unidad": unidad_inv,
                     "stock_actual": str(stock_disponible),
-                    "stock_restante_proyectado": str(stock_restante.quantize(Decimal("0.01"))),
+                    "stock_minimo": str(stock_minimo),
+                    "stock_restante_proyectado": str(estado_info["stock_restante_proyectado"]),
+                    "faltante": str(estado_info["faltante"]),
+                    "ninos_que_cubre": ninos_cubre,
                     "alcanza": alcanza,
+                    "agotado": agotado,
+                    "stock_bajo": stock_bajo,
+                    "estado_stock": estado_stock,
+                    "estado_stock_label": estado_label,
                 })
 
-            if todos_alcanzan and lista_ingredientes_resultado:
-                viables.append({
-                    "id_plato": None,
-                    "nombre_plato": nombre_plato,
-                    "id_seccion": id_seccion,
-                    "seccion_nombre": seccion_nombre,
-                    "componente": comp_resumen or "Preparación adaptada al inventario disponible",
-                    "componentes_detalle": componentes_det,
-                    "ninos_presentes": ninos_presentes,
-                    "ingredientes": lista_ingredientes_resultado,
-                    "pasos": s.get("pasos", [
-                        "Desinfectar superficies, utensilios e ingredientes en la cocina escolar.",
-                        "Realizar la cocción completa asegurando temperatura de inocuidad.",
-                        "Porcionar de manera homogénea según las cantidades calculadas para los niños.",
-                    ]),
-                    "origen": "SUGERENCIA_IA",
-                    "etiqueta": f"Sugerencia Inteligente para {seccion_nombre} ({ninos_presentes} raciones)",
-                    "viable_con_inventario": True,
-                })
-        return viables
+            if not lista_ingredientes_resultado:
+                continue
+            if solo_viables and not todos_alcanzan:
+                continue
+
+            if not todos_alcanzan:
+                if all(i["agotado"] for i in lista_ingredientes_resultado):
+                    estado_receta = "AGOTADO"
+                    estado_receta_label = "No hay stock"
+                else:
+                    estado_receta = "INSUFICIENTE"
+                    estado_receta_label = "Bajo monto / Insuficiente"
+                alerta_receta = (
+                    f"No alcanza el inventario para {ninos_presentes} estudiantes. "
+                    f"Ingredientes sin stock suficiente o agotados: {', '.join(faltantes_nombres[:5])}."
+                )
+            elif alguno_bajo_stock:
+                estado_receta = "BAJO_STOCK"
+                estado_receta_label = "Bajo monto"
+                alerta_receta = (
+                    f"Alcanza para {ninos_presentes} estudiantes, pero quedarán con bajo monto: "
+                    f"{', '.join(bajo_monto_nombres[:5])}."
+                )
+            else:
+                estado_receta = "DISPONIBLE"
+                estado_receta_label = "Disponible"
+                alerta_receta = None
+
+            resultados.append({
+                "id_plato": None,
+                "nombre_plato": nombre_plato,
+                "id_seccion": id_seccion,
+                "seccion_nombre": seccion_nombre,
+                "gastronomia": "Colombiana PAE",
+                "componente": comp_resumen or "Preparación tradicional colombiana adaptada al inventario",
+                "componentes_detalle": componentes_det,
+                "ninos_presentes": ninos_presentes,
+                "ingredientes": lista_ingredientes_resultado,
+                "pasos": s.get("pasos", [
+                    "Desinfectar superficies, utensilios e ingredientes en la cocina escolar.",
+                    "Realizar la cocción completa al estilo casero colombiano asegurando temperatura de inocuidad.",
+                    "Porcionar de manera homogénea según los gramajes PAE para los estudiantes.",
+                ]),
+                "origen": "SUGERENCIA_IA",
+                "etiqueta": f"Receta Colombiana IA para {seccion_nombre} ({ninos_presentes} raciones)",
+                "viable_con_inventario": todos_alcanzan,
+                "estado_inventario": estado_receta,
+                "estado_inventario_label": estado_receta_label,
+                "tiene_stock_bajo": alguno_bajo_stock,
+                "tiene_agotados": alguno_agotado,
+                "tiene_insuficientes": alguno_insuficiente,
+                "alerta_inventario": alerta_receta,
+                "imagen_url": None,
+                "imagen_cloudinary_public_id": None,
+                "imagen_origen": None,
+                "guardada_en_cloudinary": False,
+            })
+        return resultados
 
     sugerencias_estructuradas = []
     uso_openai = False
@@ -1378,7 +1777,7 @@ def sugerencias_recetas_ia(request):
             preferencia=preferencia,
         )
         if sugerencias_openai:
-            sugerencias_estructuradas = _estructurar_y_validar(sugerencias_openai)
+            sugerencias_estructuradas = _estructurar_y_validar(sugerencias_openai, solo_viables=True)
             uso_openai = bool(sugerencias_estructuradas)
 
         if not sugerencias_estructuradas:
@@ -1386,20 +1785,56 @@ def sugerencias_recetas_ia(request):
                 seccion_nombre=seccion_nombre,
                 ingredientes_suficientes=ingredientes_suficientes,
                 ninos_presentes=ninos_presentes,
+                mapa_inventario=mapa_inventario,
             )
-            sugerencias_estructuradas = _estructurar_y_validar(sugerencias_adaptadas)
+            sugerencias_estructuradas = _estructurar_y_validar(sugerencias_adaptadas, solo_viables=True)
 
     inventario_suficiente = bool(sugerencias_estructuradas)
 
-    # 3. Evaluar platos base PAE estipulados contra el inventario real
+    # Si NO hay inventario suficiente para los N estudiantes (bajo monto / agotado / muchos estudiantes),
+    # devolver recetas colombianas de referencia con viable_con_inventario=False y el estado REAL de cada ingrediente
+    # (alcanza=False, estado_stock="INSUFICIENTE"/"AGOTADO", faltante, stock_bajo) para que el usuario lo vea claro.
+    if not inventario_suficiente:
+        referencia_colombiana = construir_sugerencias_referencia_colombianas(
+            seccion_nombre=seccion_nombre,
+            mapa_inventario=mapa_inventario,
+            ninos_presentes=ninos_presentes,
+        )
+        sugerencias_estructuradas = _estructurar_y_validar(referencia_colombiana, solo_viables=False)
+
+    # 3. Generar imagen de la receta colombiana y guardarla en Cloudinary
+    if generar_imagen and sugerencias_estructuradas:
+        def _adjuntar_imagen(sug: dict) -> dict:
+            img_info = generar_y_subir_imagen_receta(
+                nombre_plato=sug["nombre_plato"],
+                seccion_nombre=seccion_nombre,
+                componentes_detalle=sug.get("componentes_detalle"),
+                ingredientes=sug.get("ingredientes"),
+            )
+            sug["imagen_url"] = img_info.get("imagen_url")
+            sug["imagen_cloudinary_public_id"] = img_info.get("imagen_cloudinary_public_id")
+            sug["imagen_origen"] = img_info.get("imagen_origen")
+            sug["guardada_en_cloudinary"] = bool(img_info.get("guardada_en_cloudinary"))
+            sug["imagen_prompt"] = img_info.get("imagen_prompt")
+            return sug
+
+        if len(sugerencias_estructuradas) == 1:
+            _adjuntar_imagen(sugerencias_estructuradas[0])
+        else:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                list(pool.map(_adjuntar_imagen, sugerencias_estructuradas))
+
+    # 4. Evaluar platos base PAE estipulados contra el inventario real
     mapa_suf_nombres = {normalizar_texto(it["nombre"]): it for it in ingredientes_suficientes}
     platos_base_pae = []
     for b in CATALOGO_20_MENUS_PAE:
         if b["seccion"].lower() == seccion_nombre.lower():
-            base_viable = bool(b["ingredientes"]) and all(
-                buscar_en_mapa_inventario(ing_b, mapa_suf_nombres) is not None
+            faltantes_base = [
+                ing_b
                 for ing_b in b["ingredientes"]
-            )
+                if buscar_en_mapa_inventario(ing_b, mapa_suf_nombres) is None
+            ]
+            base_viable = bool(b["ingredientes"]) and not faltantes_base
             platos_base_pae.append({
                 "id_plato": None,
                 "nombre_plato": b["nombre_plato"],
@@ -1408,39 +1843,70 @@ def sugerencias_recetas_ia(request):
                 "componente": f"{b['componentes']['bebida_leche']}, {b['componentes']['proteico']}, {b['componentes']['cereal']}",
                 "componentes_detalle": b["componentes"],
                 "ingredientes": b["ingredientes"],
+                "ingredientes_faltantes": faltantes_base,
                 "pasos": b["pasos"],
                 "origen": "PAE_ESTIPULADO",
                 "etiqueta": f"Menú Oficial PAE #{b['numeroMenu']}",
                 "viable_con_inventario": base_viable,
+                "estado_inventario": "DISPONIBLE" if base_viable else ("AGOTADO" if not mapa_inventario else "INSUFICIENTE"),
             })
 
-    todas_las_opciones = sugerencias_estructuradas + [
-        p for p in platos_base_pae if p["viable_con_inventario"]
-    ]
+    if inventario_suficiente:
+        todas_las_opciones = sugerencias_estructuradas + [
+            p for p in platos_base_pae if p["viable_con_inventario"]
+        ]
+    else:
+        todas_las_opciones = list(sugerencias_estructuradas)
+
+    tiene_stock_real_positivo = any(
+        Decimal(str(it.get("cantidad_actual") or 0)) > Decimal("0.00")
+        for it in mapa_inventario.values()
+    )
 
     if inventario_suficiente:
-        texto_resumen = (
-            f"Se generaron {len(sugerencias_estructuradas)} propuestas adaptadas al inventario real disponible "
-            f"para {seccion_nombre} ({ninos_presentes} niños de Primaria), garantizando que todos los ingredientes "
-            "alcanzan con el stock actual y sin repetir los menús oficiales del PAE."
-        )
-    elif not mapa_inventario:
+        if any(s.get("tiene_stock_bajo") for s in sugerencias_estructuradas) or ingredientes_bajo_stock:
+            estado_inventario_general = "BAJO_STOCK"
+            texto_resumen = (
+                f"Se generaron {len(sugerencias_estructuradas)} propuestas de gastronomía colombiana para "
+                f"{seccion_nombre} ({ninos_presentes} estudiantes), pero algunos ingredientes quedarán con "
+                "bajo monto (por debajo del stock mínimo) tras la preparación."
+            )
+        else:
+            estado_inventario_general = "DISPONIBLE"
+            texto_resumen = (
+                f"Se generaron {len(sugerencias_estructuradas)} propuestas de gastronomía colombiana adaptadas al "
+                f"inventario real disponible para {seccion_nombre} ({ninos_presentes} estudiantes), sin repetir "
+                "los menús oficiales del PAE."
+            )
+    elif not mapa_inventario or not tiene_stock_real_positivo:
+        estado_inventario_general = "AGOTADO"
         texto_resumen = (
             f"No hay alimentos disponibles en el inventario de esta sede. "
-            f"No es posible generar recetas de {seccion_nombre} para {ninos_presentes} niños "
+            f"No es posible preparar {seccion_nombre} para {ninos_presentes} estudiantes "
             "hasta que se registren existencias en bodega."
         )
     elif ninos_maximos_atendibles > 0 and ninos_maximos_atendibles < ninos_presentes:
+        estado_inventario_general = "INSUFICIENTE"
         texto_resumen = (
-            f"No hay alimentos suficientes en el inventario para preparar {seccion_nombre} para {ninos_presentes} niños. "
-            f"Con las existencias actuales solo alcanza para un máximo aproximado de {ninos_maximos_atendibles} niños. "
-            "Ajusta la cantidad de raciones o abastece los ingredientes insuficientes."
+            f"No hay alimentos suficientes (bajo monto / stock insuficiente) para preparar {seccion_nombre} "
+            f"para {ninos_presentes} estudiantes. Con las existencias actuales solo alcanza para un máximo "
+            f"aproximado de {ninos_maximos_atendibles} estudiantes. Ajusta las raciones o abastece los ingredientes faltantes."
         )
     else:
+        estado_inventario_general = "INSUFICIENTE"
         texto_resumen = (
-            f"No hay alimentos principales suficientes y coherentes en el inventario para preparar {seccion_nombre} "
-            f"para {ninos_presentes} niños. Verifica los ingredientes disponibles o registra nuevas existencias."
+            f"No hay alimentos principales suficientes y balanceados en el inventario para preparar {seccion_nombre} "
+            f"para {ninos_presentes} estudiantes. Revisa los productos agotados o con bajo monto en bodega."
         )
+
+    resumen_inventario = {
+        "estado_general": estado_inventario_general,
+        "total_productos_sede": len(mapa_inventario),
+        "total_disponibles": sum(1 for it in ingredientes_suficientes if it.get("estado_stock") == "DISPONIBLE"),
+        "total_bajo_stock": len(ingredientes_bajo_stock),
+        "total_insuficientes": sum(1 for it in ingredientes_insuficientes if not it.get("agotado")),
+        "total_agotados": len(ingredientes_agotados),
+    }
 
     # Sincronizar catálogo base en MongoDB Atlas si aplica
     try:
@@ -1460,13 +1926,16 @@ def sugerencias_recetas_ia(request):
             "motor_ia": (
                 "OpenAI GPT-4o-mini"
                 if uso_openai
-                else ("Motor PAE Determinístico" if inventario_suficiente else "Sin stock suficiente")
+                else ("Motor PAE Colombiano" if inventario_suficiente else "Sin stock suficiente")
             ),
             "inventario_suficiente": inventario_suficiente,
+            "estado_inventario_general": estado_inventario_general,
             "ninos_maximos_atendibles": ninos_maximos_atendibles,
             "total_sugerencias": len(sugerencias_estructuradas),
             "sugerencias": sugerencias_estructuradas,
+            "ingredientes_bajo_stock": ingredientes_bajo_stock,
             "ingredientes_insuficientes": ingredientes_insuficientes,
+            "ingredientes_agotados": ingredientes_agotados,
             "platos_base_pae_consultados": len(platos_base_pae),
         })
     except Exception as e:
@@ -1480,6 +1949,8 @@ def sugerencias_recetas_ia(request):
             "ninos_presentes": ninos_presentes,
             "id_sede": id_sede_final,
             "inventario_suficiente": inventario_suficiente,
+            "estado_inventario_general": estado_inventario_general,
+            "resumen_inventario": resumen_inventario,
             "ninos_maximos_atendibles": ninos_maximos_atendibles,
             "sugerencias": texto_resumen,
             "sugerencias_ia_estructuradas": sugerencias_estructuradas,
@@ -1488,18 +1959,87 @@ def sugerencias_recetas_ia(request):
                     "id_ingrediente": it["id_ingrediente"],
                     "nombre_ingrediente": it["nombre"],
                     "stock_actual": str(it["cantidad_actual"]),
+                    "stock_minimo": str(it.get("stock_minimo", Decimal("0.00"))),
+                    "stock_restante_proyectado": str(it.get("stock_restante_proyectado", Decimal("0.00"))),
                     "unidad": it["unidad"],
                     "ninos_que_cubre": it["ninos_que_cubre"],
+                    "stock_bajo": bool(it.get("stock_bajo")),
+                    "estado_stock": it.get("estado_stock", "DISPONIBLE"),
+                    "estado_stock_label": it.get("estado_stock_label", "Disponible"),
                 }
                 for it in ingredientes_suficientes
             ],
+            "ingredientes_bajo_stock": ingredientes_bajo_stock,
             "ingredientes_insuficientes": ingredientes_insuficientes,
+            "ingredientes_agotados": ingredientes_agotados,
             "platos_estipulados_pae": platos_base_pae,
             "todas_las_opciones": todas_las_opciones,
             "mongodb_atlas": {
                 "activo": bool(id_registro_mongo),
                 "id_registro_historial": id_registro_mongo,
             },
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+# ==============================================================================
+# ENDPOINT: GENERAR IMAGEN DE RECETA COLOMBIANA Y GUARDARLA EN CLOUDINARY
+# ==============================================================================
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def generar_imagen_receta_ia(request):
+    """
+    POST /api/ia/generar-imagen-receta/
+    Genera una imagen representativa de una receta colombiana sugerida por la IA y la guarda
+    en Cloudinary dentro de la carpeta `sirae_ia_recetas`.
+    """
+    data = request.data
+    nombre_plato = str(data.get("nombre_plato") or "").strip()
+    if not nombre_plato:
+        return Response(
+            {"error": "Debes enviar 'nombre_plato' para generar la imagen de la receta."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    raw_seccion = data.get("seccion") or data.get("id_seccion") or "Almuerzo"
+    if isinstance(raw_seccion, int) or str(raw_seccion).isdigit():
+        seccion_nombre = obtener_nombre_seccion(int(raw_seccion))
+    else:
+        seccion_nombre = str(raw_seccion).strip().capitalize()
+
+    componentes_detalle = data.get("componentes_detalle")
+    ingredientes = data.get("ingredientes") or data.get("ingredientes_usados")
+    forzar = str(data.get("forzar_regeneracion", False)).strip().lower() in {"1", "true", "si", "yes"}
+
+    resultado = generar_y_subir_imagen_receta(
+        nombre_plato=nombre_plato,
+        seccion_nombre=seccion_nombre,
+        componentes_detalle=componentes_detalle,
+        ingredientes=ingredientes,
+        forzar_regeneracion=forzar,
+    )
+
+    if not resultado.get("guardada_en_cloudinary"):
+        return Response(
+            {
+                "status": "warning",
+                "mensaje": (
+                    "No se pudo guardar la imagen en Cloudinary. Verifica CLOUDINARY_CLOUD_NAME, "
+                    "CLOUDINARY_API_KEY y CLOUDINARY_API_SECRET."
+                ),
+                **resultado,
+            },
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    return Response(
+        {
+            "status": "success",
+            "mensaje": "Imagen de la receta colombiana generada y guardada exitosamente en Cloudinary.",
+            "nombre_plato": nombre_plato,
+            "seccion": seccion_nombre,
+            **resultado,
         },
         status=status.HTTP_200_OK,
     )
