@@ -101,6 +101,12 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
 
     is_staff = models.BooleanField(default=False)
 
+    foto_perfil = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Imagen de perfil del usuario en formato base64 o URL."
+    )
+
     debe_cambiar_password = models.BooleanField(
         default=False,
         help_text="Indica si el usuario está obligado a cambiar su contraseña en el próximo inicio de sesión."

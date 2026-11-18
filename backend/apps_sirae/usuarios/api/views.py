@@ -514,6 +514,8 @@ def asegurar_columnas_criticas():
         "ALTER TABLE usuarios_usuario ADD COLUMN IF NOT EXISTS ultimo_intento_fallido TIMESTAMP WITH TIME ZONE;",
         "ALTER TABLE usuarios_usuario ADD COLUMN IF NOT EXISTS id_jornada_id INTEGER;",
         "ALTER TABLE usuarios_usuario ADD COLUMN IF NOT EXISTS debe_cambiar_password BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS foto_perfil TEXT;",
+        "ALTER TABLE usuarios_usuario ADD COLUMN IF NOT EXISTS foto_perfil TEXT;",
         """
         CREATE TABLE IF NOT EXISTS usuarios_intento_autenticacion (
             id BIGSERIAL PRIMARY KEY,

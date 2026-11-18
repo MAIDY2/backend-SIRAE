@@ -299,6 +299,7 @@ class UsuarioPerfilPropioSerializer(serializers.ModelSerializer):
             'id_sede',
             'sede_nombre',
             'instituciones_supervisor',
+            'foto_perfil',
             'is_active',
             'is_superuser',
             'debe_cambiar_password',
@@ -411,6 +412,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
             'instituciones_supervisor',
             'instituciones_ids',
             'password',
+            'foto_perfil',
             'is_active',
             'estado',
             'estado_display',
@@ -1302,6 +1304,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 'id_jornada': usuario.id_jornada_id,
                 'jornada_nombre': jornada_nombre,
                 'instituciones_supervisor': instituciones_sup,
+                'foto_perfil': getattr(usuario, 'foto_perfil', None),
                 'is_superuser': bool(usuario.is_superuser),
                 'debe_cambiar_password': bool(
                     getattr(usuario, 'debe_cambiar_password', False)
