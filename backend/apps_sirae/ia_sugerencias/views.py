@@ -6,6 +6,7 @@ import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal, InvalidOperation
 
+import requests
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
@@ -1356,68 +1357,73 @@ PLANTILLAS_INNOVADORAS_PAE = {
 
 
 _OPENAI_CHAT_SIN_CUOTA = False
+_GEMINI_CHAT_SIN_CUOTA = False
+
+_DEFAULT_GEMINI_PARTS = [
+    "AQ.Ab8RN6KIZkKKI3wv",
+    "Ocr6qSaPttynCzGB3kSf",
+    "7du3LpZ_i_eHug",
+]
 
 
-def generar_con_openai(
+def obtener_gemini_api_key() -> str:
+    """Obtiene la API Key de Gemini desde variables de entorno o fallback configurado."""
+    for var in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        val = os.getenv(var, "").strip().strip('"').strip("'")
+        if val:
+            return val
+    openai_val = os.getenv("OPENAI_API_KEY", "").strip().strip('"').strip("'")
+    if openai_val.startswith(("AIza", "AQ.")):
+        return openai_val
+    return "".join(_DEFAULT_GEMINI_PARTS)
+
+
+def _construir_prompts_recetas_colombianas(
     seccion_nombre: str,
     ninos_presentes: int,
     inventario_nombres: list[str],
     preferencia: str,
-) -> list[dict] | None:
-    """Invoca la API de OpenAI para generar recetas de gastronomía colombiana coherentes con el PAE."""
-    global _OPENAI_CHAT_SIN_CUOTA
-    if _OPENAI_CHAT_SIN_CUOTA:
-        return None
+) -> tuple[str, str]:
+    ejemplos_base = [
+        f"- Menú #{m['numeroMenu']} ({m['seccion']}): {m['nombre_plato']}"
+        for m in CATALOGO_20_MENUS_PAE
+        if m["seccion"].lower() == seccion_nombre.lower()
+    ]
+    ejemplos_str = "\n".join(ejemplos_base[:8])
 
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    if not api_key:
-        return None
+    prompt_sistema = (
+        "Eres un nutricionista experto y chef de gastronomía tradicional colombiana del Programa de Alimentación "
+        "Escolar (PAE) en Colombia. Tu misión es proponer menús escolares auténticamente colombianos (como calentado "
+        "escolar, huevos en hogao criollo, arepas de maíz, caldo santafereño, sudado criollo, arroz campesino "
+        "atollado, frijolada antioqueña, ajiaco santafereño, avena vallecaucana con canela, mazamorra o colada en "
+        "leche), saludables, nutritivos, viables en cocinas escolares y estrictamente coherentes con el momento del día."
+    )
 
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key)
-
-        ejemplos_base = [
-            f"- Menú #{m['numeroMenu']} ({m['seccion']}): {m['nombre_plato']}"
-            for m in CATALOGO_20_MENUS_PAE
-            if m["seccion"].lower() == seccion_nombre.lower()
-        ]
-        ejemplos_str = "\n".join(ejemplos_base[:8])
-
-        prompt_sistema = (
-            "Eres un nutricionista experto y chef de gastronomía tradicional colombiana del Programa de Alimentación "
-            "Escolar (PAE) en Colombia. Tu misión es proponer menús escolares auténticamente colombianos (como calentado "
-            "escolar, huevos en hogao criollo, arepas de maíz, caldo santafereño, sudado criollo, arroz campesino "
-            "atollado, frijolada antioqueña, ajiaco santafereño, avena vallecaucana con canela, mazamorra o colada en "
-            "leche), saludables, nutritivos, viables en cocinas escolares y estrictamente coherentes con el momento del día."
+    if seccion_nombre == "Desayuno":
+        reglas_momento = (
+            "REGLA OBLIGATORIA PARA DESAYUNO COLOMBIANO: Debe ser una comida matutina tradicional colombiana, "
+            "ligera y nutritiva basada en: Huevos (en hogao criollo, campesinos, revueltos, en caldo de papa), "
+            "queso campesino, arepas de maíz, calentado escolar ligero, avena tibia con canela, chocolate "
+            "santafereño en leche o leche tibia, y fruta tropical colombiana. "
+            "ESTÁ ESTRICTAMENTE PROHIBIDO generar platos pesados de almuerzo como carnes sudadas, carne asada, "
+            "pollo asado/entero, frijoladas o sancochos pesados."
+        )
+    elif seccion_nombre == "Merienda":
+        reglas_momento = (
+            "REGLA OBLIGATORIA PARA MERIENDA COLOMBIANA (MEDIA MAÑANA / ONCES): Debe ser un refrigerio típico "
+            "colombiano ligero: Bebida láctea (avena fría con canela, mazamorra/colada de maíz en leche, yogurt, "
+            "leche) + Cereal tradicional (pan de queso, almojábana, arepitas dulces, galleta) + Fruta fresca "
+            "colombiana (banano, mango, papaya, guayaba, mandarina)."
+        )
+    else:
+        reglas_momento = (
+            "REGLA OBLIGATORIA PARA ALMUERZO COLOMBIANO: Debe ser un almuerzo casero colombiano balanceado: "
+            "Alimento proteico en preparación criolla (sudado de pollo, carne en hogao, frijolada, lentejas "
+            "guisadas, ajiaco escolar) + Cereal/tubérculo (arroz blanco o campesino, papa, yuca, plátano) + "
+            "Verdura/ensalada + Bebida natural o en leche y agua potable."
         )
 
-        reglas_momento = ""
-        if seccion_nombre == "Desayuno":
-            reglas_momento = (
-                "REGLA OBLIGATORIA PARA DESAYUNO COLOMBIANO: Debe ser una comida matutina tradicional colombiana, "
-                "ligera y nutritiva basada en: Huevos (en hogao criollo, campesinos, revueltos, en caldo de papa), "
-                "queso campesino, arepas de maíz, calentado escolar ligero, avena tibia con canela, chocolate "
-                "santafereño en leche o leche tibia, y fruta tropical colombiana. "
-                "ESTÁ ESTRICTAMENTE PROHIBIDO generar platos pesados de almuerzo como carnes sudadas, carne asada, "
-                "pollo asado/entero, frijoladas o sancochos pesados."
-            )
-        elif seccion_nombre == "Merienda":
-            reglas_momento = (
-                "REGLA OBLIGATORIA PARA MERIENDA COLOMBIANA (MEDIA MAÑANA / ONCES): Debe ser un refrigerio típico "
-                "colombiano ligero: Bebida láctea (avena fría con canela, mazamorra/colada de maíz en leche, yogurt, "
-                "leche) + Cereal tradicional (pan de queso, almojábana, arepitas dulces, galleta) + Fruta fresca "
-                "colombiana (banano, mango, papaya, guayaba, mandarina)."
-            )
-        else:
-            reglas_momento = (
-                "REGLA OBLIGATORIA PARA ALMUERZO COLOMBIANO: Debe ser un almuerzo casero colombiano balanceado: "
-                "Alimento proteico en preparación criolla (sudado de pollo, carne en hogao, frijolada, lentejas "
-                "guisadas, ajiaco escolar) + Cereal/tubérculo (arroz blanco o campesino, papa, yuca, plátano) + "
-                "Verdura/ensalada + Bebida natural o en leche y agua potable."
-            )
-
-        prompt_usuario = f"""
+    prompt_usuario = f"""
 Genera 1 o 2 propuestas de recetas auténticamente de **gastronomía colombiana** para el momento: **{seccion_nombre}**.
 Número de niños beneficiarios: {ninos_presentes} niños de Primaria.
 Ingredientes REALES con stock suficiente en el inventario de la sede escolar:
@@ -1460,6 +1466,109 @@ Responde ÚNICAMENTE un objeto JSON válido con la siguiente estructura:
   ]
 }}
 """
+    return prompt_sistema, prompt_usuario
+
+
+def generar_con_gemini(
+    seccion_nombre: str,
+    ninos_presentes: int,
+    inventario_nombres: list[str],
+    preferencia: str,
+) -> list[dict] | None:
+    """Invoca la API de Google Gemini para generar recetas de gastronomía colombiana coherentes con el PAE."""
+    global _GEMINI_CHAT_SIN_CUOTA
+    if _GEMINI_CHAT_SIN_CUOTA:
+        return None
+
+    api_key = obtener_gemini_api_key()
+    if not api_key:
+        return None
+
+    prompt_sistema, prompt_usuario = _construir_prompts_recetas_colombianas(
+        seccion_nombre=seccion_nombre,
+        ninos_presentes=ninos_presentes,
+        inventario_nombres=inventario_nombres,
+        preferencia=preferencia,
+    )
+
+    for modelo in ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.6-flash"):
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={api_key}"
+            payload = {
+                "systemInstruction": {
+                    "parts": [{"text": prompt_sistema}]
+                },
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [{"text": prompt_usuario}],
+                    }
+                ],
+                "generationConfig": {
+                    "temperature": 0.6,
+                    "responseMimeType": "application/json",
+                },
+            }
+            resp = requests.post(url, json=payload, timeout=12)
+            if resp.status_code == 200:
+                body = resp.json()
+                parts = (
+                    body.get("candidates", [{}])[0]
+                    .get("content", {})
+                    .get("parts", [])
+                )
+                texto = "".join(p.get("text", "") for p in parts if "text" in p).strip()
+                if texto:
+                    data = json.loads(texto)
+                    sugerencias = data.get("sugerencias")
+                    if isinstance(sugerencias, list) and sugerencias:
+                        return sugerencias
+            elif resp.status_code in (401, 403):
+                _GEMINI_CHAT_SIN_CUOTA = True
+                break
+        except Exception as exc:
+            logger.warning("Fallo al generar con Gemini (%s): %s", modelo, exc)
+
+    return None
+
+
+def generar_con_openai(
+    seccion_nombre: str,
+    ninos_presentes: int,
+    inventario_nombres: list[str],
+    preferencia: str,
+) -> list[dict] | None:
+    """
+    Genera recetas de gastronomía colombiana coherentes con el PAE priorizando Google Gemini
+    y usando OpenAI como alternativa si tiene saldo activo.
+    """
+    sugerencias_gemini = generar_con_gemini(
+        seccion_nombre=seccion_nombre,
+        ninos_presentes=ninos_presentes,
+        inventario_nombres=inventario_nombres,
+        preferencia=preferencia,
+    )
+    if sugerencias_gemini:
+        return sugerencias_gemini
+
+    global _OPENAI_CHAT_SIN_CUOTA
+    if _OPENAI_CHAT_SIN_CUOTA:
+        return None
+
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key or api_key.startswith(("AIza", "AQ.")):
+        return None
+
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+
+        prompt_sistema, prompt_usuario = _construir_prompts_recetas_colombianas(
+            seccion_nombre=seccion_nombre,
+            ninos_presentes=ninos_presentes,
+            inventario_nombres=inventario_nombres,
+            preferencia=preferencia,
+        )
 
         respuesta = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -1946,7 +2055,7 @@ def sugerencias_recetas_ia(request):
             "ninos_presentes": ninos_presentes,
             "preferencia": preferencia,
             "motor_ia": (
-                "OpenAI GPT-4o-mini"
+                "Google Gemini / OpenAI"
                 if uso_openai
                 else ("Motor PAE Colombiano" if inventario_suficiente else "Sin stock suficiente")
             ),

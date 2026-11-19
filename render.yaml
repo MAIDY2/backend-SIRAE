@@ -60,6 +60,8 @@ services:
         sync: false
       - key: EMAIL_TIMEOUT
         value: "10"
+      - key: GEMINI_API_KEY
+        sync: false
       - key: OPENAI_API_KEY
         sync: false
       - key: MONGO_URI

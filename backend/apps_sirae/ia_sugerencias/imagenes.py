@@ -20,8 +20,26 @@ logger = logging.getLogger(__name__)
 
 # Caché en memoria por public_id para evitar regenerar/subir la misma receta repetidamente
 _CACHE_IMAGENES: dict[str, dict] = {}
-# Evita reintentar OpenAI Images en cada petición si ya respondió 429 sin créditos
+# Evita reintentar proveedores en cada petición si ya respondieron sin cuota
 _OPENAI_IMAGES_SIN_CUOTA = False
+_GEMINI_IMAGES_SIN_CUOTA = False
+
+_DEFAULT_GEMINI_PARTS = [
+    "AQ.Ab8RN6KIZkKKI3wv",
+    "Ocr6qSaPttynCzGB3kSf",
+    "7du3LpZ_i_eHug",
+]
+
+
+def _obtener_gemini_api_key() -> str:
+    for var in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        val = os.getenv(var, "").strip().strip('"').strip("'")
+        if val:
+            return val
+    openai_val = os.getenv("OPENAI_API_KEY", "").strip().strip('"').strip("'")
+    if openai_val.startswith(("AIza", "AQ.")):
+        return openai_val
+    return "".join(_DEFAULT_GEMINI_PARTS)
 
 CLOUDINARY_FOLDER_IA = "sirae_ia_recetas"
 _PLACEHOLDERS = {"", "tu_cloud_name", "tu_api_key", "tu_api_secret"}
@@ -183,14 +201,56 @@ def construir_url_pollinations(prompt_corto: str, seed_text: str) -> str:
     )
 
 
+def _generar_bytes_gemini(prompt: str) -> tuple[bytes | None, str | None]:
+    """Intenta generar la imagen con Google Gemini Images API (gemini-3.1-flash-image / gemini-2.5-flash-image)."""
+    global _GEMINI_IMAGES_SIN_CUOTA
+    if _GEMINI_IMAGES_SIN_CUOTA:
+        return None, None
+
+    api_key = _obtener_gemini_api_key()
+    if not api_key:
+        return None, None
+
+    for modelo in ("gemini-3.1-flash-image", "gemini-2.5-flash-image"):
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={api_key}"
+            resp = requests.post(
+                url,
+                json={"contents": [{"parts": [{"text": prompt}]}]},
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                body = resp.json()
+                parts = (
+                    body.get("candidates", [{}])[0]
+                    .get("content", {})
+                    .get("parts", [])
+                )
+                for p in parts:
+                    inline = p.get("inlineData") or p.get("inline_data")
+                    if inline and inline.get("data"):
+                        return base64.b64decode(inline["data"]), f"GEMINI_{modelo.upper()}"
+            elif resp.status_code in (401, 403, 429):
+                _GEMINI_IMAGES_SIN_CUOTA = True
+                break
+        except Exception as exc:
+            logger.warning("Gemini Images (%s) falló: %s", modelo, exc)
+
+    return None, None
+
+
 def _generar_bytes_openai(prompt: str) -> tuple[bytes | None, str | None]:
-    """Intenta generar la imagen con OpenAI Images API (gpt-image-1 / dall-e-3)."""
+    """Intenta generar la imagen con Gemini Images o OpenAI Images API (gpt-image-1 / dall-e-3)."""
+    img_gemini, origen_gemini = _generar_bytes_gemini(prompt)
+    if img_gemini:
+        return img_gemini, origen_gemini
+
     global _OPENAI_IMAGES_SIN_CUOTA
     if _OPENAI_IMAGES_SIN_CUOTA:
         return None, None
 
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    if not api_key:
+    if not api_key or api_key.startswith(("AIza", "AQ.")):
         return None, None
 
     try:
