@@ -10,9 +10,11 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+
+from apps_sirae.usuarios.authentication import CustomJWTAuthentication
 
 from apps_sirae.detalle_plato.models import DetallePlato
 from apps_sirae.gramage.models import Gramage
@@ -35,6 +37,20 @@ from apps_sirae.ia_sugerencias.mongodb import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class OptionalJWTAuthentication(CustomJWTAuthentication):
+    """
+    Autenticación JWT tolerante para los endpoints públicos de IA:
+    si el frontend envía un token Bearer válido, identifica al usuario (para conocer su sede/institución);
+    si envía un token vencido, revocado o malformado, lo ignora en lugar de lanzar error HTTP 401.
+    """
+
+    def authenticate(self, request):
+        try:
+            return super().authenticate(request)
+        except Exception:
+            return None
 
 # ==============================================================================
 # CATÁLOGO DE LOS 20 MENÚS OFICIALES DEL CICLO PAE (BASE DE CONOCIMIENTO)
@@ -1339,6 +1355,9 @@ PLANTILLAS_INNOVADORAS_PAE = {
 }
 
 
+_OPENAI_CHAT_SIN_CUOTA = False
+
+
 def generar_con_openai(
     seccion_nombre: str,
     ninos_presentes: int,
@@ -1346,6 +1365,10 @@ def generar_con_openai(
     preferencia: str,
 ) -> list[dict] | None:
     """Invoca la API de OpenAI para generar recetas de gastronomía colombiana coherentes con el PAE."""
+    global _OPENAI_CHAT_SIN_CUOTA
+    if _OPENAI_CHAT_SIN_CUOTA:
+        return None
+
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         return None
@@ -1454,6 +1477,9 @@ Responde ÚNICAMENTE un objeto JSON válido con la siguiente estructura:
         return data.get("sugerencias")
     except Exception as e:
         logger.warning("Fallo al generar con OpenAI, utilizando motor determinístico: %s", e)
+        err_str = str(e).lower()
+        if any(k in err_str for k in ("insufficient_quota", "credit_balance_exhausted", "invalid_api_key", "429", "401")):
+            _OPENAI_CHAT_SIN_CUOTA = True
         return None
 
 
@@ -1461,6 +1487,7 @@ Responde ÚNICAMENTE un objeto JSON válido con la siguiente estructura:
 # ENDPOINT PRINCIPAL: SUGERENCIAS DE RECETAS COLOMBIANAS CON IA, STOCK REAL E IMAGEN
 # ==============================================================================
 @api_view(["POST", "GET"])
+@authentication_classes([OptionalJWTAuthentication])
 @permission_classes([AllowAny])
 def sugerencias_recetas_ia(request):
     """
@@ -1793,17 +1820,11 @@ def sugerencias_recetas_ia(request):
     inventario_suficiente = bool(sugerencias_estructuradas)
 
     # Si NO hay inventario suficiente para los N estudiantes (bajo monto / agotado / muchos estudiantes),
-    # devolver recetas colombianas de referencia con viable_con_inventario=False y el estado REAL de cada ingrediente
-    # (alcanza=False, estado_stock="INSUFICIENTE"/"AGOTADO", faltante, stock_bajo) para que el usuario lo vea claro.
+    # NO se debe generar ni devolver ninguna receta: se retornan las listas vacías y el mensaje claro.
     if not inventario_suficiente:
-        referencia_colombiana = construir_sugerencias_referencia_colombianas(
-            seccion_nombre=seccion_nombre,
-            mapa_inventario=mapa_inventario,
-            ninos_presentes=ninos_presentes,
-        )
-        sugerencias_estructuradas = _estructurar_y_validar(referencia_colombiana, solo_viables=False)
+        sugerencias_estructuradas = []
 
-    # 3. Generar imagen de la receta colombiana y guardarla en Cloudinary
+    # 3. Generar imagen de la receta colombiana y guardarla en Cloudinary (solo si hay recetas viables)
     if generar_imagen and sugerencias_estructuradas:
         def _adjuntar_imagen(sug: dict) -> dict:
             img_info = generar_y_subir_imagen_receta(
@@ -1858,7 +1879,7 @@ def sugerencias_recetas_ia(request):
             p for p in platos_base_pae if p["viable_con_inventario"]
         ]
     else:
-        todas_las_opciones = list(sugerencias_estructuradas)
+        todas_las_opciones = []
 
     tiene_stock_real_positivo = any(
         Decimal(str(it.get("cantidad_actual") or 0)) > Decimal("0.00")
@@ -1883,22 +1904,21 @@ def sugerencias_recetas_ia(request):
     elif not mapa_inventario or not tiene_stock_real_positivo:
         estado_inventario_general = "AGOTADO"
         texto_resumen = (
-            f"No hay alimentos disponibles en el inventario de esta sede. "
-            f"No es posible preparar {seccion_nombre} para {ninos_presentes} estudiantes "
-            "hasta que se registren existencias en bodega."
+            f"No hay alimentos en el inventario para hacer una receta de {seccion_nombre} "
+            f"para {ninos_presentes} estudiantes. Registra existencias en bodega para poder generar recetas."
         )
     elif ninos_maximos_atendibles > 0 and ninos_maximos_atendibles < ninos_presentes:
         estado_inventario_general = "INSUFICIENTE"
         texto_resumen = (
-            f"No hay alimentos suficientes (bajo monto / stock insuficiente) para preparar {seccion_nombre} "
-            f"para {ninos_presentes} estudiantes. Con las existencias actuales solo alcanza para un máximo "
-            f"aproximado de {ninos_maximos_atendibles} estudiantes. Ajusta las raciones o abastece los ingredientes faltantes."
+            f"No hay suficientes alimentos para hacer una receta de {seccion_nombre} "
+            f"para {ninos_presentes} estudiantes (con el inventario actual solo alcanza para un máximo "
+            f"aproximado de {ninos_maximos_atendibles} estudiantes). Abastece los ingredientes faltantes o ajusta la cantidad de raciones."
         )
     else:
         estado_inventario_general = "INSUFICIENTE"
         texto_resumen = (
-            f"No hay alimentos principales suficientes y balanceados en el inventario para preparar {seccion_nombre} "
-            f"para {ninos_presentes} estudiantes. Revisa los productos agotados o con bajo monto en bodega."
+            f"No hay suficientes alimentos para hacer una receta de {seccion_nombre} "
+            f"para {ninos_presentes} estudiantes. Revisa los productos agotados o con stock insuficiente en el inventario."
         )
 
     resumen_inventario = {
@@ -1946,6 +1966,7 @@ def sugerencias_recetas_ia(request):
     return Response(
         {
             "status": "success",
+            "mensaje": texto_resumen,
             "seccion": seccion_nombre,
             "id_seccion": id_seccion,
             "ninos_presentes": ninos_presentes,
@@ -1989,6 +2010,7 @@ def sugerencias_recetas_ia(request):
 # ENDPOINT: GENERAR IMAGEN DE RECETA COLOMBIANA Y GUARDARLA EN CLOUDINARY
 # ==============================================================================
 @api_view(["POST"])
+@authentication_classes([OptionalJWTAuthentication])
 @permission_classes([AllowAny])
 def generar_imagen_receta_ia(request):
     """
@@ -2055,6 +2077,7 @@ def generar_imagen_receta_ia(request):
 # ENDPOINT: DESCONTAR INVENTARIO TRAS CONFIRMAR LA PREPARACIÓN
 # ==============================================================================
 @api_view(["POST"])
+@authentication_classes([OptionalJWTAuthentication])
 @permission_classes([AllowAny])
 def descontar_inventario_ia(request):
     """
@@ -2181,6 +2204,7 @@ def descontar_inventario_ia(request):
 # ENDPOINT: ESTADO DE CONEXIÓN CON MONGODB ATLAS
 # ==============================================================================
 @api_view(["GET"])
+@authentication_classes([OptionalJWTAuthentication])
 @permission_classes([AllowAny])
 def estado_mongodb_ia(request):
     """
@@ -2196,6 +2220,7 @@ def estado_mongodb_ia(request):
 # ENDPOINT: HISTORIAL DE SUGERENCIAS IA ALMACENADAS EN MONGODB ATLAS
 # ==============================================================================
 @api_view(["GET"])
+@authentication_classes([OptionalJWTAuthentication])
 @permission_classes([AllowAny])
 def historial_sugerencias_ia_view(request):
     """

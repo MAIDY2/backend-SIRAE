@@ -214,7 +214,7 @@ class IASugerenciasRecetasTests(TestCase):
             self.assertEqual(registro_guardado["motor_ia"], "Motor PAE Colombiano")
 
     def test_sin_alimentos_suficientes_para_200_ninos_muestra_alertas_y_no_marca_viable(self):
-        """Si el stock real no alcanza para 200 niños, debe marcar INSUFICIENTE y mostrar faltantes (no disponible)."""
+        """Si el stock real no alcanza para 200 niños, NO debe generar ninguna receta y debe dar mensaje claro."""
         self.inv_huevos.cantidad_actual = Decimal("40.0")  # Solo alcanza para 40 niños
         self.inv_huevos.save(update_fields=["cantidad_actual"])
         self.inv_arroz.cantidad_actual = Decimal("2.0")    # 2 kg = 2000 g -> 44 niños
@@ -235,16 +235,13 @@ class IASugerenciasRecetasTests(TestCase):
             self.assertEqual(data["estado_inventario_general"], "INSUFICIENTE")
             self.assertEqual(data["ninos_maximos_atendibles"], 40)
             self.assertEqual(len(data["ingredientes_insuficientes"]), 2)
-            self.assertIn("No hay alimentos suficientes", data["sugerencias"])
-            # Debe devolver recetas de referencia colombianas marcadas como NO viables con ingredientes en False
-            self.assertTrue(len(data["sugerencias_ia_estructuradas"]) >= 1)
-            for sug in data["sugerencias_ia_estructuradas"]:
-                self.assertFalse(sug["viable_con_inventario"])
-                self.assertIn(sug["estado_inventario"], ["INSUFICIENTE", "AGOTADO"])
-                self.assertTrue(any(not ing["alcanza"] for ing in sug["ingredientes"]))
+            self.assertIn("No hay suficientes alimentos para hacer una receta", data["sugerencias"])
+            self.assertEqual(data["mensaje"], data["sugerencias"])
+            self.assertEqual(data["sugerencias_ia_estructuradas"], [])
+            self.assertEqual(data["todas_las_opciones"], [])
 
     def test_muchos_estudiantes_con_un_solo_producto_sobrado_no_marca_todo_disponible(self):
-        """Con 1000 estudiantes, aunque el arroz alcance, si faltan huevos NO debe marcar inventario suficiente."""
+        """Con 1000 estudiantes, aunque el arroz alcance, si faltan huevos NO debe generar recetas."""
         self.inv_arroz.cantidad_actual = Decimal("100.0")  # 100 kg -> cubre ~2222 niños
         self.inv_arroz.save(update_fields=["cantidad_actual"])
         self.inv_huevos.cantidad_actual = Decimal("50.0")  # Solo 50 niños
@@ -264,10 +261,9 @@ class IASugerenciasRecetasTests(TestCase):
             self.assertEqual(data["ninos_presentes"], 1000)
             self.assertFalse(data["inventario_suficiente"])
             self.assertEqual(data["estado_inventario_general"], "INSUFICIENTE")
-            for sug in data["sugerencias_ia_estructuradas"]:
-                self.assertFalse(sug["viable_con_inventario"])
-                estados = {ing["estado_stock"] for ing in sug["ingredientes"]}
-                self.assertTrue(bool(estados & {"INSUFICIENTE", "AGOTADO"}))
+            self.assertIn("No hay suficientes alimentos para hacer una receta", data["sugerencias"])
+            self.assertEqual(data["sugerencias_ia_estructuradas"], [])
+            self.assertEqual(data["todas_las_opciones"], [])
 
     def test_alerta_bajo_monto_cuando_stock_restante_queda_debajo_del_minimo(self):
         """Si alcanza para 260 niños pero quedan 40 huevos (stock_minimo=50), debe marcar BAJO_STOCK."""
@@ -323,16 +319,27 @@ class IASugerenciasRecetasTests(TestCase):
             self.assertFalse(data["inventario_suficiente"])
             self.assertEqual(data["estado_inventario_general"], "AGOTADO")
             self.assertEqual(data["ninos_maximos_atendibles"], 0)
-            self.assertIn("No hay alimentos disponibles", data["sugerencias"])
+            self.assertIn("No hay alimentos en el inventario para hacer una receta", data["sugerencias"])
+            self.assertEqual(data["mensaje"], data["sugerencias"])
             self.assertEqual(len(data["ingredientes_agotados"]), 1)
             self.assertEqual(data["ingredientes_agotados"][0]["estado_stock"], "AGOTADO")
-            for sug in data["sugerencias_ia_estructuradas"]:
-                self.assertFalse(sug["viable_con_inventario"])
-                self.assertEqual(sug["estado_inventario"], "AGOTADO")
-                for ing in sug["ingredientes"]:
-                    self.assertFalse(ing["alcanza"])
-                    self.assertTrue(ing["agotado"])
-                    self.assertEqual(ing["estado_stock"], "AGOTADO")
+            self.assertEqual(data["sugerencias_ia_estructuradas"], [])
+            self.assertEqual(data["todas_las_opciones"], [])
+
+    def test_token_jwt_expirado_o_invalido_no_causa_error_401_en_ia(self):
+        """Un token Bearer inválido o expirado en el encabezado Authorization no debe lanzar 401 en los endpoints de IA."""
+        self.client.credentials(HTTP_AUTHORIZATION="Bearer token_jwt_expirado_o_invalido_12345")
+        payload = {
+            "id_sede": self.sede.id_sede,
+            "ninos_presentes": 100,
+            "id_seccion": 1,
+            "generar_imagen": False,
+        }
+        resp_sug = self.client.post("/api/ia/sugerencias-recetas/", payload, format="json")
+        self.assertEqual(resp_sug.status_code, status.HTTP_200_OK)
+
+        resp_hist = self.client.get("/api/ia/historial/")
+        self.assertEqual(resp_hist.status_code, status.HTTP_200_OK)
 
     def test_sin_id_sede_no_suma_inventario_de_otras_sedes(self):
         """Si no se especifica sede ni usuario con sede, no debe sumar inventarios de todas las sedes."""

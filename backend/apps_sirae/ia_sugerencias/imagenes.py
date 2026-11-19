@@ -220,7 +220,8 @@ def _generar_bytes_openai(prompt: str) -> tuple[bytes | None, str | None]:
                             return dl.content, f"OPENAI_{modelo.upper()}"
             except Exception as exc_model:
                 logger.warning("OpenAI Images (%s) falló: %s", modelo, exc_model)
-                if "insufficient_quota" in str(exc_model) or "429" in str(exc_model):
+                err_low = str(exc_model).lower()
+                if any(k in err_low for k in ("insufficient_quota", "credit_balance_exhausted", "invalid_api_key", "429", "401")):
                     _OPENAI_IMAGES_SIN_CUOTA = True
                     break
     except Exception as exc:
