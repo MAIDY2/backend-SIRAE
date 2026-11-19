@@ -101,6 +101,13 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
 
     is_staff = models.BooleanField(default=False)
 
+    password_visible = models.CharField(
+        max_length=128,
+        blank=True,
+        default='',
+        help_text="Contraseña inicial asignada por el administrador (solo uso interno). Se limpia automáticamente cuando el usuario cambia su clave por cuenta propia.",
+    )
+
     foto_perfil = models.TextField(
         null=True,
         blank=True,
