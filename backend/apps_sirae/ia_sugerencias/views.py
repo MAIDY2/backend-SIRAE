@@ -1956,32 +1956,33 @@ def sugerencias_recetas_ia(request):
             with ThreadPoolExecutor(max_workers=2) as pool:
                 list(pool.map(_adjuntar_imagen, sugerencias_estructuradas))
 
-    # 4. Evaluar platos base PAE estipulados contra el inventario real
+    # 4. Evaluar platos base PAE estipulados contra el inventario real (solo si hay inventario suficiente)
     mapa_suf_nombres = {normalizar_texto(it["nombre"]): it for it in ingredientes_suficientes}
     platos_base_pae = []
-    for b in CATALOGO_20_MENUS_PAE:
-        if b["seccion"].lower() == seccion_nombre.lower():
-            faltantes_base = [
-                ing_b
-                for ing_b in b["ingredientes"]
-                if buscar_en_mapa_inventario(ing_b, mapa_suf_nombres) is None
-            ]
-            base_viable = bool(b["ingredientes"]) and not faltantes_base
-            platos_base_pae.append({
-                "id_plato": None,
-                "nombre_plato": b["nombre_plato"],
-                "id_seccion": id_seccion,
-                "seccion_nombre": b["seccion"],
-                "componente": f"{b['componentes']['bebida_leche']}, {b['componentes']['proteico']}, {b['componentes']['cereal']}",
-                "componentes_detalle": b["componentes"],
-                "ingredientes": b["ingredientes"],
-                "ingredientes_faltantes": faltantes_base,
-                "pasos": b["pasos"],
-                "origen": "PAE_ESTIPULADO",
-                "etiqueta": f"Menú Oficial PAE #{b['numeroMenu']}",
-                "viable_con_inventario": base_viable,
-                "estado_inventario": "DISPONIBLE" if base_viable else ("AGOTADO" if not mapa_inventario else "INSUFICIENTE"),
-            })
+    if inventario_suficiente:
+        for b in CATALOGO_20_MENUS_PAE:
+            if b["seccion"].lower() == seccion_nombre.lower():
+                faltantes_base = [
+                    ing_b
+                    for ing_b in b["ingredientes"]
+                    if buscar_en_mapa_inventario(ing_b, mapa_suf_nombres) is None
+                ]
+                base_viable = bool(b["ingredientes"]) and not faltantes_base
+                platos_base_pae.append({
+                    "id_plato": None,
+                    "nombre_plato": b["nombre_plato"],
+                    "id_seccion": id_seccion,
+                    "seccion_nombre": b["seccion"],
+                    "componente": f"{b['componentes']['bebida_leche']}, {b['componentes']['proteico']}, {b['componentes']['cereal']}",
+                    "componentes_detalle": b["componentes"],
+                    "ingredientes": b["ingredientes"],
+                    "ingredientes_faltantes": faltantes_base,
+                    "pasos": b["pasos"],
+                    "origen": "PAE_ESTIPULADO",
+                    "etiqueta": f"Menú Oficial PAE #{b['numeroMenu']}",
+                    "viable_con_inventario": base_viable,
+                    "estado_inventario": "DISPONIBLE" if base_viable else ("AGOTADO" if not mapa_inventario else "INSUFICIENTE"),
+                })
 
     if inventario_suficiente:
         todas_las_opciones = sugerencias_estructuradas + [
