@@ -471,6 +471,7 @@ class IASugerenciasRecetasTests(TestCase):
         with patch("apps_sirae.ia_sugerencias.imagenes.cloudinary_configurado", return_value=True), \
              patch("apps_sirae.ia_sugerencias.imagenes._generar_bytes_openai", return_value=(None, None)), \
              patch("apps_sirae.ia_sugerencias.imagenes._generar_bytes_pollinations", return_value=(None, None)), \
+             patch("apps_sirae.ia_sugerencias.imagenes._obtener_foto_gastronomica_colombiana", return_value=(None, None)), \
              patch("apps_sirae.ia_sugerencias.imagenes.cloudinary.uploader.upload", return_value=fake_cloudinary_resp) as mock_upload:
             payload = {
                 "nombre_plato": "Sudado criollo colombiano de pollo con papa y yuca",

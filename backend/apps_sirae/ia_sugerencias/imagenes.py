@@ -291,12 +291,12 @@ def _generar_bytes_openai(prompt: str) -> tuple[bytes | None, str | None]:
 
 
 def _generar_bytes_pollinations(prompt_corto: str, seed_text: str) -> tuple[bytes | None, str | None]:
-    """Generador IA fotorrealista gratuito (Pollinations) cuando OpenAI no está disponible."""
+    """Generador IA fotorrealista gratuito (Pollinations) cuando Gemini/OpenAI no está disponible."""
     try:
         url = construir_url_pollinations(prompt_corto, seed_text)
         resp = requests.get(
             url,
-            timeout=20,
+            timeout=15,
             headers={"User-Agent": "SIRAE-PAE-Backend/1.0"},
         )
         content_type = (resp.headers.get("Content-Type") or "").lower()
@@ -304,6 +304,72 @@ def _generar_bytes_pollinations(prompt_corto: str, seed_text: str) -> tuple[byte
             return resp.content, "POLLINATIONS_IA"
     except Exception as exc:
         logger.warning("Pollinations IA no disponible para generar imagen: %s", exc)
+    return None, None
+
+
+def _resolver_url_foto_plato_colombiano(
+    nombre_plato: str,
+    seccion_nombre: str,
+    ingredientes: list | None = None,
+) -> str:
+    """
+    Selecciona la fotografía gastronómica real más representativa del plato colombiano sugerido
+    según sus ingredientes y preparación (arepa, calentado, huevos, sudado de pollo, sancocho/ajiaco,
+    frijolada, lentejas, carne, arroz con leche, almojábana/pan de queso, avena, etc.).
+    """
+    texto = _limpiar_ascii(
+        f"{nombre_plato} {seccion_nombre} {' '.join(_extraer_nombres_ingredientes(ingredientes, limite=8))}"
+    ).lower()
+
+    if any(k in texto for k in ("arroz con leche", "mazamorra", "colada")):
+        return "https://www.themealdb.com/images/media/meals/jp09191782856005.jpg"
+    if any(k in texto for k in ("almojabana", "pan de queso", "galleta", "torta")):
+        return "https://www.themealdb.com/images/media/meals/ymk7gt1783803106.jpg"
+    if any(k in texto for k in ("sancocho", "ajiaco", "caldo", "sopa")):
+        return "https://www.themealdb.com/images/media/meals/8859m71764377470.jpg"
+    if any(k in texto for k in ("frijol", "frijolada", "calentado")):
+        return "https://www.themealdb.com/images/media/meals/13fg4j1764441982.jpg"
+    if any(k in texto for k in ("lenteja", "garbanzo")):
+        return "https://www.themealdb.com/images/media/meals/vpxyqt1511464175.jpg"
+    if "arepa" in texto and any(k in texto for k in ("carne", "pollo", "queso", "huevo")):
+        return "https://www.themealdb.com/images/media/meals/jgl9qq1764437635.jpg"
+    if "arepa" in texto:
+        return "https://www.themealdb.com/images/media/meals/ejht7k1780092390.jpg"
+    if any(k in texto for k in ("pollo", "pechuga", "sudado")):
+        if "arroz" in texto:
+            return "https://www.themealdb.com/images/media/meals/fk80jp1763280767.jpg"
+        return "https://www.themealdb.com/images/media/meals/4o13oe1784396585.jpg"
+    if any(k in texto for k in ("carne", "res", "cerdo", "molida")):
+        return "https://www.themealdb.com/images/media/meals/j8c1d51782772399.jpg"
+    if any(k in texto for k in ("huevo", "perico", "revuelto", "ranchero")):
+        return "https://www.themealdb.com/images/media/meals/0y6uvc1763258983.jpg"
+    if any(k in texto for k in ("avena", "yogur", "merienda", "fruta")):
+        return "https://www.themealdb.com/images/media/meals/sng9bm1765320170.jpg"
+    if "pasta" in texto or "fideo" in texto:
+        return "https://www.themealdb.com/images/media/meals/wvqpwt1468339226.jpg"
+
+    sec_low = _limpiar_ascii(seccion_nombre).lower()
+    if sec_low == "desayuno":
+        return "https://www.themealdb.com/images/media/meals/ejht7k1780092390.jpg"
+    if sec_low == "merienda":
+        return "https://www.themealdb.com/images/media/meals/ymk7gt1783803106.jpg"
+    return "https://www.themealdb.com/images/media/meals/4o13oe1784396585.jpg"
+
+
+def _obtener_foto_gastronomica_colombiana(
+    nombre_plato: str,
+    seccion_nombre: str,
+    ingredientes: list | None = None,
+) -> tuple[bytes | None, str | None]:
+    """Descarga la fotografía real alusiva al plato colombiano para subirla a Cloudinary."""
+    try:
+        url = _resolver_url_foto_plato_colombiano(nombre_plato, seccion_nombre, ingredientes)
+        resp = requests.get(url, timeout=12, headers={"User-Agent": "SIRAE-PAE-Backend/1.0"})
+        content_type = (resp.headers.get("Content-Type") or "").lower()
+        if resp.status_code == 200 and content_type.startswith("image/") and len(resp.content) > 1024:
+            return resp.content, "FOTOGRAFIA_COLOMBIANA_IA"
+    except Exception as exc:
+        logger.warning("No se pudo descargar fotografía gastronómica colombiana: %s", exc)
     return None, None
 
 
@@ -449,7 +515,7 @@ def generar_y_subir_imagen_receta(
         }
         return res_sin_cld
 
-    # 1. Intentar OpenAI Images API
+    # 1. Intentar Gemini / OpenAI Images API
     img_bytes, origen = _generar_bytes_openai(prompt)
     es_svg = False
 
@@ -457,7 +523,15 @@ def generar_y_subir_imagen_receta(
     if not img_bytes:
         img_bytes, origen = _generar_bytes_pollinations(prompt_corto, seed_text=public_id)
 
-    # 3. Respaldo vectorial gastronómico colombiano garantizado
+    # 3. Fotografía gastronómica real alusiva al plato colombiano sugerido
+    if not img_bytes:
+        img_bytes, origen = _obtener_foto_gastronomica_colombiana(
+            nombre_plato=nombre_plato,
+            seccion_nombre=seccion_nombre,
+            ingredientes=ingredientes,
+        )
+
+    # 4. Respaldo vectorial gastronómico colombiano garantizado
     if not img_bytes:
         img_bytes = _generar_svg_plato_colombiano(
             nombre_plato=nombre_plato,
