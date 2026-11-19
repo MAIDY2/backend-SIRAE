@@ -2,14 +2,29 @@ import base64
 import importlib
 import io
 from typing import Any
-import numpy as np
-from PIL import Image
 
-# Declaramos las variables y usamos carga dinámica para máxima compatibilidad
+# ── Imports opcionales — se cargan dinámicamente para no romper el arranque ──
+np: Any = None
+Image: Any = None
+TIENE_NUMPY = False
+TIENE_PIL = False
 face_recognition: Any = None
 cv2: Any = None
 TIENE_FACE_RECOGNITION = False
 TIENE_OPENCV = False
+
+try:
+    np = importlib.import_module('numpy')
+    TIENE_NUMPY = True
+except (ImportError, ModuleNotFoundError):
+    TIENE_NUMPY = False
+
+try:
+    _PIL = importlib.import_module('PIL.Image')
+    Image = _PIL
+    TIENE_PIL = True
+except (ImportError, ModuleNotFoundError):
+    TIENE_PIL = False
 
 try:
     face_recognition = importlib.import_module('face_recognition')
@@ -31,6 +46,9 @@ def image_to_embedding(base64_image: str):
     """
     try:
         if not base64_image:
+            return None
+
+        if not TIENE_PIL or not TIENE_NUMPY:
             return None
 
         # Si la imagen viene de la cámara web con prefijo 'data:image/...;base64,', lo separamos
