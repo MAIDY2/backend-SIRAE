@@ -835,6 +835,7 @@ class BrevoPasswordResetApiTests(TestCase):
         BACKEND_URL="https://backend-sirae-pyim.onrender.com",
     )
     def test_test_email_view_get_status(self):
+        self.client.force_authenticate(user=self.user)
         response = self.client.get(reverse("auth-test-email"))
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.data["brevo_api_key_configurada"])
@@ -851,6 +852,7 @@ class BrevoPasswordResetApiTests(TestCase):
         mock_resp.text = '{"messageId": "<test-diagnostic-id>"}'
         mock_post.return_value = mock_resp
 
+        self.client.force_authenticate(user=self.user)
         response = self.client.post(
             reverse("auth-test-email"),
             {"email": "prueba@sirae.com"},
@@ -859,6 +861,209 @@ class BrevoPasswordResetApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["status"], "success")
         self.assertTrue(mock_post.called)
+
+
+@override_settings(
+    DEBUG=False,
+    BREVO_API_KEY="",
+    EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend",
+    EMAIL_HOST="smtp.gmail.com",
+    EMAIL_PORT=587,
+    EMAIL_USE_TLS=True,
+    EMAIL_HOST_USER="sirae.test@gmail.com",
+    EMAIL_HOST_PASSWORD="abcdefghijklmnop",
+    DEFAULT_FROM_EMAIL="sirae.test@gmail.com",
+)
+class PasswordRecoverySecurityAndGmailTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+        self.rol_manip = Rol.objects.create(nombre=Rol.NombreRol.MANIPULADORA)
+        self.user = Usuario.objects.create_user(
+            correo="usuario.gmail@example.com",
+            nombre="María",
+            apellido="Gómez",
+            password="Original-Safe-Password-2026!",
+            tipo_documento="CC",
+            numero_documento="GMAIL001",
+            rol=self.rol_manip,
+            password_visible="Temporal123!",
+            intentos_fallidos_login=5,
+            bloqueado_hasta=timezone.now() + timedelta(minutes=15),
+        )
+
+    @patch("apps_sirae.usuarios.api.password_reset.requests.post")
+    @patch("apps_sirae.usuarios.api.password_reset.send_mail")
+    def test_gmail_smtp_is_used_when_brevo_key_is_empty(self, mock_send_mail, mock_brevo):
+        response = self.client.post(
+            reverse("recuperar-password"),
+            {"correo": self.user.correo},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        mock_brevo.assert_not_called()
+        mock_send_mail.assert_called_once()
+        self.assertEqual(
+            mock_send_mail.call_args.kwargs["from_email"],
+            "sirae.test@gmail.com",
+        )
+        self.assertEqual(
+            mock_send_mail.call_args.kwargs["recipient_list"],
+            [self.user.correo],
+        )
+
+    def test_get_requests_are_rejected_on_password_reset_endpoints(self):
+        resp_code = self.client.get(
+            reverse("recuperar-password"),
+            {"correo": self.user.correo},
+        )
+        resp_link = self.client.get(
+            reverse("password-reset-solicitar"),
+            {"email": self.user.correo},
+        )
+        self.assertEqual(resp_code.status_code, 405)
+        self.assertEqual(resp_link.status_code, 405)
+
+    def test_test_email_requires_admin_authentication(self):
+        unauth = self.client.get(reverse("auth-test-email"))
+        self.assertEqual(unauth.status_code, 401)
+
+        self.client.force_authenticate(user=self.user)
+        forbidden = self.client.get(reverse("auth-test-email"))
+        self.assertEqual(forbidden.status_code, 403)
+
+    @patch("apps_sirae.usuarios.api.password_reset.send_mail")
+    def test_link_flow_prevents_user_enumeration_for_unknown_and_inactive(self, mock_send_mail):
+        unknown_resp = self.client.post(
+            reverse("password-reset-solicitar"),
+            {"email": "noexiste@example.com"},
+            format="json",
+        )
+        self.user.is_active = False
+        self.user.save(update_fields=["is_active"])
+        inactive_resp = self.client.post(
+            reverse("password-reset-solicitar"),
+            {"email": self.user.correo},
+            format="json",
+        )
+        self.user.is_active = True
+        self.user.save(update_fields=["is_active"])
+        active_resp = self.client.post(
+            reverse("password-reset-solicitar"),
+            {"email": self.user.correo},
+            format="json",
+        )
+
+        self.assertEqual(unknown_resp.status_code, 200)
+        self.assertEqual(inactive_resp.status_code, 200)
+        self.assertEqual(active_resp.status_code, 200)
+        self.assertEqual(unknown_resp.data, inactive_resp.data)
+        self.assertEqual(unknown_resp.data, active_resp.data)
+        mock_send_mail.assert_called_once()
+
+    @patch("apps_sirae.usuarios.api.password_reset.send_mail")
+    def test_cooldown_still_applies_after_regenerating_code(self, mock_send_mail):
+        self.client.post(
+            reverse("recuperar-password"),
+            {"correo": self.user.correo},
+            format="json",
+        )
+        self.assertEqual(mock_send_mail.call_count, 1)
+
+        # Simular que ya pasaron 2 minutos desde el primer código
+        PasswordResetCode.objects.filter(usuario=self.user).update(
+            creado_en=timezone.now() - timedelta(minutes=2)
+        )
+        self.client.post(
+            reverse("recuperar-password"),
+            {"correo": self.user.correo},
+            format="json",
+        )
+        self.assertEqual(mock_send_mail.call_count, 2)
+
+        # Solicitar inmediatamente de nuevo debe respetar el cooldown de 1 minuto
+        self.client.post(
+            reverse("recuperar-password"),
+            {"correo": self.user.correo},
+            format="json",
+        )
+        self.assertEqual(mock_send_mail.call_count, 2)
+
+    @patch("apps_sirae.usuarios.api.password_reset.send_mail")
+    def test_reset_password_clears_password_visible_and_lockout_and_revokes_jwt(self, mock_send_mail):
+        # Desbloquear temporalmente para emitir un JWT válido y luego volver a bloquear
+        self.user.bloqueado_hasta = None
+        self.user.intentos_fallidos_login = 0
+        self.user.save(update_fields=["bloqueado_hasta", "intentos_fallidos_login"])
+
+        login_resp = self.client.post(
+            reverse("login"),
+            {
+                "correo": self.user.correo,
+                "password": "Original-Safe-Password-2026!",
+            },
+            format="json",
+        )
+        self.assertEqual(login_resp.status_code, 200)
+        old_refresh = login_resp.data["refresh"]
+
+        # Simular bloqueo activo y password_visible presente
+        self.user.intentos_fallidos_login = 5
+        self.user.bloqueado_hasta = timezone.now() + timedelta(minutes=15)
+        self.user.password_visible = "Temporal123!"
+        self.user.save(
+            update_fields=["intentos_fallidos_login", "bloqueado_hasta", "password_visible"]
+        )
+
+        token = PasswordResetService.generar_token(self.user)
+        # Rechaza contraseña débil en flujo por token
+        weak_resp = self.client.post(
+            reverse("password-reset-confirmar"),
+            {
+                "token": token,
+                "nueva_password": "123456",
+                "confirmar_password": "123456",
+            },
+            format="json",
+        )
+        self.assertEqual(weak_resp.status_code, 400)
+
+        # Acepta contraseña fuerte, limpia seguridad y revoca refresh token previo
+        ok_resp = self.client.post(
+            reverse("password-reset-confirmar"),
+            {
+                "token": token,
+                "nueva_password": "Strong-New-Pass-2026!",
+                "confirmar_password": "Strong-New-Pass-2026!",
+            },
+            format="json",
+        )
+        self.assertEqual(ok_resp.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.password_visible, "")
+        self.assertEqual(self.user.intentos_fallidos_login, 0)
+        self.assertIsNone(self.user.bloqueado_hasta)
+
+        refresh_resp = self.client.post(
+            reverse("token_refresh"),
+            {"refresh": old_refresh},
+            format="json",
+        )
+        self.assertEqual(refresh_resp.status_code, 401)
+
+    def test_non_string_token_returns_400_instead_of_500(self):
+        resp_val = self.client.post(
+            reverse("password-reset-validar-token"),
+            {"token": None},
+            format="json",
+        )
+        resp_conf = self.client.post(
+            reverse("password-reset-confirmar"),
+            {"token": 123, "nueva_password": None, "confirmar_password": None},
+            format="json",
+        )
+        self.assertEqual(resp_val.status_code, 400)
+        self.assertEqual(resp_conf.status_code, 400)
 
 
 

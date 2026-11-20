@@ -176,6 +176,8 @@ def enviar_correo_activacion_cuenta(usuario: Usuario) -> bool:
             f"ingresa al siguiente enlace seguro:\n{enlace_activacion}\n\n"
             "Si no reconoces este registro, ignora este mensaje."
         )
+        import html as _html
+        nombre_seguro = _html.escape(usuario.nombre_completo)
         mensaje_html = f"""
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
             <div style="background-color: #2b6cb0; padding: 15px; border-radius: 6px; text-align: center; color: white;">
@@ -183,7 +185,7 @@ def enviar_correo_activacion_cuenta(usuario: Usuario) -> bool:
                 <p style="margin: 5px 0 0 0; font-size: 14px;">Activación de Cuenta Institucional</p>
             </div>
             <div style="padding: 20px 0;">
-                <p>Hola <strong>{usuario.nombre_completo}</strong>,</p>
+                <p>Hola <strong>{nombre_seguro}</strong>,</p>
                 <p>Tu cuenta institucional en el sistema SIRAE PAE ha sido creada satisfactoriamente.</p>
                 <p>Por políticas de seguridad institucional, no enviamos contraseñas en texto plano. Para activar tu cuenta y configurar tu clave de acceso:</p>
                 <div style="text-align: center; margin: 30px 0;">

@@ -260,34 +260,36 @@ if cloudinary and cloudinary_storage:
     DEFAULT_FILE_STORAGE = "cloudinary_storage.storage.MediaCloudinaryStorage"
 
 # ==============================================================================
-# Configuración de Correo Electrónico (Google SMTP / Gmail)
+# Configuración de Correo Electrónico (Google SMTP / Gmail y Brevo opcional)
 # ==============================================================================
 EMAIL_BACKEND = os.getenv(
     "EMAIL_BACKEND",
     "django.core.mail.backends.smtp.EmailBackend",
-)
-EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+).strip()
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com").strip()
 EMAIL_PORT = parse_env_int(os.getenv("EMAIL_PORT"), 587)
-EMAIL_USE_TLS = (
-    os.getenv("EMAIL_USE_TLS", "True").strip().lower() in {"1", "true", "yes", "on"}
-)
 EMAIL_USE_SSL = (
     os.getenv("EMAIL_USE_SSL", "False").strip().lower() in {"1", "true", "yes", "on"}
 )
-EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "riveracjhonf@gmail.com").strip()
-EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "nvdyvggclraintxk").strip()
-EMAIL_TIMEOUT = parse_env_int(os.getenv("EMAIL_TIMEOUT"), 10)
+EMAIL_USE_TLS = (
+    False
+    if EMAIL_USE_SSL
+    else (
+        os.getenv("EMAIL_USE_TLS", "True").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+)
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "").strip()
+# Las contraseñas de aplicación de Gmail suelen copiarse con espacios (4 grupos de 4)
+EMAIL_HOST_PASSWORD = (
+    os.getenv("EMAIL_HOST_PASSWORD", "").replace(" ", "").strip()
+)
+EMAIL_TIMEOUT = parse_env_int(os.getenv("EMAIL_TIMEOUT"), 15)
 
-# Soporte para API HTTP directa de Brevo y soporte opcional Anymail
-_BREVO_PARTS = [
-    "xkey",
-    "sib-a29ea92fec868e728db20bdec2649ab8c4b40d1e548faacf43eafa6df6b00069",
-    "-9naRqXs42Z2ImMAc",
-]
+# Soporte opcional para API HTTP directa de Brevo (solo si se configura por entorno)
 BREVO_API_KEY = (
     os.getenv("BREVO_API_KEY", "").strip()
     or os.getenv("SENDINBLUE_API_KEY", "").strip()
-    or "".join(_BREVO_PARTS)
 )
 if BREVO_API_KEY and EMAIL_BACKEND == "anymail.backends.brevo.EmailBackend":
     if "anymail" not in INSTALLED_APPS:
@@ -296,8 +298,15 @@ if BREVO_API_KEY and EMAIL_BACKEND == "anymail.backends.brevo.EmailBackend":
         "BREVO_API_KEY": BREVO_API_KEY,
     }
 
-DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "jhonriveracaicedo@gmail.com").strip()
-BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL", "jhonriveracaicedo@gmail.com").strip()
+DEFAULT_FROM_EMAIL = (
+    os.getenv("DEFAULT_FROM_EMAIL", "").strip()
+    or EMAIL_HOST_USER
+    or "noreply@sirae.local"
+)
+BREVO_SENDER_EMAIL = (
+    os.getenv("BREVO_SENDER_EMAIL", "").strip()
+    or DEFAULT_FROM_EMAIL
+)
 
 BACKEND_URL = (
     os.getenv("BACKEND_URL")
