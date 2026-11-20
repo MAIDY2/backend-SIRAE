@@ -18,6 +18,7 @@ from apps_sirae.entregas.services import (
     validar_alcance_sedes,
     validar_y_registrar_despacho_lote,
 )
+from rest_framework.permissions import IsAuthenticated
 from apps_sirae.usuarios.permissions import IsSupervisorOrAdminRole
 from apps_sirae.sedes.models import Sede
 from apps_sirae.ingredientes.models import Ingrediente
@@ -31,8 +32,12 @@ class entregasApiViewset(viewsets.ModelViewSet):
     permission_classes = [IsSupervisorOrAdminRole]
 
     def get_permissions(self):
-        if self.action in ['confirmar_recepcion', 'list', 'retrieve']:
-            from rest_framework.permissions import IsAuthenticated
+        """
+        Permite a la Jefa de Manipuladoras y personal de sede listar entregas
+        y confirmar la recepción física con firma y reporte de novedades.
+        Crear o despachar requiere rol de Supervisor o Administrador.
+        """
+        if self.action in ['list', 'retrieve', 'confirmar_recepcion']:
             return [IsAuthenticated()]
         return [IsSupervisorOrAdminRole()]
 
@@ -85,10 +90,14 @@ class entregasApiViewset(viewsets.ModelViewSet):
 
             elif (hasattr(user, 'es_jefa_manipuladoras') and user.es_jefa_manipuladoras()) or \
                  (hasattr(user, 'es_manipuladora') and user.es_manipuladora()):
-                if user.id_sede_id:
+                from django.db.models import Q
+                if getattr(user, 'id_sede_id', None):
                     qs = qs.filter(id_sede_id=user.id_sede_id)
-                elif user.id_institucion_id:
-                    qs = qs.filter(id_institucion_id=user.id_institucion_id)
+                elif getattr(user, 'id_institucion_id', None):
+                    qs = qs.filter(
+                        Q(id_institucion_id=user.id_institucion_id) |
+                        Q(id_sede__id_institucion_id=user.id_institucion_id)
+                    )
 
         id_sede = self.request.query_params.get('id_sede')
         if id_sede:
@@ -172,6 +181,37 @@ class entregasApiViewset(viewsets.ModelViewSet):
                     )
                 except Exception as ex_asig:
                     logger.warning("No se pudo descontar asignación FIFO institucional: %s", ex_asig)
+
+            # Notificar automáticamente a la sede receptora
+            try:
+                from apps_sirae.notificaciones.models import Notificacion
+                from apps_sirae.usuarios.models import Usuario
+
+                sede = prep.get('sede')
+                if sede:
+                    manipuladoras_sede = Usuario.objects.filter(
+                        id_sede=sede,
+                        is_active=True
+                    )
+                    if not manipuladoras_sede.exists() and sede.id_institucion:
+                        manipuladoras_sede = Usuario.objects.filter(
+                            id_institucion=sede.id_institucion,
+                            is_active=True,
+                            rol__nombre__icontains='manipuladora'
+                        )
+
+                    remitente_id = user_id
+                    nom_sup = getattr(self.request.user, 'nombre_completo', 'Supervisor PAE')
+                    doc = extra.get('documento_entrega') or f"#{entrega.id_entrega}"
+                    for m in manipuladoras_sede:
+                        Notificacion.objects.create(
+                            id_usuario=m.id_usuario,
+                            id_remitente=remitente_id,
+                            titulo=f"📦 Nueva entrega despachada: {doc}",
+                            mensaje=f"El Supervisor {nom_sup} ha despachado la remisión {doc} para la sede {sede.nombre_sede}. Ingresa para verificar cantidades, reportar novedades y firmar el acta.",
+                        )
+            except Exception:
+                pass
 
     @action(detail=False, methods=['get'], url_path='calcular-mercado')
     def calcular_mercado(self, request):
@@ -487,6 +527,49 @@ class entregasApiViewset(viewsets.ModelViewSet):
 
             entrega.inventario_preacreditado = False
             entrega.save()
+
+        # Notificar automáticamente al supervisor y coordinadores sobre la recepción
+        try:
+            from apps_sirae.notificaciones.models import Notificacion
+            from apps_sirae.usuarios.models import Usuario
+
+            supervisor_id = getattr(entrega, 'id_usuario_supervisor_id', None)
+            destinatarios = set()
+            if supervisor_id:
+                destinatarios.add(supervisor_id)
+            else:
+                sups = Usuario.objects.filter(
+                    rol__nombre__icontains='supervisor',
+                    is_active=True
+                ).values_list('id_usuario', flat=True)[:5]
+                destinatarios.update(sups)
+
+            nombre_sede = entrega.id_sede.nombre_sede if entrega.id_sede else "Sede Escolar"
+            doc = entrega.documento_entrega or f"#{entrega.id_entrega}"
+            usuario_nombre = request.user.nombre_completo if (request.user.is_authenticated and hasattr(request.user, 'nombre_completo')) else "Manipuladora Jefe"
+            ingrediente_nombre = entrega.id_ingrediente.nombre if hasattr(entrega.id_ingrediente, 'nombre') else f"Alimento #{entrega.id_ingrediente_id}"
+
+            if nuevo_estado == 'CON_NOVEDAD':
+                tit_notif = f"⚠️ Entrega con novedad en {nombre_sede}"
+                msg_notif = f"{usuario_nombre} recibió con novedad la remisión {doc}. {ingrediente_nombre}: Recibido {cant_recibida}, Faltante/Rechazado {cant_rechazada}. Motivo: {motivo_rechazo or 'Sin motivo especificado'}."
+            elif nuevo_estado == 'RECHAZADA':
+                tit_notif = f"❌ Entrega rechazada en {nombre_sede}"
+                msg_notif = f"{usuario_nombre} rechazó la remisión {doc} ({ingrediente_nombre}). Motivo: {motivo_rechazo or 'Sin motivo especificado'}."
+            else:
+                tit_notif = f"✅ Entrega aceptada en {nombre_sede}"
+                msg_notif = f"{usuario_nombre} firmó y aceptó conforme la remisión {doc}. Se ingresaron {cant_recibida} de {ingrediente_nombre} al inventario de la sede."
+
+            remitente_id = request.user.id_usuario if (request.user.is_authenticated and hasattr(request.user, 'id_usuario')) else None
+
+            for dest_id in destinatarios:
+                Notificacion.objects.create(
+                    id_usuario=dest_id,
+                    id_remitente=remitente_id,
+                    titulo=tit_notif,
+                    mensaje=msg_notif
+                )
+        except Exception:
+            pass
 
         serializer = self.get_serializer(entrega)
 
