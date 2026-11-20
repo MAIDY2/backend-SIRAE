@@ -470,13 +470,12 @@ def consumir_asignacion_institucion_fifo(
         return False
 
     asignaciones = list(
-        AsignacionInventario.objects.select_for_update()
+        AsignacionInventario.objects.select_for_update(of=('self',))
         .filter(
             id_institucion_id=institucion_id,
             id_ingrediente_id=id_ingrediente,
             estado='ACTIVA',
         )
-        .select_related('id_ingrediente', 'id_ingrediente__id_unidad_medida', 'id_unidad_medida')
         .order_by('fecha_asignacion', 'id_asignacion')
     )
 

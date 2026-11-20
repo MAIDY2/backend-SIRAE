@@ -301,6 +301,28 @@ class entregasApiViewset(viewsets.ModelViewSet):
         """
         try:
             resultado = validar_y_registrar_despacho_lote(request.user, request.data)
+            sede = resultado['sede']
+            calculo_obj = resultado['calculo_obj']
+            entregas_creadas = resultado['entregas_creadas']
+
+            serializer = EntregaSerializer(entregas_creadas, many=True)
+            calculo_serializer = CalculoEntregaSerializer(calculo_obj)
+
+            return Response(
+                {
+                    'mensaje': (
+                        f"Se registraron exitosamente "
+                        f"{len(entregas_creadas)} despachos "
+                        f"para la sede {sede.nombre_sede}."
+                    ),
+                    'codigo_documento': calculo_obj.codigo_documento,
+                    'id_calculo_entrega': calculo_obj.id_calculo,
+                    'total_items': len(entregas_creadas),
+                    'calculo_soporte': calculo_serializer.data,
+                    'despachos': serializer.data,
+                },
+                status=status.HTTP_201_CREATED
+            )
         except LookupError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_404_NOT_FOUND)
         except (ValidationError, Exception) as exc:
@@ -319,29 +341,6 @@ class entregasApiViewset(viewsets.ModelViewSet):
             else:
                 logger.exception("Error inesperado en despacho_lote: %s", exc)
                 return Response({'error': f"Error al procesar el despacho: {str(exc)}"}, status=status.HTTP_400_BAD_REQUEST)
-
-        sede = resultado['sede']
-        calculo_obj = resultado['calculo_obj']
-        entregas_creadas = resultado['entregas_creadas']
-
-        serializer = EntregaSerializer(entregas_creadas, many=True)
-        calculo_serializer = CalculoEntregaSerializer(calculo_obj)
-
-        return Response(
-            {
-                'mensaje': (
-                    f"Se registraron exitosamente "
-                    f"{len(entregas_creadas)} despachos "
-                    f"para la sede {sede.nombre_sede}."
-                ),
-                'codigo_documento': calculo_obj.codigo_documento,
-                'id_calculo_entrega': calculo_obj.id_calculo,
-                'total_items': len(entregas_creadas),
-                'calculo_soporte': calculo_serializer.data,
-                'despachos': serializer.data,
-            },
-            status=status.HTTP_201_CREATED
-        )
 
     @action(detail=False, methods=['get'], url_path='soportes-calculo')
     def soportes_calculo(self, request):
