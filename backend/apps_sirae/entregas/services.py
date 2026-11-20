@@ -1216,6 +1216,34 @@ def validar_y_registrar_despacho_lote(usuario, data: dict) -> dict:
             )
             entregas_creadas.append(entrega)
 
+        # Notificar automáticamente a la sede receptora (Manipuladora Jefe / personal de sede)
+        try:
+            from apps_sirae.notificaciones.models import Notificacion
+            from apps_sirae.usuarios.models import Usuario
+
+            manipuladoras_sede = Usuario.objects.filter(
+                id_sede=sede,
+                is_active=True
+            )
+            if not manipuladoras_sede.exists() and sede.id_institucion:
+                manipuladoras_sede = Usuario.objects.filter(
+                    id_institucion=sede.id_institucion,
+                    is_active=True,
+                    rol__nombre__icontains='manipuladora'
+                )
+
+            remitente_id = getattr(usuario, 'id_usuario', None)
+            nom_sup = getattr(usuario, 'nombre_completo', 'Supervisor PAE')
+            for m in manipuladoras_sede:
+                Notificacion.objects.create(
+                    id_usuario=m.id_usuario,
+                    id_remitente=remitente_id,
+                    titulo=f"📦 Nueva entrega despachada: {calculo_obj.codigo_documento}",
+                    mensaje=f"El Supervisor {nom_sup} ha despachado la remisión {calculo_obj.codigo_documento} con {len(entregas_creadas)} alimentos para la sede {sede.nombre_sede}. Ingresa para verificar cantidades, reportar novedades y firmar el acta.",
+                )
+        except Exception:
+            pass
+
     return {
         'sede': sede,
         'calculo_obj': calculo_obj,
