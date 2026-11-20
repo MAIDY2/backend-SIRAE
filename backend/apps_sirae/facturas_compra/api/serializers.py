@@ -105,6 +105,11 @@ class InventarioCentralSerializer(serializers.ModelSerializer):
         source='id_ingrediente.tipo_conservacion',
         read_only=True
     )
+    imagen_ingrediente = serializers.CharField(
+        source='id_ingrediente.imagen_ingrediente',
+        read_only=True,
+        allow_null=True
+    )
     cantidad_asignada_pendiente = serializers.SerializerMethodField(read_only=True)
     saldo_libre_asignar = serializers.SerializerMethodField(read_only=True)
 
@@ -116,6 +121,7 @@ class InventarioCentralSerializer(serializers.ModelSerializer):
             'ingrediente_nombre',
             'categoria_nombre',
             'tipo_conservacion',
+            'imagen_ingrediente',
             'cantidad_disponible',
             'cantidad_asignada_pendiente',
             'saldo_libre_asignar',

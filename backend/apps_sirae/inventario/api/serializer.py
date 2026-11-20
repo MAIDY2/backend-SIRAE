@@ -8,6 +8,7 @@ class InventarioSerializer(serializers.ModelSerializer):
     categoria_nombre = serializers.SerializerMethodField(read_only=True)
     marca = serializers.SerializerMethodField(read_only=True)
     unidad_medida_nombre = serializers.SerializerMethodField(read_only=True)
+    imagen_ingrediente = serializers.SerializerMethodField(read_only=True)
     sede_nombre = serializers.CharField(source='id_sede.nombre_sede', read_only=True)
     institucion_nombre = serializers.CharField(source='id_institucion.nombre_institucion', read_only=True)
 
@@ -24,6 +25,7 @@ class InventarioSerializer(serializers.ModelSerializer):
             'categoria_nombre',
             'marca',
             'unidad_medida_nombre',
+            'imagen_ingrediente',
             'cantidad_actual',
             'stock_minimo',
             'id_unidad_medida',
@@ -66,10 +68,18 @@ class InventarioSerializer(serializers.ModelSerializer):
         except Exception:
             return None
 
+    def get_imagen_ingrediente(self, obj):
+        try:
+            ing = self._get_ingrediente(obj)
+            return ing.imagen_ingrediente if ing else None
+        except Exception:
+            return None
+
 
 class AsignacionInventarioSerializer(serializers.ModelSerializer):
     institucion_nombre = serializers.CharField(source='id_institucion.nombre_institucion', read_only=True)
     ingrediente_nombre = serializers.CharField(source='id_ingrediente.nombre_ingrediente', read_only=True)
+    imagen_ingrediente = serializers.CharField(source='id_ingrediente.imagen_ingrediente', read_only=True, allow_null=True)
     unidad_medida_nombre = serializers.CharField(source='id_unidad_medida.nombre', read_only=True)
     unidad_medida_abreviatura = serializers.CharField(source='id_unidad_medida.abreviatura', read_only=True)
     contrato_numero = serializers.CharField(source='id_contrato.numero_cor', read_only=True)
@@ -87,6 +97,7 @@ class AsignacionInventarioSerializer(serializers.ModelSerializer):
             'contrato_numero',
             'id_ingrediente',
             'ingrediente_nombre',
+            'imagen_ingrediente',
             'id_unidad_medida',
             'unidad_medida_nombre',
             'unidad_medida_abreviatura',
