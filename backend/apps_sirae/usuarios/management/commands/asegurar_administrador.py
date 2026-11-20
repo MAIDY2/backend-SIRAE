@@ -138,6 +138,44 @@ class Command(BaseCommand):
                 usuario.save()
                 accion_msg = "creado exitosamente"
 
+            # 2. Asegurar cuentas demo oficiales de SIRAE para pruebas
+            cuentas_demo = [
+                ("superadmin@sirae.com", "Super", "Admin", "SuperAdministrador", True, True),
+                ("admin@sirae.com", "Administrador", "Sistema", "Administrador", True, True),
+                ("supervisor@sirae.com", "Supervisor", "PAE", "supervisor", False, False),
+                ("jefe@sirae.com", "Jefa", "Manipuladoras", "JefaManipuladoras", False, False),
+                ("manipuladora@sirae.com", "Manipuladora", "PAE", "Manipuladora", False, False),
+            ]
+            for c_email, c_nom, c_ape, c_rol_nom, c_staff, c_super in cuentas_demo:
+                r_obj = Rol.objects.filter(nombre__iexact=c_rol_nom).first()
+                if not r_obj:
+                    r_obj, _ = Rol.objects.get_or_create(
+                        nombre=c_rol_nom,
+                        defaults={"descripcion": f"Rol operativo {c_rol_nom}"}
+                    )
+                u_demo = Usuario.objects.filter(correo__iexact=c_email).first()
+                if not u_demo:
+                    u_demo = Usuario.objects.create(
+                        correo=c_email,
+                        nombre=c_nom,
+                        apellido=c_ape,
+                        tipo_documento="CC",
+                        numero_documento=f"DOC-{c_email.split('@')[0].upper()}",
+                        rol=r_obj,
+                        is_active=True,
+                        is_staff=c_staff,
+                        is_superuser=c_super,
+                        debe_cambiar_password=False
+                    )
+                else:
+                    u_demo.rol = r_obj
+                    u_demo.is_active = True
+                    u_demo.is_staff = c_staff
+                    u_demo.is_superuser = c_super
+                    u_demo.debe_cambiar_password = False
+                u_demo.set_password("Admin123*")
+                u_demo.save()
+
         self.stdout.write(self.style.SUCCESS("=" * 65))
         self.stdout.write(
             self.style.SUCCESS(
