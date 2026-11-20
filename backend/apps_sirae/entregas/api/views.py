@@ -446,7 +446,7 @@ class entregasApiViewset(viewsets.ModelViewSet):
         from django.utils import timezone
 
         with transaction.atomic():
-            entrega = Entrega.objects.select_for_update().get(pk=entrega.pk)
+            entrega = Entrega.objects.select_for_update(of=('self',)).get(pk=entrega.pk)
             if entrega.estado in {
                 'RECIBIDA',
                 'CON_NOVEDAD',
@@ -501,7 +501,7 @@ class entregasApiViewset(viewsets.ModelViewSet):
                     filtro_inv['id_institucion__isnull'] = True
 
             registros = list(
-                Inventario.objects.select_for_update()
+                Inventario.objects.select_for_update(of=('self',))
                 .filter(**filtro_inv)
                 .order_by('id_inventario')
             )

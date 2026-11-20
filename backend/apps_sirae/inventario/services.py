@@ -368,7 +368,7 @@ def asignar_inventario_lote(usuario, data: dict) -> dict:
             if not ing:
                 raise ValidationError({'error': f"El ingrediente {ing_id} no existe."})
 
-            inv_c = InventarioCentral.objects.select_for_update().filter(id_ingrediente=ing).first()
+            inv_c = InventarioCentral.objects.select_for_update(of=('self',)).filter(id_ingrediente=ing).first()
             if not inv_c:
                 raise ValidationError({
                     'error': f"No hay existencias en Stock Global para '{ing.nombre_ingrediente}'."
@@ -436,7 +436,7 @@ def asignar_inventario_lote(usuario, data: dict) -> dict:
 def anular_asignacion_inventario(asignacion: AsignacionInventario, motivo: str = '') -> AsignacionInventario:
     """Libera el saldo pendiente de una asignación sin alterar lo ya despachado."""
     with transaction.atomic():
-        asig = AsignacionInventario.objects.select_for_update().get(pk=asignacion.pk)
+        asig = AsignacionInventario.objects.select_for_update(of=('self',)).get(pk=asignacion.pk)
         if asig.estado == 'ANULADA':
             raise ValidationError({'error': 'Esta asignación ya se encuentra anulada.'})
 

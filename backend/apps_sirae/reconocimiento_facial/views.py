@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import UsuarioBiometria
-from .utils import compare_embeddings, image_to_embedding
+from .utils import compare_embeddings, image_to_embedding, calcular_distancia_embedding
 
 User = get_user_model()
 
@@ -106,40 +106,88 @@ def verify_face(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
-    # Recorremos los usuarios con biometría registrada activa
+    plataforma = str(request.data.get('plataforma') or request.query_params.get('plataforma') or '').strip().lower()
+
+    # Recorremos todas las biometrías activas y encontramos el mejor match (menor distancia global)
     biometrias = UsuarioBiometria.objects.filter(activo=True).select_related('usuario', 'usuario__rol')
+    mejor_usuario = None
+    mejor_distancia = 999.0
+    UMBRAL_MAXIMO = 0.60
+
     for bio in biometrias:
         try:
             db_embedding = pickle.loads(bio.embedding)
-            if compare_embeddings(db_embedding, embedding_actual):
-                usuario = bio.usuario
-                if not usuario.is_active:
-                    return Response(
-                        {"detail": "Esta cuenta se encuentra inactiva."},
-                        status=status.HTTP_403_FORBIDDEN
-                    )
-
-                # Generar tokens de sesión JWT
-                refresh = RefreshToken.for_user(usuario)
-                rol_obj = getattr(usuario, 'rol', None)
-                rol_str = getattr(rol_obj, 'nombre', '') if rol_obj else ''
-
-                return Response({
-                    "access": str(refresh.access_token),
-                    "refresh": str(refresh),
-                    "usuario": {
-                        "id_usuario": usuario.pk,
-                        "correo": usuario.correo,
-                        "nombre": usuario.nombre,
-                        "apellido": getattr(usuario, 'apellido', ''),
-                        "rol": rol_str,
-                    },
-                    "msg": f"Bienvenido(a) {usuario.nombre}"
-                }, status=status.HTTP_200_OK)
+            dist = calcular_distancia_embedding(db_embedding, embedding_actual)
+            if dist < mejor_distancia:
+                mejor_distancia = dist
+                mejor_usuario = bio.usuario
         except Exception:
             continue
 
-    return Response(
-        {"detail": "Rostro no reconocido en el sistema. Asegúrate de haberlo registrado previamente."},
-        status=status.HTTP_401_UNAUTHORIZED
+    if mejor_usuario is None or mejor_distancia > UMBRAL_MAXIMO:
+        return Response(
+            {"detail": "Rostro no reconocido en el sistema. Asegúrate de haberlo registrado previamente."},
+            status=status.HTTP_401_UNAUTHORIZED
+        )
+
+    usuario = mejor_usuario
+    if not usuario.is_active:
+        return Response(
+            {"detail": "Esta cuenta se encuentra inactiva."},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    rol_obj = getattr(usuario, 'rol', None)
+    rol_str = getattr(rol_obj, 'nombre', '') if rol_obj else ''
+    rol_lower = rol_str.lower()
+    email_lower = (usuario.correo or '').lower()
+    es_admin = (
+        usuario.is_superuser or
+        'admin' in rol_lower or
+        'super' in rol_lower or
+        'supervisor' in rol_lower or
+        'admin' in email_lower
     )
+
+    if plataforma == 'movil' and es_admin:
+        return Response(
+            {
+                "detail": (
+                    f"Acceso restringido: El usuario {usuario.nombre} tiene rol administrativo ({rol_str}). "
+                    "La aplicación móvil es de uso exclusivo para Manipuladoras y Jefas de cocina. "
+                    "Por favor ingresa desde la plataforma Web."
+                ),
+                "rol": rol_str,
+                "codigo": "ROL_NO_PERMITIDO_MOVIL"
+            },
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    if plataforma == 'web' and not es_admin and 'jefa' not in rol_lower and 'coordinad' not in rol_lower:
+        return Response(
+            {
+                "detail": (
+                    f"El usuario {usuario.nombre} tiene rol operativo ({rol_str}). "
+                    "El personal manipulador de alimentos debe ingresar a través de la aplicación móvil institucional."
+                ),
+                "rol": rol_str,
+                "codigo": "ROL_NO_PERMITIDO_WEB"
+            },
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    # Generar tokens de sesión JWT
+    refresh = RefreshToken.for_user(usuario)
+    return Response({
+        "access": str(refresh.access_token),
+        "refresh": str(refresh),
+        "usuario": {
+            "id_usuario": usuario.pk,
+            "correo": usuario.correo,
+            "nombre": usuario.nombre,
+            "apellido": getattr(usuario, 'apellido', ''),
+            "rol": rol_str,
+        },
+        "distancia": round(mejor_distancia, 4),
+        "msg": f"Bienvenido(a) {usuario.nombre}"
+    }, status=status.HTTP_200_OK)
