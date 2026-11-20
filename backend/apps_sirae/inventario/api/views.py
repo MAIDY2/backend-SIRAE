@@ -71,6 +71,13 @@ class InventarioApiViewSet(ModelViewSet):
             queryset = queryset.filter(
                 Q(id_institucion_id=institucion_id) | Q(id_sede__id_institucion_id=institucion_id)
             )
+        else:
+            user = self.request.user
+            if user and user.is_authenticated:
+                if getattr(user, 'id_sede_id', None):
+                    queryset = queryset.filter(id_sede_id=user.id_sede_id)
+                elif getattr(user, 'id_institucion_id', None) and not (hasattr(user, 'es_super_administrador') and user.es_super_administrador()):
+                    queryset = queryset.filter(id_institucion_id=user.id_institucion_id)
         return queryset
 
     def _consolidar_duplicados_existentes(self):
