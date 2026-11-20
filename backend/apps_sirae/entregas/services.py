@@ -1043,13 +1043,17 @@ def _evaluar_contexto_y_items(usuario, sede: Sede, items: list[dict], data: dict
                 'exceso': float(round(cant_dec - requerido_neto, 3)),
             })
 
+        fecha_venc_item = item.get('fecha_vencimiento') or fecha_venc_global or fallback_fecha
+        if not fecha_venc_item:
+            fecha_venc_item = str(date.today() + timedelta(days=90))
+
         items_preparados.append({
             'id_ingrediente': id_ing_int,
             'nombre_ingrediente': nombre_ing,
             'cantidad': cant_dec,
             'unidad': unidad,
             'id_tipo_mercado': id_tm_item,
-            'fecha_vencimiento': item.get('fecha_vencimiento') or fecha_venc_global,
+            'fecha_vencimiento': fecha_venc_item,
             'requerido_neto': requerido_neto,
             'requerido_total': requerido_total,
             'supera': supera,
@@ -1082,12 +1086,17 @@ def _evaluar_contexto_y_items(usuario, sede: Sede, items: list[dict], data: dict
 def _crear_snapshot_calculo(sede: Sede, usuario, data: dict, eval_ctx: dict, fallback_fecha: str) -> CalculoEntrega:
     calculo = eval_ctx['calculo']
     codigo_documento = str(data.get('codigo_documento') or '').strip() or _generar_codigo_documento(sede.id_sede)
+    while CalculoEntrega.objects.filter(codigo_documento=codigo_documento).exists():
+        codigo_documento = f"{codigo_documento}-{uuid.uuid4().hex[:4].upper()}"
+
     user_id = getattr(usuario, 'id_usuario', None) or 1
     supervisor_nombre = str(data.get('supervisor_nombre') or '').strip()
     if not supervisor_nombre and _es_usuario_bd(usuario):
         supervisor_nombre = f"{getattr(usuario, 'nombre', '')} {getattr(usuario, 'apellido', '')}".strip()
 
     contrato_id_val = calculo['contrato']['id_contrato'] if calculo.get('contrato') else data.get('id_contrato')
+    if contrato_id_val and not Contrato.objects.filter(pk=contrato_id_val).exists():
+        contrato_id_val = None
     periodo_desc = (
         str(data.get('periodo_descripcion') or '').strip()
         or (
@@ -1153,6 +1162,16 @@ def validar_y_registrar_despacho_lote(usuario, data: dict) -> dict:
     frecuencia = data.get('frecuencia', 'Quincenal')
     items = data.get('items', [])
 
+    if not id_sede and data.get('id_institucion'):
+        primera_sede = Sede.objects.filter(
+            id_institucion_id=data.get('id_institucion'),
+            estado='ACTIVO'
+        ).order_by('id_sede').first() or Sede.objects.filter(
+            id_institucion_id=data.get('id_institucion')
+        ).order_by('id_sede').first()
+        if primera_sede:
+            id_sede = primera_sede.id_sede
+
     if not id_sede or not fecha_entrega:
         raise ValidationError({
             'error': "Los campos 'id_sede' y 'fecha_entrega' son obligatorios."
@@ -1173,13 +1192,7 @@ def validar_y_registrar_despacho_lote(usuario, data: dict) -> dict:
     contrato_id_val = calculo['contrato']['id_contrato'] if calculo.get('contrato') else data.get('id_contrato')
 
     entregas_creadas = []
-    validar_asig = _es_verdadero(data.get('validar_contra_asignacion')) or (
-        bool(sede.id_institucion_id)
-        and AsignacionInventario.objects.filter(
-            id_institucion_id=sede.id_institucion_id,
-            estado__in=['ACTIVA', 'COMPLETADA'],
-        ).exists()
-    )
+    validar_asig = _es_verdadero(data.get('validar_contra_asignacion'))
     with transaction.atomic():
         calculo_obj = _crear_snapshot_calculo(sede, usuario, data, eval_ctx, str(fecha_entrega))
         for item in eval_ctx['items_preparados']:

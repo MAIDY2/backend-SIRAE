@@ -303,6 +303,22 @@ class entregasApiViewset(viewsets.ModelViewSet):
             resultado = validar_y_registrar_despacho_lote(request.user, request.data)
         except LookupError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except (ValidationError, Exception) as exc:
+            if isinstance(exc, ValidationError):
+                detail = exc.detail if hasattr(exc, 'detail') else str(exc)
+                if isinstance(detail, dict) and 'error' in detail:
+                    msg = detail['error']
+                elif isinstance(detail, dict):
+                    msg = '; '.join(f"{k}: {v}" for k, v in detail.items())
+                else:
+                    msg = str(detail)
+                return Response({'error': msg, 'detalle': detail}, status=status.HTTP_400_BAD_REQUEST)
+            elif isinstance(exc, PermissionDenied):
+                detail = exc.detail if hasattr(exc, 'detail') else str(exc)
+                return Response({'error': str(detail)}, status=status.HTTP_403_FORBIDDEN)
+            else:
+                logger.exception("Error inesperado en despacho_lote: %s", exc)
+                return Response({'error': f"Error al procesar el despacho: {str(exc)}"}, status=status.HTTP_400_BAD_REQUEST)
 
         sede = resultado['sede']
         calculo_obj = resultado['calculo_obj']
