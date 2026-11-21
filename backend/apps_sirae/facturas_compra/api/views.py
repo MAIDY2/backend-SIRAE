@@ -19,6 +19,25 @@ from .serializers import (
 )
 
 
+def _sanitizar_fecha(fecha_val):
+    if not fecha_val or not str(fecha_val).strip():
+        return None
+    val_str = str(fecha_val).strip()
+    if '/' in val_str:
+        partes = val_str.split('/')
+        if len(partes) == 3 and len(partes[0]) <= 2 and len(partes[2]) == 4:
+            val_str = f"{partes[2]}-{partes[1].zfill(2)}-{partes[0].zfill(2)}"
+    elif '-' in val_str:
+        partes = val_str.split('-')
+        if len(partes) == 3 and len(partes[0]) <= 2 and len(partes[2]) == 4:
+            val_str = f"{partes[2]}-{partes[1].zfill(2)}-{partes[0].zfill(2)}"
+    from datetime import datetime
+    try:
+        return datetime.strptime(val_str, '%Y-%m-%d').date()
+    except (ValueError, TypeError):
+        return None
+
+
 class FacturaCompraViewSet(viewsets.ModelViewSet):
     queryset = FacturaCompra.objects.all().prefetch_related('detalles__id_ingrediente')
     serializer_class = FacturaCompraSerializer
@@ -44,29 +63,28 @@ class FacturaCompraViewSet(viewsets.ModelViewSet):
                 'detalles': 'La factura debe contener al menos un detalle de producto.'
             })
 
-        numero_factura = data.get('numero_factura')
+        numero_factura = str(data.get('numero_factura') or '').strip()
         if not numero_factura:
             raise ValidationError({'numero_factura': 'El número de factura es obligatorio.'})
 
-        if FacturaCompra.objects.filter(numero_factura=str(numero_factura).strip()).exists():
-            raise ValidationError({'numero_factura': 'Ya existe una factura registrada con este número.'})
+        if FacturaCompra.objects.filter(numero_factura__iexact=numero_factura).exists():
+            raise ValidationError({'numero_factura': f'Ya existe una factura registrada con el número {numero_factura}.'})
 
-        proveedor = data.get('proveedor')
+        proveedor = str(data.get('proveedor') or '').strip()
         if not proveedor:
             raise ValidationError({'proveedor': 'El nombre del proveedor es obligatorio.'})
 
-        fecha_compra = data.get('fecha_compra')
-        if not fecha_compra:
-            raise ValidationError({'fecha_compra': 'La fecha de compra es obligatoria.'})
+        fecha_compra_raw = data.get('fecha_compra')
+        fecha_compra = _sanitizar_fecha(fecha_compra_raw) or timezone.now().date()
 
         usuario_registro = request.user if request.user and request.user.is_authenticated else None
 
         # 1. Crear la cabecera de la factura
         factura = FacturaCompra.objects.create(
-            numero_factura=str(numero_factura).strip(),
-            proveedor=str(proveedor).strip(),
+            numero_factura=numero_factura,
+            proveedor=proveedor,
             fecha_compra=fecha_compra,
-            soporte_digital=data.get('soporte_digital'),
+            soporte_digital=str(data.get('soporte_digital') or '').strip() or None,
             valor_total=Decimal('0.00'),
             estado='REGISTRADA',
             id_usuario_registro=usuario_registro,
@@ -93,9 +111,9 @@ class FacturaCompraViewSet(viewsets.ModelViewSet):
             subtotal = Decimal(str(item.get('subtotal', cantidad * precio_unitario)))
             total_acumulado += subtotal
 
-            # Validación de perecedero (lote y vencimiento)
-            numero_lote = item.get('numero_lote')
-            fecha_vencimiento = item.get('fecha_vencimiento')
+            # Validación y sanitización de perecedero (lote y vencimiento)
+            numero_lote = str(item.get('numero_lote') or '').strip() or None
+            fecha_vencimiento = _sanitizar_fecha(item.get('fecha_vencimiento'))
 
             DetalleFacturaCompra.objects.create(
                 id_factura=factura,
@@ -116,22 +134,25 @@ class FacturaCompraViewSet(viewsets.ModelViewSet):
                     'stock_minimo': Decimal('0.000'),
                 }
             )
-            inv_central.cantidad_disponible += cantidad
+            inv_central.cantidad_disponible = (inv_central.cantidad_disponible or Decimal('0.000')) + cantidad
             if ingrediente.id_unidad_medida and not inv_central.id_unidad_medida:
                 inv_central.id_unidad_medida = ingrediente.id_unidad_medida
             inv_central.save()
 
             # Sincronizar también con el Inventario General (id_sede=None) para catálogos y reportes
             unidad_id = ingrediente.id_unidad_medida_id if ingrediente.id_unidad_medida_id else 1
-            inv_general, _ = Inventario.objects.get_or_create(
+            inv_general = Inventario.objects.filter(
                 id_ingrediente=ingrediente.id_ingrediente,
                 id_sede=None,
-                defaults={
-                    'cantidad_actual': Decimal('0.00'),
-                    'stock_minimo': Decimal('0.00'),
-                    'id_unidad_medida': unidad_id
-                }
-            )
+            ).first()
+            if not inv_general:
+                inv_general = Inventario.objects.create(
+                    id_ingrediente=ingrediente.id_ingrediente,
+                    id_sede=None,
+                    cantidad_actual=Decimal('0.00'),
+                    stock_minimo=Decimal('0.00'),
+                    id_unidad_medida=unidad_id
+                )
             inv_general.cantidad_actual = (inv_general.cantidad_actual or Decimal('0.00')) + cantidad
             if ingrediente.id_unidad_medida_id:
                 inv_general.id_unidad_medida = ingrediente.id_unidad_medida_id

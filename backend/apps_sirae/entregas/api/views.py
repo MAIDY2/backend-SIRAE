@@ -92,7 +92,19 @@ class entregasApiViewset(viewsets.ModelViewSet):
                  (hasattr(user, 'es_manipuladora') and user.es_manipuladora()):
                 from django.db.models import Q
                 if getattr(user, 'id_sede_id', None):
-                    qs = qs.filter(id_sede_id=user.id_sede_id)
+                    # Incluir entregas dirigidas específicamente a su sede,
+                    # o despachos generales de la institución a la que pertenece
+                    inst_user_id = getattr(user, 'id_institucion_id', None)
+                    if not inst_user_id and getattr(user, 'id_sede', None):
+                        inst_user_id = getattr(user.id_sede, 'id_institucion_id', None)
+
+                    if inst_user_id:
+                        qs = qs.filter(
+                            Q(id_sede_id=user.id_sede_id) |
+                            Q(id_sede__isnull=True, id_institucion_id=inst_user_id)
+                        )
+                    else:
+                        qs = qs.filter(id_sede_id=user.id_sede_id)
                 elif getattr(user, 'id_institucion_id', None):
                     qs = qs.filter(
                         Q(id_institucion_id=user.id_institucion_id) |
@@ -101,7 +113,15 @@ class entregasApiViewset(viewsets.ModelViewSet):
 
         id_sede = self.request.query_params.get('id_sede')
         if id_sede:
-            qs = qs.filter(id_sede_id=id_sede)
+            from django.db.models import Q
+            sede_obj = Sede.objects.filter(pk=id_sede).first()
+            if sede_obj and sede_obj.id_institucion_id:
+                qs = qs.filter(
+                    Q(id_sede_id=id_sede) |
+                    Q(id_sede__isnull=True, id_institucion_id=sede_obj.id_institucion_id)
+                )
+            else:
+                qs = qs.filter(id_sede_id=id_sede)
 
         id_institucion = self.request.query_params.get('id_institucion')
         if id_institucion:
@@ -188,6 +208,10 @@ class entregasApiViewset(viewsets.ModelViewSet):
                 from apps_sirae.usuarios.models import Usuario
 
                 sede = prep.get('sede')
+                remitente_id = user_id
+                nom_sup = getattr(self.request.user, 'nombre_completo', None) or getattr(self.request.user, 'username', 'Supervisor PAE')
+                doc = extra.get('documento_entrega') or f"#{entrega.id_entrega}"
+
                 if sede:
                     manipuladoras_sede = Usuario.objects.filter(
                         id_sede=sede,
@@ -199,10 +223,6 @@ class entregasApiViewset(viewsets.ModelViewSet):
                             is_active=True,
                             rol__nombre__icontains='manipuladora'
                         )
-
-                    remitente_id = user_id
-                    nom_sup = getattr(self.request.user, 'nombre_completo', 'Supervisor PAE')
-                    doc = extra.get('documento_entrega') or f"#{entrega.id_entrega}"
                     for m in manipuladoras_sede:
                         Notificacion.objects.create(
                             id_usuario=m.id_usuario,
@@ -210,8 +230,23 @@ class entregasApiViewset(viewsets.ModelViewSet):
                             titulo=f"📦 Nueva entrega despachada: {doc}",
                             mensaje=f"El Supervisor {nom_sup} ha despachado la remisión {doc} para la sede {sede.nombre_sede}. Ingresa para verificar cantidades, reportar novedades y firmar el acta.",
                         )
-            except Exception:
-                pass
+                elif inst_id:
+                    # Despacho institucional general: notificar a todas las manipuladoras de las sedes de la institución
+                    manipuladoras_inst = Usuario.objects.filter(
+                        id_institucion_id=inst_id,
+                        is_active=True,
+                        rol__nombre__icontains='manipuladora'
+                    )
+                    inst_nom = getattr(entrega.id_institucion, 'nombre_institucion', None) or getattr(entrega.id_institucion, 'nombre', 'tu institución')
+                    for m in manipuladoras_inst:
+                        Notificacion.objects.create(
+                            id_usuario=m.id_usuario,
+                            id_remitente=remitente_id,
+                            titulo=f"📦 Nueva entrega despachada: {doc}",
+                            mensaje=f"El Supervisor {nom_sup} ha despachado la remisión {doc} para {inst_nom}. Ingresa para verificar cantidades, reportar novedades y firmar el acta.",
+                        )
+            except Exception as ex_notif:
+                logger.warning("No se pudo generar notificación de entrega: %s", ex_notif)
 
     @action(detail=False, methods=['get'], url_path='calcular-mercado')
     def calcular_mercado(self, request):
@@ -301,31 +336,46 @@ class entregasApiViewset(viewsets.ModelViewSet):
         """
         try:
             resultado = validar_y_registrar_despacho_lote(request.user, request.data)
+            sede = resultado['sede']
+            calculo_obj = resultado['calculo_obj']
+            entregas_creadas = resultado['entregas_creadas']
+
+            serializer = EntregaSerializer(entregas_creadas, many=True)
+            calculo_serializer = CalculoEntregaSerializer(calculo_obj)
+
+            return Response(
+                {
+                    'mensaje': (
+                        f"Se registraron exitosamente "
+                        f"{len(entregas_creadas)} despachos "
+                        f"para la sede {sede.nombre_sede}."
+                    ),
+                    'codigo_documento': calculo_obj.codigo_documento,
+                    'id_calculo_entrega': calculo_obj.id_calculo,
+                    'total_items': len(entregas_creadas),
+                    'calculo_soporte': calculo_serializer.data,
+                    'despachos': serializer.data,
+                },
+                status=status.HTTP_201_CREATED
+            )
         except LookupError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_404_NOT_FOUND)
-
-        sede = resultado['sede']
-        calculo_obj = resultado['calculo_obj']
-        entregas_creadas = resultado['entregas_creadas']
-
-        serializer = EntregaSerializer(entregas_creadas, many=True)
-        calculo_serializer = CalculoEntregaSerializer(calculo_obj)
-
-        return Response(
-            {
-                'mensaje': (
-                    f"Se registraron exitosamente "
-                    f"{len(entregas_creadas)} despachos "
-                    f"para la sede {sede.nombre_sede}."
-                ),
-                'codigo_documento': calculo_obj.codigo_documento,
-                'id_calculo_entrega': calculo_obj.id_calculo,
-                'total_items': len(entregas_creadas),
-                'calculo_soporte': calculo_serializer.data,
-                'despachos': serializer.data,
-            },
-            status=status.HTTP_201_CREATED
-        )
+        except (ValidationError, Exception) as exc:
+            if isinstance(exc, ValidationError):
+                detail = exc.detail if hasattr(exc, 'detail') else str(exc)
+                if isinstance(detail, dict) and 'error' in detail:
+                    msg = detail['error']
+                elif isinstance(detail, dict):
+                    msg = '; '.join(f"{k}: {v}" for k, v in detail.items())
+                else:
+                    msg = str(detail)
+                return Response({'error': msg, 'detalle': detail}, status=status.HTTP_400_BAD_REQUEST)
+            elif isinstance(exc, PermissionDenied):
+                detail = exc.detail if hasattr(exc, 'detail') else str(exc)
+                return Response({'error': str(detail)}, status=status.HTTP_403_FORBIDDEN)
+            else:
+                logger.exception("Error inesperado en despacho_lote: %s", exc)
+                return Response({'error': f"Error al procesar el despacho: {str(exc)}"}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=False, methods=['get'], url_path='soportes-calculo')
     def soportes_calculo(self, request):
@@ -431,7 +481,7 @@ class entregasApiViewset(viewsets.ModelViewSet):
         from django.utils import timezone
 
         with transaction.atomic():
-            entrega = Entrega.objects.select_for_update().get(pk=entrega.pk)
+            entrega = Entrega.objects.select_for_update(of=('self',)).get(pk=entrega.pk)
             if entrega.estado in {
                 'RECIBIDA',
                 'CON_NOVEDAD',
@@ -486,7 +536,7 @@ class entregasApiViewset(viewsets.ModelViewSet):
                     filtro_inv['id_institucion__isnull'] = True
 
             registros = list(
-                Inventario.objects.select_for_update()
+                Inventario.objects.select_for_update(of=('self',))
                 .filter(**filtro_inv)
                 .order_by('id_inventario')
             )

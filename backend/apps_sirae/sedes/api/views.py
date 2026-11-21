@@ -67,15 +67,36 @@ class SedeViewSet(viewsets.ModelViewSet):
             )
 
         # ── GET: consultar configuración actual ──────────────────────────────
-        contratos = Contrato.objects.filter(id_sede_id=sede.id_sede)
-        cupos_totales = contratos.aggregate(total=Sum('cupos'))['total'] or 0
+        from django.db.models import Q
+        from apps_sirae.contratos_pae.models import DistribucionSede
+
+        distribuciones = DistribucionSede.objects.filter(id_sede=sede).select_related('id_contrato')
+        contratos_ids_dist = [d.id_contrato_id for d in distribuciones if d.id_contrato_id]
+
+        contratos_qs = Contrato.objects.filter(
+            Q(id_sede_id=sede.id_sede) |
+            Q(id_contrato__in=contratos_ids_dist) |
+            (Q(id_institucion_id=sede.id_institucion_id) & ~Q(id_institucion_id=None))
+        ).distinct()
+
+        contratos_activos = contratos_qs.filter(estado__in=['Activo', 'ACTIVO'])
+        contratos = contratos_activos if contratos_activos.exists() else contratos_qs
+
+        cupos_distribuidos = distribuciones.aggregate(total=Sum('cupos_asignados'))['total'] or 0
+        if cupos_distribuidos > 0:
+            cupos_totales = cupos_distribuidos
+        elif getattr(sede, 'cupos', 0):
+            cupos_totales = sede.cupos
+        else:
+            cupos_totales = contratos.aggregate(total=Sum('cupos'))['total'] or 0
+
         cupos_por_jornada = {
             item['id_jornada_id']: item['total'] or 0
             for item in contratos.values('id_jornada_id').annotate(total=Sum('cupos'))
             if item['id_jornada_id'] is not None
         }
 
-        # Identificar jornadas autorizadas para esta sede mediante sus contratos
+        # Identificar jornadas autorizadas para esta sede mediante sus contratos o sede_jornadas
         jornadas_autorizadas_ids = set(cupos_por_jornada.keys())
 
         # Secciones de menú por jornada
@@ -102,6 +123,19 @@ class SedeViewSet(viewsets.ModelViewSet):
             .prefetch_related('grados_atendidos__id_grado')
             .order_by('id_jornada__nombre_jornada')
         )
+        for sj in sede_jornadas:
+            if sj.id_jornada_id:
+                jornadas_autorizadas_ids.add(sj.id_jornada_id)
+
+        # Si aún no hay jornadas específicas restringidas pero la sede tiene cupos autorizados,
+        # habilitar las jornadas activas del catálogo para que el administrador pueda configurarlas
+        if not jornadas_autorizadas_ids and cupos_totales > 0:
+            from apps_sirae.jornadas.models import Jornada
+            jornadas_autorizadas_ids = set(
+                Jornada.objects.filter(estado__in=['ACTIVO', 'ACTIVA', 'Activo', 'Activa']).values_list('id_jornada', flat=True)
+            )
+            if not jornadas_autorizadas_ids:
+                jornadas_autorizadas_ids = set(Jornada.objects.values_list('id_jornada', flat=True)[:2])
 
         jornada_por_id = {}
         for sj in sede_jornadas:

@@ -16,7 +16,7 @@ def descontar_inventario_al_despachar(sender, instance, created, **kwargs):
             sede_id = instance.id_sede_id
             cant = Decimal(str(instance.cantidad or 0))
 
-            inv_central = InventarioCentral.objects.select_for_update().filter(
+            inv_central = InventarioCentral.objects.select_for_update(of=('self',)).filter(
                 id_ingrediente_id=id_ing
             ).first()
             if inv_central:
@@ -27,7 +27,7 @@ def descontar_inventario_al_despachar(sender, instance, created, **kwargs):
                 inv_central.save(update_fields=['cantidad_disponible', 'fecha_ultima_actualizacion'])
 
             if sede_id is not None:
-                inv_global = Inventario.objects.select_for_update().filter(
+                inv_global = Inventario.objects.select_for_update(of=('self',)).filter(
                     id_ingrediente=id_ing,
                     id_sede__isnull=True,
                     id_institucion__isnull=True,

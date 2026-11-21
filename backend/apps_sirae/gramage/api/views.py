@@ -4,6 +4,7 @@ from django.db import transaction
 from django.db.models import Q
 from rest_framework import status
 from rest_framework.decorators import action
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
@@ -36,8 +37,20 @@ def _etiqueta_unidad(unidad):
     return f"{unidad.nombre} ({unidad.abreviatura})"
 
 
+class GramagePagination(PageNumberPagination):
+    page_size = 2000
+    page_size_query_param = 'page_size'
+    max_page_size = 10000
+
+    def paginate_queryset(self, queryset, request, view=None):
+        if request.query_params.get('todos', '').lower() in ('1', 'true', 'yes') or request.query_params.get('page_size') == '0':
+            return None
+        return super().paginate_queryset(queryset, request, view=view)
+
+
 class GramageApiViewSet(ModelViewSet):
     serializer_class = GramageSerializer
+    pagination_class = GramagePagination
     permission_classes = [IsSuperAdminOrReadOnly]
     queryset = Gramage.objects.select_related(
         'id_ingrediente',
@@ -319,6 +332,118 @@ class GramageApiViewSet(ModelViewSet):
     def consultar_por_alcance(self, request):
         resultado = consultar_gramajes_por_alcance(request.user, request.query_params)
         return Response(resultado, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='asignar-por-grados')
+    def asignar_por_grados(self, request):
+        """
+        Asigna o actualiza los gramajes de un ingrediente para múltiples grados a la vez.
+        Payload esperado:
+        {
+            "id_ingrediente": 3,
+            "id_unidad_medida": 1,
+            "descripcion": "...",
+            "grados": [
+                {"id_grado": 1, "cantidad_gramaje": 90.0, "estado": "ACTIVO"},
+                {"id_grado": 2, "cantidad_gramaje": 90.0, "estado": "ACTIVO"}
+            ]
+        }
+        """
+        data = request.data
+        id_ingrediente = data.get('id_ingrediente')
+        id_unidad_medida = data.get('id_unidad_medida')
+        descripcion = data.get('descripcion', '')
+        grados_data = data.get('grados', [])
+
+        if not id_ingrediente:
+            return Response({'error': 'Debe especificar el ingrediente.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not id_unidad_medida:
+            ing = Ingrediente.objects.filter(pk=id_ingrediente).first()
+            if ing and ing.id_unidad_medida_id:
+                id_unidad_medida = ing.id_unidad_medida_id
+            else:
+                from apps_sirae.unidades_medida.models import UnidadMedida
+                u_gr = UnidadMedida.objects.filter(abreviatura__iexact='gr').first() or UnidadMedida.objects.filter(nombre__icontains='gramo').first() or UnidadMedida.objects.first()
+                id_unidad_medida = u_gr.pk if u_gr else 1
+        if not isinstance(grados_data, list) or not grados_data:
+            return Response({'error': 'Debe proporcionar al menos un grado con su gramaje.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        usuario = _resolver_usuario_persistido(request.user)
+        guardados = []
+
+        with transaction.atomic():
+            for g_item in grados_data:
+                id_grado = g_item.get('id_grado')
+                raw_cant = g_item.get('cantidad_gramaje') or g_item.get('cantidad_gramage')
+                if not id_grado or raw_cant is None:
+                    continue
+                try:
+                    cant = Decimal(str(raw_cant))
+                except Exception:
+                    continue
+                if cant <= 0:
+                    continue
+
+                estado = g_item.get('estado', 'ACTIVO')
+                gramaje = Gramage.objects.filter(
+                    id_ingrediente_id=id_ingrediente,
+                    id_grado_id=id_grado
+                ).first()
+
+                if gramaje:
+                    cant_ant = gramaje.cantidad_gramaje
+                    gramaje.cantidad_gramaje = cant
+                    gramaje.id_unidad_medida_id = id_unidad_medida
+                    gramaje.estado = estado
+                    if descripcion:
+                        gramaje.descripcion = descripcion
+                    gramaje.id_usuario_modificacion = usuario
+                    gramaje.save()
+                    HistorialGramaje.objects.create(
+                        id_gramaje=gramaje,
+                        tipo_evento='MODIFICACION',
+                        cantidad_anterior=cant_ant,
+                        cantidad_nueva=cant,
+                        unidad_anterior=_etiqueta_unidad(gramaje.id_unidad_medida),
+                        unidad_nueva=_etiqueta_unidad(gramaje.id_unidad_medida),
+                        estado_anterior=gramaje.estado,
+                        estado_nuevo=estado,
+                        id_usuario_modificacion=usuario,
+                    )
+                else:
+                    gramaje = Gramage.objects.create(
+                        id_ingrediente_id=id_ingrediente,
+                        id_grado_id=id_grado,
+                        id_unidad_medida_id=id_unidad_medida,
+                        cantidad_gramaje=cant,
+                        descripcion=descripcion,
+                        estado=estado,
+                        id_usuario_modificacion=usuario,
+                    )
+                    HistorialGramaje.objects.create(
+                        id_gramaje=gramaje,
+                        tipo_evento='CREACION',
+                        cantidad_anterior=None,
+                        cantidad_nueva=cant,
+                        unidad_anterior='',
+                        unidad_nueva=_etiqueta_unidad(gramaje.id_unidad_medida),
+                        estado_anterior='',
+                        estado_nuevo=estado,
+                        id_usuario_modificacion=usuario,
+                    )
+                guardados.append(GramageSerializer(gramaje).data)
+
+        return Response({
+            'mensaje': f'Se configuraron {len(guardados)} gramajes exitosamente.',
+            'gramajes': guardados
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['delete', 'post'], url_path='eliminar-por-ingrediente')
+    def eliminar_por_ingrediente(self, request):
+        id_ingrediente = request.data.get('id_ingrediente') or request.query_params.get('id_ingrediente')
+        if not id_ingrediente:
+            return Response({'error': 'id_ingrediente requerido'}, status=status.HTTP_400_BAD_REQUEST)
+        Gramage.objects.filter(id_ingrediente_id=id_ingrediente).update(estado='INACTIVO')
+        return Response({'mensaje': 'Gramajes del ingrediente actualizados a INACTIVO correctamente.'}, status=status.HTTP_200_OK)
 
     def destroy(self, request, *args, **kwargs):
         return Response(

@@ -3358,7 +3358,7 @@ def descontar_inventario_ia(request):
             inv_obj = None
             if id_ing:
                 inv_obj = (
-                    Inventario.objects.select_for_update()
+                    Inventario.objects.select_for_update(of=('self',))
                     .filter(id_sede_id=id_sede, id_ingrediente=id_ing)
                     .first()
                 )
@@ -3368,7 +3368,7 @@ def descontar_inventario_ia(request):
                 ing_match = Ingrediente.objects.filter(nombre_ingrediente__iexact=nombre).first()
                 if ing_match:
                     inv_obj = (
-                        Inventario.objects.select_for_update()
+                        Inventario.objects.select_for_update(of=('self',))
                         .filter(id_sede_id=id_sede, id_ingrediente=ing_match.id_ingrediente)
                         .first()
                     )

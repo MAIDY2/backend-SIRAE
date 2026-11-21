@@ -7,7 +7,7 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
-from apps_sirae.contratos_pae.models import Contrato
+from apps_sirae.contratos_pae.models import Contrato, DistribucionGrado, DistribucionSede
 from apps_sirae.detalle_plato.models import DetallePlato
 from apps_sirae.entregas.models import CalculoEntrega, Entrega
 from apps_sirae.facturas_compra.models import InventarioCentral
@@ -170,6 +170,8 @@ def _resolver_cupos_sede(
 ):
     """
     Consulta los cupos proyectados por sede/jornada/grado y construye la lista de unidades de cálculo.
+    Prioriza la distribución de cupos parametrizada en el contrato PAE (DistribucionSede / DistribucionGrado)
+    y los registros de SedeJornada.
     """
     sj_qs = (
         SedeJornada.objects.filter(id_sede=sede)
@@ -186,61 +188,180 @@ def _resolver_cupos_sede(
     faltantes = []
     total_cupos = 0
 
-    for sj in sj_qs:
-        nombre_j = sj.id_jornada.nombre_jornada if sj.id_jornada else f"Jornada #{sj.id_jornada_id}"
-        grados_activos = [
-            g for g in sj.grados_atendidos.all()
-            if (g.estado or '').upper() == 'ACTIVO'
-        ]
-        if id_grado_filtro:
-            grados_activos = [g for g in grados_activos if g.id_grado_id == int(id_grado_filtro)]
-        if id_grupo_filtro:
+    # 1. Buscar si la sede tiene distribución directa configurada en el contrato PAE
+    dist_sede = None
+    if contrato:
+        dist_sede = (
+            DistribucionSede.objects.filter(id_contrato=contrato, id_sede=sede)
+            .prefetch_related('grados__id_grado__id_grupo_gramaje')
+            .first()
+        )
+    if not dist_sede and getattr(sede, 'id_institucion_id', None):
+        dist_sede = (
+            DistribucionSede.objects.filter(
+                id_sede=sede,
+                id_contrato__id_institucion_id=sede.id_institucion_id,
+            )
+            .order_by('-id_distribucion_sede')
+            .prefetch_related('grados__id_grado__id_grupo_gramaje')
+            .first()
+        )
+    if not dist_sede:
+        dist_sede = (
+            DistribucionSede.objects.filter(id_sede=sede)
+            .order_by('-id_distribucion_sede')
+            .prefetch_related('grados__id_grado__id_grupo_gramaje')
+            .first()
+        )
+
+    tiene_cupos_sj = sj_qs.exists() and any(int(sj.cupos or 0) > 0 for sj in sj_qs)
+
+    if tiene_cupos_sj:
+        for sj in sj_qs:
+            nombre_j = sj.id_jornada.nombre_jornada if sj.id_jornada else f"Jornada #{sj.id_jornada_id}"
             grados_activos = [
-                g for g in grados_activos
+                g for g in sj.grados_atendidos.all()
+                if (g.estado or '').upper() == 'ACTIVO'
+            ]
+            if id_grado_filtro:
+                grados_activos = [g for g in grados_activos if g.id_grado_id == int(id_grado_filtro)]
+            if id_grupo_filtro:
+                grados_activos = [
+                    g for g in grados_activos
+                    if g.id_grado and g.id_grado.id_grupo_gramaje_id == int(id_grupo_filtro)
+                ]
+
+            cupos_j = int(sj.cupos or 0)
+            suma_grados_j = sum(int(g.cupos or 0) for g in grados_activos)
+
+            grados_serializados = []
+            if grados_activos:
+                cupos_efectivos_j = suma_grados_j
+                total_cupos += cupos_efectivos_j
+
+                if cupos_j > 0 and suma_grados_j != cupos_j and not id_grado_filtro and not id_grupo_filtro:
+                    faltantes.append({
+                        'tipo': 'CUPOS_GRADO',
+                        'nivel': 'ADVERTENCIA',
+                        'id_jornada': sj.id_jornada_id,
+                        'nombre_jornada': nombre_j,
+                        'mensaje': (
+                            f"En jornada '{nombre_j}', la suma de cupos por grado ({suma_grados_j}) "
+                            f"difiere de los cupos totales de la jornada ({cupos_j})."
+                        ),
+                    })
+
+                for sg in grados_activos:
+                    grado = sg.id_grado
+                    grupo = getattr(grado, 'id_grupo_gramaje', None) if grado else None
+                    cupos_g = int(sg.cupos or 0)
+                    if cupos_g == 0:
+                        faltantes.append({
+                            'tipo': 'CUPOS',
+                            'nivel': 'ADVERTENCIA',
+                            'id_grado': sg.id_grado_id,
+                            'nombre_grado': grado.nombre_grado if grado else '',
+                            'mensaje': (
+                                f"El grado '{grado.nombre_grado if grado else sg.id_grado_id}' en jornada "
+                                f"'{nombre_j}' tiene 0 cupos proyectados."
+                            ),
+                        })
+                    item_g = {
+                        'id_sede_jornada': sj.id_sede_jornada,
+                        'id_jornada': sj.id_jornada_id,
+                        'nombre_jornada': nombre_j,
+                        'id_grado': sg.id_grado_id,
+                        'nombre_grado': grado.nombre_grado if grado else f"Grado #{sg.id_grado_id}",
+                        'nivel_educativo': grado.nivel_educativo if grado else None,
+                        'id_grupo_gramaje': grupo.pk if grupo else None,
+                        'nombre_grupo_gramaje': grupo.nombre if grupo else None,
+                        'cupos': cupos_g,
+                        'es_general': False,
+                    }
+                    grados_serializados.append(item_g)
+                    if cupos_g > 0:
+                        asignaciones.append(item_g)
+                        resumen_grados_map.setdefault(sg.id_grado_id, {
+                            'id_grado': sg.id_grado_id,
+                            'nombre_grado': item_g['nombre_grado'],
+                            'nivel_educativo': item_g['nivel_educativo'],
+                            'nombre_grupo_gramaje': item_g['nombre_grupo_gramaje'],
+                            'cupos': 0,
+                        })
+                        resumen_grados_map[sg.id_grado_id]['cupos'] += cupos_g
+            else:
+                # Jornada sin segmentación por grados aún: usar cupos generales de SedeJornada
+                total_cupos += cupos_j
+                if cupos_j > 0:
+                    faltantes.append({
+                        'tipo': 'CUPOS_GRADO',
+                        'nivel': 'ADVERTENCIA',
+                        'id_jornada': sj.id_jornada_id,
+                        'nombre_jornada': nombre_j,
+                        'mensaje': (
+                            f"La jornada '{nombre_j}' tiene {cupos_j} cupos sin desglose por grado escolar; "
+                            "se usará gramaje general cuando exista."
+                        ),
+                    })
+                    asignaciones.append({
+                        'id_sede_jornada': sj.id_sede_jornada,
+                        'id_jornada': sj.id_jornada_id,
+                        'nombre_jornada': nombre_j,
+                        'id_grado': None,
+                        'nombre_grado': 'General (sin desglose por grado)',
+                        'nivel_educativo': None,
+                        'id_grupo_gramaje': None,
+                        'nombre_grupo_gramaje': None,
+                        'cupos': cupos_j,
+                        'es_general': True,
+                    })
+                else:
+                    faltantes.append({
+                        'tipo': 'CUPOS',
+                        'nivel': 'ERROR',
+                        'id_jornada': sj.id_jornada_id,
+                        'nombre_jornada': nombre_j,
+                        'mensaje': f"La jornada '{nombre_j}' no tiene cupos configurados.",
+                    })
+
+            detalle_jornadas.append({
+                'id_sede_jornada': sj.id_sede_jornada,
+                'id_jornada': sj.id_jornada_id,
+                'nombre_jornada': nombre_j,
+                'cupos': suma_grados_j if grados_activos else cupos_j,
+                'grados': grados_serializados,
+            })
+
+    elif dist_sede and int(dist_sede.cupos_asignados or 0) > 0:
+        # Usar cupos configurados en la distribución del Contrato PAE para esta sede
+        cupos_sede_dist = int(dist_sede.cupos_asignados or 0)
+        grados_dist = list(dist_sede.grados.select_related('id_grado__id_grupo_gramaje').all())
+
+        if id_grado_filtro:
+            grados_dist = [g for g in grados_dist if g.id_grado_id == int(id_grado_filtro)]
+        if id_grupo_filtro:
+            grados_dist = [
+                g for g in grados_dist
                 if g.id_grado and g.id_grado.id_grupo_gramaje_id == int(id_grupo_filtro)
             ]
 
-        cupos_j = int(sj.cupos or 0)
-        suma_grados_j = sum(int(g.cupos or 0) for g in grados_activos)
-
+        nombre_j = getattr(getattr(contrato, 'id_jornada', None), 'nombre_jornada', 'Jornada Contrato') or 'Jornada Contrato'
         grados_serializados = []
-        if grados_activos:
-            cupos_efectivos_j = suma_grados_j
-            total_cupos += cupos_efectivos_j
 
-            if cupos_j > 0 and suma_grados_j != cupos_j and not id_grado_filtro and not id_grupo_filtro:
-                faltantes.append({
-                    'tipo': 'CUPOS_GRADO',
-                    'nivel': 'ADVERTENCIA',
-                    'id_jornada': sj.id_jornada_id,
-                    'nombre_jornada': nombre_j,
-                    'mensaje': (
-                        f"En jornada '{nombre_j}', la suma de cupos por grado ({suma_grados_j}) "
-                        f"difiere de los cupos totales de la jornada ({cupos_j})."
-                    ),
-                })
+        if grados_dist:
+            suma_grados = sum(int(g.cupos_asignados or 0) for g in grados_dist)
+            total_cupos = suma_grados if suma_grados > 0 else cupos_sede_dist
 
-            for sg in grados_activos:
-                grado = sg.id_grado
+            for dg in grados_dist:
+                grado = dg.id_grado
                 grupo = getattr(grado, 'id_grupo_gramaje', None) if grado else None
-                cupos_g = int(sg.cupos or 0)
-                if cupos_g == 0:
-                    faltantes.append({
-                        'tipo': 'CUPOS',
-                        'nivel': 'ADVERTENCIA',
-                        'id_grado': sg.id_grado_id,
-                        'nombre_grado': grado.nombre_grado if grado else '',
-                        'mensaje': (
-                            f"El grado '{grado.nombre_grado if grado else sg.id_grado_id}' en jornada "
-                            f"'{nombre_j}' tiene 0 cupos proyectados."
-                        ),
-                    })
+                cupos_g = int(dg.cupos_asignados or 0)
                 item_g = {
-                    'id_sede_jornada': sj.id_sede_jornada,
-                    'id_jornada': sj.id_jornada_id,
+                    'id_sede_jornada': None,
+                    'id_jornada': getattr(contrato, 'id_jornada_id', None),
                     'nombre_jornada': nombre_j,
-                    'id_grado': sg.id_grado_id,
-                    'nombre_grado': grado.nombre_grado if grado else f"Grado #{sg.id_grado_id}",
+                    'id_grado': dg.id_grado_id,
+                    'nombre_grado': grado.nombre_grado if grado else f"Grado #{dg.id_grado_id}",
                     'nivel_educativo': grado.nivel_educativo if grado else None,
                     'id_grupo_gramaje': grupo.pk if grupo else None,
                     'nombre_grupo_gramaje': grupo.nombre if grupo else None,
@@ -250,64 +371,45 @@ def _resolver_cupos_sede(
                 grados_serializados.append(item_g)
                 if cupos_g > 0:
                     asignaciones.append(item_g)
-                    resumen_grados_map.setdefault(sg.id_grado_id, {
-                        'id_grado': sg.id_grado_id,
+                    resumen_grados_map.setdefault(dg.id_grado_id, {
+                        'id_grado': dg.id_grado_id,
                         'nombre_grado': item_g['nombre_grado'],
                         'nivel_educativo': item_g['nivel_educativo'],
                         'nombre_grupo_gramaje': item_g['nombre_grupo_gramaje'],
                         'cupos': 0,
                     })
-                    resumen_grados_map[sg.id_grado_id]['cupos'] += cupos_g
+                    resumen_grados_map[dg.id_grado_id]['cupos'] += cupos_g
         else:
-            # Jornada sin segmentación por grados aún: usar cupos generales de SedeJornada
-            total_cupos += cupos_j
-            if cupos_j > 0:
-                faltantes.append({
-                    'tipo': 'CUPOS_GRADO',
-                    'nivel': 'ADVERTENCIA',
-                    'id_jornada': sj.id_jornada_id,
-                    'nombre_jornada': nombre_j,
-                    'mensaje': (
-                        f"La jornada '{nombre_j}' tiene {cupos_j} cupos sin desglose por grado escolar; "
-                        "se usará gramaje general cuando exista."
-                    ),
-                })
-                asignaciones.append({
-                    'id_sede_jornada': sj.id_sede_jornada,
-                    'id_jornada': sj.id_jornada_id,
-                    'nombre_jornada': nombre_j,
-                    'id_grado': None,
-                    'nombre_grado': 'General (sin desglose por grado)',
-                    'nivel_educativo': None,
-                    'id_grupo_gramaje': None,
-                    'nombre_grupo_gramaje': None,
-                    'cupos': cupos_j,
-                    'es_general': True,
-                })
-            else:
-                faltantes.append({
-                    'tipo': 'CUPOS',
-                    'nivel': 'ERROR',
-                    'id_jornada': sj.id_jornada_id,
-                    'nombre_jornada': nombre_j,
-                    'mensaje': f"La jornada '{nombre_j}' no tiene cupos configurados.",
-                })
+            total_cupos = cupos_sede_dist
+            asignaciones.append({
+                'id_sede_jornada': None,
+                'id_jornada': getattr(contrato, 'id_jornada_id', None),
+                'nombre_jornada': nombre_j,
+                'id_grado': None,
+                'nombre_grado': 'General (distribución por sede)',
+                'nivel_educativo': None,
+                'id_grupo_gramaje': None,
+                'nombre_grupo_gramaje': None,
+                'cupos': cupos_sede_dist,
+                'es_general': True,
+            })
 
         detalle_jornadas.append({
-            'id_sede_jornada': sj.id_sede_jornada,
-            'id_jornada': sj.id_jornada_id,
+            'id_sede_jornada': None,
+            'id_jornada': getattr(contrato, 'id_jornada_id', None),
             'nombre_jornada': nombre_j,
-            'cupos': suma_grados_j if grados_activos else cupos_j,
+            'cupos': total_cupos,
             'grados': grados_serializados,
         })
 
-    if not sj_qs.exists():
+    else:
+        # Fallback cuando ni SedeJornada ni DistribucionSede tienen cupos
         cupos_contrato = int(getattr(contrato, 'cupos', 0) or 0)
         faltantes.append({
             'tipo': 'CUPOS',
             'nivel': 'ERROR' if cupos_contrato == 0 else 'ADVERTENCIA',
             'mensaje': (
-                f"La sede '{sede.nombre_sede}' no tiene jornadas ni cupos configurados en Sede-Jornada."
+                f"La sede '{sede.nombre_sede}' no tiene jornadas ni cupos configurados en Sede-Jornada ni en la distribución del contrato."
                 + (f" (El contrato registra {cupos_contrato} cupos totales)." if cupos_contrato > 0 else "")
             ),
         })
@@ -1043,13 +1145,17 @@ def _evaluar_contexto_y_items(usuario, sede: Sede, items: list[dict], data: dict
                 'exceso': float(round(cant_dec - requerido_neto, 3)),
             })
 
+        fecha_venc_item = item.get('fecha_vencimiento') or fecha_venc_global or fallback_fecha
+        if not fecha_venc_item:
+            fecha_venc_item = str(date.today() + timedelta(days=90))
+
         items_preparados.append({
             'id_ingrediente': id_ing_int,
             'nombre_ingrediente': nombre_ing,
             'cantidad': cant_dec,
             'unidad': unidad,
             'id_tipo_mercado': id_tm_item,
-            'fecha_vencimiento': item.get('fecha_vencimiento') or fecha_venc_global,
+            'fecha_vencimiento': fecha_venc_item,
             'requerido_neto': requerido_neto,
             'requerido_total': requerido_total,
             'supera': supera,
@@ -1082,12 +1188,17 @@ def _evaluar_contexto_y_items(usuario, sede: Sede, items: list[dict], data: dict
 def _crear_snapshot_calculo(sede: Sede, usuario, data: dict, eval_ctx: dict, fallback_fecha: str) -> CalculoEntrega:
     calculo = eval_ctx['calculo']
     codigo_documento = str(data.get('codigo_documento') or '').strip() or _generar_codigo_documento(sede.id_sede)
+    while CalculoEntrega.objects.filter(codigo_documento=codigo_documento).exists():
+        codigo_documento = f"{codigo_documento}-{uuid.uuid4().hex[:4].upper()}"
+
     user_id = getattr(usuario, 'id_usuario', None) or 1
     supervisor_nombre = str(data.get('supervisor_nombre') or '').strip()
     if not supervisor_nombre and _es_usuario_bd(usuario):
         supervisor_nombre = f"{getattr(usuario, 'nombre', '')} {getattr(usuario, 'apellido', '')}".strip()
 
     contrato_id_val = calculo['contrato']['id_contrato'] if calculo.get('contrato') else data.get('id_contrato')
+    if contrato_id_val and not Contrato.objects.filter(pk=contrato_id_val).exists():
+        contrato_id_val = None
     periodo_desc = (
         str(data.get('periodo_descripcion') or '').strip()
         or (
@@ -1153,6 +1264,16 @@ def validar_y_registrar_despacho_lote(usuario, data: dict) -> dict:
     frecuencia = data.get('frecuencia', 'Quincenal')
     items = data.get('items', [])
 
+    if not id_sede and data.get('id_institucion'):
+        primera_sede = Sede.objects.filter(
+            id_institucion_id=data.get('id_institucion'),
+            estado='ACTIVO'
+        ).order_by('id_sede').first() or Sede.objects.filter(
+            id_institucion_id=data.get('id_institucion')
+        ).order_by('id_sede').first()
+        if primera_sede:
+            id_sede = primera_sede.id_sede
+
     if not id_sede or not fecha_entrega:
         raise ValidationError({
             'error': "Los campos 'id_sede' y 'fecha_entrega' son obligatorios."
@@ -1173,13 +1294,7 @@ def validar_y_registrar_despacho_lote(usuario, data: dict) -> dict:
     contrato_id_val = calculo['contrato']['id_contrato'] if calculo.get('contrato') else data.get('id_contrato')
 
     entregas_creadas = []
-    validar_asig = _es_verdadero(data.get('validar_contra_asignacion')) or (
-        bool(sede.id_institucion_id)
-        and AsignacionInventario.objects.filter(
-            id_institucion_id=sede.id_institucion_id,
-            estado__in=['ACTIVA', 'COMPLETADA'],
-        ).exists()
-    )
+    validar_asig = _es_verdadero(data.get('validar_contra_asignacion'))
     with transaction.atomic():
         calculo_obj = _crear_snapshot_calculo(sede, usuario, data, eval_ctx, str(fecha_entrega))
         for item in eval_ctx['items_preparados']:

@@ -140,16 +140,12 @@ def image_to_embedding(base64_image: str):
         return None
 
 
-def compare_embeddings(embedding_guardado, embedding_actual, tolerancia=0.70) -> bool:
-    """
-    Compara dos embeddings:
-    Usa compare_faces si está disponible en face_recognition;
-    o calcula la similitud de coseno y distancia euclidiana normalizada.
-    """
+def calcular_distancia_embedding(embedding_guardado, embedding_actual) -> float:
+    """Calcula la distancia entre dos embeddings. Menor distancia = mayor parecido."""
     try:
         if TIENE_FACE_RECOGNITION and face_recognition is not None:
-            matches = face_recognition.compare_faces([embedding_guardado], embedding_actual, tolerance=tolerancia)
-            return bool(matches[0])
+            dists = face_recognition.face_distance([embedding_guardado], embedding_actual)
+            return float(dists[0])
         else:
             v1 = np.array(embedding_guardado, dtype=np.float32).flatten()
             v2 = np.array(embedding_actual, dtype=np.float32).flatten()
@@ -159,12 +155,20 @@ def compare_embeddings(embedding_guardado, embedding_actual, tolerancia=0.70) ->
                 v1 /= norm1
             if norm2 > 0:
                 v2 /= norm2
+            return float(np.linalg.norm(v1 - v2))
+    except Exception:
+        return 999.0
 
-            similitud = float(np.dot(v1, v2))
-            distancia = float(np.linalg.norm(v1 - v2))
 
-            # Es coincidencia si la similitud de coseno >= 0.70 o la distancia euclidiana < 0.75
-            return bool(similitud >= 0.70 or distancia < 0.75)
+def compare_embeddings(embedding_guardado, embedding_actual, tolerancia=0.60) -> bool:
+    """
+    Compara dos embeddings:
+    Usa compare_faces si está disponible en face_recognition;
+    o calcula la similitud de coseno y distancia euclidiana normalizada.
+    """
+    try:
+        dist = calcular_distancia_embedding(embedding_guardado, embedding_actual)
+        return dist <= tolerancia
     except Exception as e:
         print(f"Error al comparar embeddings: {e}")
         return False
