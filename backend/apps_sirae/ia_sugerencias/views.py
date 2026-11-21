@@ -2,7 +2,10 @@ import json
 import logging
 import os
 import random
+import threading
 import unicodedata
+import uuid
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal, InvalidOperation
 
@@ -544,6 +547,82 @@ def normalizar_texto(texto: str) -> str:
     return "".join(ch for ch in s if not unicodedata.combining(ch))
 
 
+# ==============================================================================
+# MEMORIA ANTI-REPETICIÓN POR SEDE/SECCIÓN Y ESTILOS REGIONALES COLOMBIANOS
+# ==============================================================================
+_HISTORIAL_RECIENTE_LOCK = threading.Lock()
+_HISTORIAL_RECIENTE_RECETAS: dict[tuple, deque] = {}
+_MAX_HISTORIAL_RECIENTE = 24
+
+ESTILOS_REGIONALES_COLOMBIA = [
+    ("Cocina Antioqueña / Paisa", "hogao criollo suave, calentados, arepa asada en plancha y cocciones caseras"),
+    ("Cocina Cundiboyacense / Santafereña", "caldos reconfortantes, papas cremosas, guisos suaves con cilantro y horneados escolares"),
+    ("Cocina Vallecaucana", "arroces jugosos tipo atollado, avenas aromatizadas con canela y sofritos criollos"),
+    ("Cocina Caribeña / Costeña", "guisos aromáticos con pimentón y cebolla, arroces sueltos y preparaciones frescas"),
+    ("Cocina Santandereana", "preparaciones campesinas en sartén, arepas doradas y guisos tradicionales nutritivos"),
+    ("Cocina Tolimense y Huilense", "arroces campesinos, guisos caseros tradicionales y bebidas lácteas tibias"),
+    ("Cocina del Eje Cafetero", "platos balanceados de finca, hogao fresco y combinaciones nutritivas escolares"),
+    ("Cocina Nariñense", "preparaciones campesinas con papa y verduras, tortas al horno y coladas suaves"),
+    ("Cocina Llanera", "preparaciones a la plancha, arroces criollos aromáticos y bebidas refrescantes"),
+    ("Cocina del Pacífico Escolar", "guisos aromáticos con cebolla larga y cilantro, arroces jugosos y frutas frescas"),
+]
+
+
+def _clave_receta_normalizada(nombre: str) -> str:
+    """Normaliza el nombre de una receta removiendo prefijos como 'Sugerencia IA:' para comparar variedad."""
+    base = normalizar_texto(nombre)
+    for prefijo in ("sugerencia ia alternativa:", "sugerencia ia:"):
+        if base.startswith(prefijo):
+            base = base[len(prefijo):].strip()
+    return " ".join(base.split())
+
+
+def _obtener_recetas_recientes(
+    id_sede: int | None,
+    seccion_nombre: str,
+    extras: list[str] | None = None,
+) -> list[str]:
+    """Obtiene los nombres de recetas sugeridas recientemente para la sede y sección."""
+    clave = (id_sede, normalizar_texto(seccion_nombre))
+    with _HISTORIAL_RECIENTE_LOCK:
+        recientes = list(_HISTORIAL_RECIENTE_RECETAS.get(clave, ()))
+    if extras:
+        for item in extras:
+            txt = str(item or "").strip()
+            if txt and txt not in recientes:
+                recientes.append(txt)
+    return recientes
+
+
+def _registrar_recetas_recientes(
+    id_sede: int | None,
+    seccion_nombre: str,
+    nombres: list[str],
+) -> None:
+    """Registra los nombres de las recetas recién devueltas para evitar repetirlas en recargas."""
+    if not nombres:
+        return
+    clave = (id_sede, normalizar_texto(seccion_nombre))
+    with _HISTORIAL_RECIENTE_LOCK:
+        cola = _HISTORIAL_RECIENTE_RECETAS.setdefault(clave, deque(maxlen=_MAX_HISTORIAL_RECIENTE))
+        for nombre in nombres:
+            limpio = str(nombre or "").strip()
+            if limpio:
+                # Si ya estaba en la cola, moverlo al final como el más reciente
+                clave_norm = _clave_receta_normalizada(limpio)
+                for existente in list(cola):
+                    if _clave_receta_normalizada(existente) == clave_norm:
+                        cola.remove(existente)
+                        break
+                cola.append(limpio)
+
+
+def _limpiar_historial_reciente() -> None:
+    """Limpia el historial en memoria de recetas recientes (útil en pruebas)."""
+    with _HISTORIAL_RECIENTE_LOCK:
+        _HISTORIAL_RECIENTE_RECETAS.clear()
+
+
 def coincide_ingrediente(nombre_a: str, nombre_b: str) -> bool:
     """Verifica si dos nombres de ingrediente se refieren al mismo alimento sin falsos positivos."""
     a = normalizar_texto(nombre_a)
@@ -875,7 +954,7 @@ def tiene_alimentos_principales_para_seccion(
     return True
 
 
-def _formatear_nombre_colombiano_adaptado(
+def _generar_variantes_colombianas_adaptadas(
     seccion_nombre: str,
     prot_des: list[str],
     prot_alm: list[str],
@@ -883,8 +962,11 @@ def _formatear_nombre_colombiano_adaptado(
     lacteos: list[str],
     frutas: list[str],
     verduras: list[str],
-) -> tuple[str, list[str]]:
-    """Genera nombre y pasos auténticos de gastronomía colombiana según los alimentos disponibles."""
+) -> list[tuple[str, list[str]]]:
+    """
+    Genera múltiples variantes auténticas de gastronomía colombiana (10+ estilos y técnicas)
+    según los alimentos disponibles, para garantizar variedad real al recargar.
+    """
     tiene_hogao = any(
         "tomate" in normalizar_texto(v) or "cebolla" in normalizar_texto(v) for v in verduras
     )
@@ -894,94 +976,692 @@ def _formatear_nombre_colombiano_adaptado(
         cereal_norm = normalizar_texto(cereales[0]) if cereales else ""
         prot_norm = normalizar_texto(prot_des[0]) if prot_des else ""
         if prot_des and cereales:
+            p0 = prot_des[0]
+            c0 = cereales[0]
             if "arroz" in cereal_norm and "huevo" in prot_norm:
-                titulo = f"Sugerencia IA: Calentado escolar colombiano de {cereales[0]} con {prot_des[0]}{hogao_txt}"
-            elif any(k in cereal_norm for k in ["harina", "maiz", "arepa"]):
-                titulo = f"Sugerencia IA: {prot_des[0]} campesinos{hogao_txt} con arepa colombiana de {cereales[0]}"
-            elif "papa" in cereal_norm and "huevo" in prot_norm:
-                titulo = f"Sugerencia IA: Caldo escolar santafereño de {cereales[0]} con {prot_des[0]}"
-            else:
-                titulo = f"Sugerencia IA: Desayuno típico colombiano de {prot_des[0]}{hogao_txt} con {cereales[0]}"
-            pasos = [
-                f"Preparar un guiso criollo suave{hogao_txt} y cocinar completamente {prot_des[0]} al estilo casero colombiano.",
-                f"Alistar y cocinar {cereales[0]} caliente (arepa asada en plancha o calentado suave) cuidando textura e inocuidad.",
-                "Servir con bebida escolar y porcionar uniformemente según los gramajes PAE.",
+                return [
+                    (
+                        f"Sugerencia IA: Calentado escolar paisa de {c0} con {p0}{hogao_txt}",
+                        [
+                            f"Cocinar {c0} suelto y saltear suavemente{hogao_txt} para formar un calentado escolar tradicional.",
+                            f"Preparar {p0} revueltos bien cocidos en sartén limpia e integrar al servir.",
+                            "Servir caliente en porciones estandarizadas según gramajes PAE.",
+                        ],
+                    ),
+                    (
+                        f"Sugerencia IA: Tortilla campesina a la plancha de {c0} y {p0}{hogao_txt}",
+                        [
+                            f"Cocinar {c0} hasta quedar tierno y dejar entibiar ligeramente.",
+                            f"Batir {p0}{hogao_txt}, mezclar con {c0} y cuajar en tortilla dorada a la plancha por ambos lados.",
+                            "Cortar en porciones escolares uniformes y servir caliente.",
+                        ],
+                    ),
+                    (
+                        f"Sugerencia IA: Arroz cremoso santafereño con {p0} revueltos{hogao_txt}",
+                        [
+                            f"Preparar {c0} con punto cremoso suave en olla institucional.",
+                            f"Cocinar completamente {p0} en preparación esponjosa{hogao_txt} a fuego medio.",
+                            "Servir el arroz cremoso coronado con los huevos y acompañar con agua potable.",
+                        ],
+                    ),
+                    (
+                        f"Sugerencia IA: Cazuela matutina boyacense de {p0} sobre cama de {c0}{hogao_txt}",
+                        [
+                            f"Preparar una base tibia de {c0} sazonado suavemente al estilo boyacense.",
+                            f"Cocinar {p0} en cazuela institucional{hogao_txt} hasta alcanzar cocción completa.",
+                            "Porcionar en recipientes escolares verificando temperatura segura.",
+                        ],
+                    ),
+                    (
+                        f"Sugerencia IA: Croquetas escolares horneadas de {c0} con {p0}",
+                        [
+                            f"Cocinar {c0} y mezclar con {p0} batidos hasta obtener una masa homogénea.",
+                            "Formar croquetas medianas en bandejas engrasadas y hornear o dorar en plancha hasta cocción completa.",
+                            "Entregar calientes respetando las raciones PAE.",
+                        ],
+                    ),
+                    (
+                        f"Sugerencia IA: Pastelito escolar al horno de {c0} dorado con {p0}{hogao_txt}",
+                        [
+                            f"Cocinar {c0} y disponer en bandeja institucional junto con un sofrito suave{hogao_txt}.",
+                            f"Incorporar {p0} batidos y hornear a temperatura moderada hasta cuajar completamente.",
+                            "Dividir en cuadros parejos y servir en el comedor escolar.",
+                        ],
+                    ),
+                    (
+                        f"Sugerencia IA: Salteado criollo valluno de {c0} con {p0} en tiras{hogao_txt}",
+                        [
+                            f"Preparar láminas finas de {p0} bien cocidos y cortar en tiras suaves.",
+                            f"Saltear {c0} cocido con sazón casera{hogao_txt} e integrar las tiras de huevo al final.",
+                            "Servir caliente siguiendo los gramajes del programa escolar.",
+                        ],
+                    ),
+                    (
+                        f"Sugerencia IA: Torta campesina santandereana de {c0} y {p0}{hogao_txt}",
+                        [
+                            f"Mezclar {c0} recién cocido con {p0} bien batidos y toque de sal yodada{hogao_txt}.",
+                            "Cocinar tapado a fuego bajo en sartén o bandeja hasta lograr una torta firme y jugosa.",
+                            "Porcionar y servir caliente para el desayuno escolar.",
+                        ],
+                    ),
+                    (
+                        f"Sugerencia IA: Desayuno montañero cafetero de {p0} tiernos con {c0}{hogao_txt}",
+                        [
+                            f"Preparar {c0} aromático y suelto al estilo del Eje Cafetero.",
+                            f"Elaborar {p0} tiernos bien cocidos{hogao_txt} en plancha limpia.",
+                            "Servir acompañado de bebida escolar según disponibilidad.",
+                        ],
+                    ),
+                    (
+                        f"Sugerencia IA: Arroz criollo esponjoso con {p0} campesinos en sartén{hogao_txt}",
+                        [
+                            f"Cocinar {c0} en agua limpia cuidando que quede esponjoso y sin exceso de grasa.",
+                            f"Preparar {p0} campesinos en sartén{hogao_txt} garantizando inocuidad completa.",
+                            "Emplatar caliente y porcionar para cada estudiante.",
+                        ],
+                    ),
+                ]
+            if any(k in cereal_norm for k in ["harina", "maiz", "arepa"]):
+                return [
+                    (
+                        f"Sugerencia IA: {p0} campesinos{hogao_txt} con arepa asada de {c0}",
+                        [
+                            f"Elaborar un guiso suave{hogao_txt} y cocinar completamente {p0}.",
+                            f"Formar y asar arepas delgadas de {c0} en plancha limpia hasta dorar.",
+                            "Servir caliente con bebida escolar según gramajes PAE.",
+                        ],
+                    ),
+                    (
+                        f"Sugerencia IA: Arepa boyacense de {c0} rellena con {p0}{hogao_txt}",
+                        [
+                            f"Preparar arepas suaves de {c0} asadas y abrir lateralmente para rellenar.",
+                            f"Cocinar {p0} revueltos jugosos{hogao_txt} y rellenar cada arepa de forma uniforme.",
+                            "Entregar calientes a los estudiantes.",
+                        ],
+                    ),
+                    (
+                        f"Sugerencia IA: Arepitas santandereanas de {c0} con {p0} en cazuela{hogao_txt}",
+                        [
+                            f"Preparar {p0} en cazuela criolla{hogao_txt} hasta cocción completa.",
+                            f"Asar arepitas medianas de {c0} hasta quedar doradas y suaves por dentro.",
+                            "Servir en raciones escolares estandarizadas.",
+                        ],
+                    ),
+                    (
+                        f"Sugerencia IA: Torta matutina de {c0} a la plancha con {p0}{hogao_txt}",
+                        [
+                            f"Hidratar {c0} y cocinar en plancha formando tortitas suaves de maíz.",
+                            f"Acompañar con {p0} bien cocidos al estilo casero colombiano{hogao_txt}.",
+                            "Porcionar y servir caliente.",
+                        ],
+                    ),
+                    (
+                        f"Sugerencia IA: Desayuno paisa de arepa de {c0} con {p0} tiernos{hogao_txt}",
+                        [
+                            f"Amasar {c0} con agua tibia y sal moderada, asar en plancha limpia.",
+                            f"Cocinar {p0} tiernos{hogao_txt} verificando temperatura de inocuidad.",
+                            "Servir caliente con bebida escolar.",
+                        ],
+                    ),
+                    (
+                        f"Sugerencia IA: Cazuela cafetera de {p0}{hogao_txt} con arepa fresca de {c0}",
+                        [
+                            f"Preparar {p0} al estilo cafetero con cocción pareja{hogao_txt}.",
+                            f"Asar arepas frescas de {c0} para acompañar la porción proteica.",
+                            "Distribuir uniformemente según gramajes PAE.",
+                        ],
+                    ),
+                ]
+            if "papa" in cereal_norm and "huevo" in prot_norm:
+                return [
+                    (
+                        f"Sugerencia IA: Caldo escolar santafereño de {c0} con {p0}",
+                        [
+                            f"Hervir {c0} limpia en agua con sazón suave hasta ablandar.",
+                            f"Incorporar {p0} y cocinar completamente en el caldo caliente.",
+                            "Servir tibio respetando porciones escolares.",
+                        ],
+                    ),
+                    (
+                        f"Sugerencia IA: Tortilla campesina nariñense de {c0} y {p0}{hogao_txt}",
+                        [
+                            f"Cocinar {c0} en cubitos pequeños hasta que estén tiernos.",
+                            f"Mezclar con {p0} batidos{hogao_txt} y cuajar en tortilla dorada a la plancha.",
+                            "Cortar en porciones escolares y servir caliente.",
+                        ],
+                    ),
+                    (
+                        f"Sugerencia IA: Guiso matutino boyacense de {c0} con {p0}{hogao_txt}",
+                        [
+                            f"Cocinar {c0} en rodajas con sofrito suave{hogao_txt}.",
+                            f"Agregar {p0} y remover hasta cocción completa y textura cremosa.",
+                            "Servir caliente conforme al PAE.",
+                        ],
+                    ),
+                    (
+                        f"Sugerencia IA: Pastelito horneado de {c0} majada con {p0}{hogao_txt}",
+                        [
+                            f"Preparar un puré suave de {c0} cocida.",
+                            f"Integrar {p0} batidos{hogao_txt} y hornear hasta dorar ligeramente.",
+                            "Porcionar y servir caliente.",
+                        ],
+                    ),
+                    (
+                        f"Sugerencia IA: Cazuela cundiboyacense de {c0} tierna con {p0}{hogao_txt}",
+                        [
+                            f"Hervir {c0} en trozos medianos con poca sal.",
+                            f"Servir en cazuela junto con {p0} campesinos bien cocidos{hogao_txt}.",
+                            "Acompañar con bebida escolar.",
+                        ],
+                    ),
+                ]
+            return [
+                (
+                    f"Sugerencia IA: Desayuno típico colombiano de {p0}{hogao_txt} con {c0}",
+                    [
+                        f"Preparar {p0} bien cocidos al estilo casero{hogao_txt}.",
+                        f"Alistar y cocinar {c0} caliente cuidando textura e inocuidad.",
+                        "Servir en porciones uniformes según gramajes PAE.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Cazuela campesina matutina de {p0}{hogao_txt} y {c0}",
+                    [
+                        f"Cocinar {c0} al punto ideal para el servicio matutino.",
+                        f"Preparar {p0} en cazuela suave{hogao_txt} hasta cocción completa.",
+                        "Porcionar y servir caliente.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Desayuno santafereño de {p0} al sartén{hogao_txt} con {c0}",
+                    [
+                        f"Saltear suavemente {p0}{hogao_txt} en sartén o plancha limpia.",
+                        f"Acompañar con {c0} recién preparado y bebida escolar.",
+                        "Entregar caliente a los estudiantes.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Desayuno cafetero escolar de {p0} tiernos con {c0}{hogao_txt}",
+                    [
+                        f"Alistar {c0} y cocinar suavemente sin exceso de grasa.",
+                        f"Servir junto con {p0} tiernos bien cocidos{hogao_txt}.",
+                        "Verificar inocuidad y porcionar según PAE.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Desayuno boyacense casero de {c0} con {p0}{hogao_txt}",
+                    [
+                        f"Preparar {c0} al estilo tradicional boyacense.",
+                        f"Acompañar con {p0} cocidos al punto seguro{hogao_txt}.",
+                        "Servir caliente con agua potable o bebida láctea.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Desayuno valluno nutritivo de {p0}{hogao_txt} y {c0}",
+                    [
+                        f"Elaborar {p0} con sazón casera baja en sodio{hogao_txt}.",
+                        f"Integrar con porción de {c0} caliente.",
+                        "Distribuir de forma homogénea en el comedor.",
+                    ],
+                ),
             ]
-        elif lacteos and cereales:
-            titulo = f"Sugerencia IA: Desayuno tradicional colombiano de {lacteos[0]} caliente con {cereales[0]}"
-            pasos = [
-                f"Preparar {lacteos[0]} tibia al estilo tradicional colombiano con dulzor suave.",
-                f"Asar o cocinar {cereales[0]} hasta lograr cocción pareja y apetitosa.",
-                "Servir caliente en porciones estandarizadas del PAE.",
+        if lacteos and cereales:
+            l0, c0 = lacteos[0], cereales[0]
+            return [
+                (
+                    f"Sugerencia IA: Desayuno tradicional colombiano de {l0} caliente con {c0}",
+                    [
+                        f"Preparar {l0} tibia al estilo tradicional colombiano con dulzor suave.",
+                        f"Asar o cocinar {c0} hasta lograr cocción pareja.",
+                        "Servir caliente en porciones estandarizadas del PAE.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Colada matutina campesina de {c0} en {l0}",
+                    [
+                        f"Cocinar {c0} suavemente en {l0} revolviendo continuamente hasta espesar.",
+                        "Controlar temperatura tibia agradable para los niños.",
+                        "Servir en vasos higiénicos según gramajes PAE.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Desayuno santafereño de {l0} espumosa con {c0} dorado",
+                    [
+                        f"Calentar y batir {l0} al estilo santafereño hasta quedar espumosa.",
+                        f"Servir acompañada de {c0} recién preparado.",
+                        "Entregar en raciones individuales.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Desayuno paisa ligero de {l0} tibia y {c0} casero",
+                    [
+                        f"Preparar {c0} al estilo casero en plancha u olla limpia.",
+                        f"Acompañar con vaso de {l0} tibia.",
+                        "Servir siguiendo lineamientos del PAE.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Desayuno vallecaucano de {l0} cremosa con {c0}",
+                    [
+                        f"Preparar {l0} con textura suave y aromática.",
+                        f"Porcionar {c0} caliente y entregar junto con la bebida.",
+                        "Verificar temperatura e inocuidad.",
+                    ],
+                ),
             ]
-        elif prot_des:
-            titulo = f"Sugerencia IA: Desayuno criollo proteico de {prot_des[0]}{hogao_txt}"
-            pasos = [
-                f"Preparar {prot_des[0]} bien cocidos al estilo casero colombiano{hogao_txt}.",
-                "Verificar temperatura de inocuidad y servir en raciones uniformes.",
+        if prot_des:
+            p0 = prot_des[0]
+            return [
+                (
+                    f"Sugerencia IA: Desayuno criollo proteico de {p0}{hogao_txt}",
+                    [
+                        f"Preparar {p0} bien cocidos al estilo casero colombiano{hogao_txt}.",
+                        "Verificar temperatura de inocuidad y servir en raciones uniformes.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Cazuela matutina campesina de {p0}{hogao_txt}",
+                    [
+                        f"Cocinar {p0} en cazuela suave baja en sodio{hogao_txt}.",
+                        "Servir caliente en el comedor escolar.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Tortilla escolar santafereña de {p0}{hogao_txt}",
+                    [
+                        f"Preparar {p0} a la plancha hasta cocción completa{hogao_txt}.",
+                        "Porcionar de forma homogénea según PAE.",
+                    ],
+                ),
             ]
-        else:
-            principales = cereales + frutas + lacteos
-            titulo = f"Sugerencia IA: Desayuno escolar colombiano de {', '.join(principales[:2])}"
-            pasos = [
-                f"Alistar, lavar y preparar {', '.join(principales[:2])} siguiendo prácticas tradicionales de cocina escolar colombiana.",
-                "Porcionar según gramajes PAE y entregar caliente o fresco según corresponda.",
-            ]
-        return titulo, pasos
+        principales = cereales + frutas + lacteos
+        duo = ", ".join(principales[:2])
+        return [
+            (
+                f"Sugerencia IA: Desayuno escolar colombiano de {duo}",
+                [
+                    f"Alistar, lavar y preparar {duo} siguiendo prácticas tradicionales de cocina escolar colombiana.",
+                    "Porcionar según gramajes PAE y entregar caliente o fresco según corresponda.",
+                ],
+            ),
+            (
+                f"Sugerencia IA: Desayuno campesino nutritivo de {duo}",
+                [
+                    f"Preparar {duo} conservando frescura e higiene alimentaria.",
+                    "Servir en raciones escolares uniformes.",
+                ],
+            ),
+            (
+                f"Sugerencia IA: Desayuno cafetero escolar de {duo}",
+                [
+                    f"Alistar y combinar {duo} en porciones balanceadas para primaria.",
+                    "Entregar junto con agua potable tratada.",
+                ],
+            ),
+        ]
 
     if seccion_nombre == "Merienda":
         principales = lacteos + cereales + frutas + prot_des
         lacteo_norm = normalizar_texto(lacteos[0]) if lacteos else ""
         cereal_norm = normalizar_texto(cereales[0]) if cereales else ""
-        if lacteos and "avena" in cereal_norm:
-            titulo = f"Sugerencia IA: Avena colombiana en {lacteos[0]} con acompañamiento escolar"
-        elif lacteos and cereales:
-            titulo = f"Sugerencia IA: Media mañana colombiana de {lacteos[0]} con {cereales[0]}"
-        elif frutas and cereales:
-            titulo = f"Sugerencia IA: Refrigerio colombiano de {cereales[0]} con {frutas[0]} fresca"
-        elif "yogur" in lacteo_norm and frutas:
-            titulo = f"Sugerencia IA: Yogurt escolar colombiano con {frutas[0]} fresca"
-        else:
-            titulo = f"Sugerencia IA: Refrigerio típico colombiano de {' con '.join(principales[:2])}"
-        pasos = [
+        l0 = lacteos[0] if lacteos else ""
+        c0 = cereales[0] if cereales else ""
+        f0 = frutas[0] if frutas else ""
+        duo_con = " con ".join(principales[:2])
+        pasos_frio = [
             f"Alistar y desinfectar los ingredientes frescos para la media mañana colombiana: {', '.join(principales[:3])}.",
-            f"Preparar y porcionar {' con '.join(principales[:2])} conservando cadena de frío o temperatura adecuada.",
+            f"Preparar y porcionar {duo_con} conservando cadena de frío o temperatura adecuada.",
             "Entregar en raciones individuales higiénicas conforme al PAE Colombia.",
         ]
-        return titulo, pasos
+        variantes_mer: list[tuple[str, list[str]]] = []
+        if lacteos and "avena" in cereal_norm:
+            variantes_mer.extend([
+                (f"Sugerencia IA: Avena vallecaucana en {l0} con acompañamiento escolar", pasos_frio),
+                (f"Sugerencia IA: Colada cremosa santafereña de {c0} en {l0}", pasos_frio),
+                (f"Sugerencia IA: Refresco campesino de {c0} batida en {l0}", pasos_frio),
+                (f"Sugerencia IA: Media mañana paisa de {c0} tibia en {l0}", pasos_frio),
+                (f"Sugerencia IA: Merienda cafetera de {c0} suave en {l0}", pasos_frio),
+            ])
+        elif lacteos and cereales:
+            variantes_mer.extend([
+                (f"Sugerencia IA: Media mañana colombiana de {l0} con {c0}", pasos_frio),
+                (f"Sugerencia IA: Onces santafereñas escolares de {l0} y {c0}", pasos_frio),
+                (f"Sugerencia IA: Refrigerio campesino boyacense de {l0} con {c0}", pasos_frio),
+                (f"Sugerencia IA: Merienda paisa tradicional de {l0} acompañada de {c0}", pasos_frio),
+                (f"Sugerencia IA: Lonchera escolar colombiana de {l0} y {c0}", pasos_frio),
+                (f"Sugerencia IA: Refrigerio cafetero de {l0} fresca con {c0}", pasos_frio),
+            ])
+        elif frutas and cereales:
+            variantes_mer.extend([
+                (f"Sugerencia IA: Refrigerio colombiano de {c0} con {f0} fresca", pasos_frio),
+                (f"Sugerencia IA: Media mañana tropical de {f0} en cubos con {c0}", pasos_frio),
+                (f"Sugerencia IA: Merienda costeña escolar de {c0} y {f0} natural", pasos_frio),
+                (f"Sugerencia IA: Onces campesinas de {c0} con porción de {f0}", pasos_frio),
+                (f"Sugerencia IA: Refrigerio cafetero de {f0} fresca y {c0}", pasos_frio),
+            ])
+        elif "yogur" in lacteo_norm and frutas:
+            variantes_mer.extend([
+                (f"Sugerencia IA: Yogurt escolar colombiano con {f0} fresca", pasos_frio),
+                (f"Sugerencia IA: Copa saludable de {l0} frío y cubos de {f0}", pasos_frio),
+                (f"Sugerencia IA: Media mañana tropical de {l0} con {f0}", pasos_frio),
+                (f"Sugerencia IA: Refrigerio cremoso cafetero de {l0} y {f0}", pasos_frio),
+            ])
+        else:
+            variantes_mer.extend([
+                (f"Sugerencia IA: Refrigerio típico colombiano de {duo_con}", pasos_frio),
+                (f"Sugerencia IA: Media mañana escolar campesina de {duo_con}", pasos_frio),
+                (f"Sugerencia IA: Onces tradicionales colombianas de {duo_con}", pasos_frio),
+                (f"Sugerencia IA: Merienda nutritiva cafetera de {duo_con}", pasos_frio),
+                (f"Sugerencia IA: Refrigerio escolar valluno de {duo_con}", pasos_frio),
+            ])
+        return variantes_mer
 
     # Almuerzo colombiano
     proteinas = prot_alm + prot_des
     if proteinas and cereales:
-        p_norm = normalizar_texto(proteinas[0])
-        c_norm = normalizar_texto(cereales[0])
+        p0 = proteinas[0]
+        c0 = cereales[0]
+        p_norm = normalizar_texto(p0)
+        c_norm = normalizar_texto(c0)
         if any(k in p_norm for k in ["frijol", "lenteja", "garbanzo"]):
-            titulo = f"Sugerencia IA: Guiso colombiano de {proteinas[0]}{hogao_txt} con {cereales[0]}"
-        elif any(k in p_norm for k in ["pollo", "carne", "cerdo"]):
-            titulo = f"Sugerencia IA: Sudado criollo colombiano de {proteinas[0]}{hogao_txt} con {cereales[0]}"
-        elif "huevo" in p_norm and "arroz" in c_norm:
-            titulo = f"Sugerencia IA: Seco escolar colombiano de {cereales[0]} con {proteinas[0]}{hogao_txt}"
-        else:
-            titulo = f"Sugerencia IA: Almuerzo tradicional colombiano de {proteinas[0]}{hogao_txt} con {cereales[0]}"
-        pasos = [
-            f"Sofreír suavemente el guiso criollo{hogao_txt} y cocinar completamente {proteinas[0]} hasta que quede jugoso y tierno.",
-            f"Preparar {cereales[0]} al estilo tradicional colombiano en olla institucional limpia.",
-            "Servir el almuerzo caliente acompañado de verdura o bebida según disponibilidad y gramajes PAE.",
+            return [
+                (
+                    f"Sugerencia IA: Guiso antioqueño de {p0}{hogao_txt} con {c0}",
+                    [
+                        f"Remojar y cocinar {p0} hasta ablandar y espesar con guiso criollo{hogao_txt}.",
+                        f"Preparar {c0} suelto en olla institucional.",
+                        "Servir caliente respetando los gramajes PAE.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Cazuela campesina colombiana de {p0}{hogao_txt} y {c0}",
+                    [
+                        f"Cocinar {p0} a fuego medio con sazón casera baja en sodio{hogao_txt} hasta textura cremosa.",
+                        f"Servir en cazuela acompañada de {c0} recién hecho.",
+                        "Acompañar con bebida o agua potable.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Calentado escolar nutritivo de {c0} y {p0}{hogao_txt}",
+                    [
+                        f"Cocinar por separado {p0} tiernas y {c0} tradicional.",
+                        f"Integrar suavemente con sofrito casero{hogao_txt} para un plato completo y jugoso.",
+                        "Porcionar de forma homogénea.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Estofado casero santandereano de {p0}{hogao_txt} con {c0}",
+                    [
+                        f"Preparar un estofado suave de {p0}{hogao_txt} hasta lograr caldo espeso.",
+                        f"Acompañar con porción de {c0} caliente.",
+                        "Servir conforme a la minuta PAE.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Almuerzo boyacense de {p0} caladas{hogao_txt} con {c0}",
+                    [
+                        f"Cocinar {p0} lentamente hasta calar el caldo natural{hogao_txt}.",
+                        f"Servir junto con {c0} caliente y bebida escolar.",
+                        "Verificar temperatura de servicio.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Seco escolar cafetero de {p0} guisadas{hogao_txt} y {c0}",
+                    [
+                        f"Guisar {p0} con sazón tradicional colombiana{hogao_txt}.",
+                        f"Preparar {c0} limpio y suelto para acompañar.",
+                        "Entregar en raciones uniformes.",
+                    ],
+                ),
+            ]
+        if any(k in p_norm for k in ["pollo", "carne", "cerdo"]):
+            return [
+                (
+                    f"Sugerencia IA: Sudado criollo colombiano de {p0}{hogao_txt} con {c0}",
+                    [
+                        f"Sofreír el guiso criollo{hogao_txt} y cocinar completamente {p0} en sudado jugoso.",
+                        f"Preparar {c0} al estilo tradicional colombiano.",
+                        "Servir caliente acompañado de verdura o bebida según disponibilidad.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Estofado campesino boyacense de {p0}{hogao_txt} y {c0}",
+                    [
+                        f"Cocinar {p0} en cubos a fuego lento con guiso suave{hogao_txt} hasta quedar tierno.",
+                        f"Acompañar con {c0} recién preparado.",
+                        "Porcionar conforme a los gramajes escolares PAE.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: {p0} desmechado en salsa criolla costeña{hogao_txt} con {c0}",
+                    [
+                        f"Cocinar {p0} en agua aromática, desmechar y guisar suavemente{hogao_txt}.",
+                        f"Servir sobre o junto a {c0} caliente.",
+                        "Completar con bebida escolar o agua potable.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Salteado escolar valluno de {p0} en julianas{hogao_txt} con {c0}",
+                    [
+                        f"Cortar {p0} en julianas y saltear hasta cocción completa{hogao_txt}.",
+                        f"Preparar {c0} suelto y servir en porciones balanceadas.",
+                        "Verificar inocuidad y temperatura.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Cazuela santandereana de {p0}{hogao_txt} acompañada de {c0}",
+                    [
+                        f"Preparar {p0} en cazuela con caldo suave y especias naturales{hogao_txt}.",
+                        f"Servir caliente con porción de {c0}.",
+                        "Entregar según gramajes PAE.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Arroz o seco atollado cafetero con {p0}{hogao_txt} y {c0}",
+                    [
+                        f"Cocinar {p0} en caldo casero{hogao_txt} e integrar con {c0} hasta lograr textura jugosa.",
+                        "Dejar reposar 5 minutos antes de servir.",
+                        "Porcionar uniformemente en el comedor escolar.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Almuerzo llanero escolar de {p0} a la plancha{hogao_txt} con {c0}",
+                    [
+                        f"Asar o dorar suavemente {p0} en plancha limpia con sazón natural{hogao_txt}.",
+                        f"Acompañar con {c0} caliente y bebida escolar.",
+                        "Servir cuidando porciones de primaria.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Guiso tolimense tradicional de {p0}{hogao_txt} con {c0}",
+                    [
+                        f"Elaborar guiso casero tolimense{hogao_txt} y cocinar {p0} hasta quedar suave.",
+                        f"Servir acompañado de {c0} tradicional.",
+                        "Entregar caliente con agua potable.",
+                    ],
+                ),
+            ]
+        if "huevo" in p_norm and "arroz" in c_norm:
+            return [
+                (
+                    f"Sugerencia IA: Seco escolar colombiano de {c0} con {p0}{hogao_txt}",
+                    [
+                        f"Preparar {c0} blanco tradicional suelto y caliente.",
+                        f"Cocinar {p0} en guiso criollo suave{hogao_txt} hasta cocción completa.",
+                        "Servir en porciones uniformes del PAE.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Arroz campesino salteado con tortilla de {p0} en tiras{hogao_txt}",
+                    [
+                        f"Preparar una tortilla delgada de {p0}, cortar en tiras y reservar.",
+                        f"Saltear {c0} cocido con sazón suave{hogao_txt} e integrar las tiras de huevo.",
+                        "Servir caliente para el almuerzo escolar.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Pastel horneado escolar de {c0} con {p0}{hogao_txt}",
+                    [
+                        f"Mezclar {c0} cocido con {p0} batidos y sofrito suave{hogao_txt}.",
+                        "Hornear en bandeja institucional hasta cuajar y dorar ligeramente.",
+                        "Cortar en raciones iguales y servir.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Cazuela criolla de {p0} guisados{hogao_txt} sobre {c0}",
+                    [
+                        f"Cocinar {p0} en salsa casera suave{hogao_txt} cuidando cocción total.",
+                        f"Servir sobre cama de {c0} recién preparado.",
+                        "Acompañar con bebida o agua potable.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Arroz atollado escolar con {p0} campesinos{hogao_txt}",
+                    [
+                        f"Cocinar {c0} con punto jugoso tradicional colombiano.",
+                        f"Integrar {p0} revueltos bien cocidos{hogao_txt} y servir tibio.",
+                        "Verificar gramajes por niño.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Tortitas doradas de {c0} y {p0} al estilo antioqueño{hogao_txt}",
+                    [
+                        f"Combinar {c0} cocido con {p0} batidos y poca sal{hogao_txt}.",
+                        "Dorar en plancha limpia formando tortitas escolares.",
+                        "Servir calientes en el comedor.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Almuerzo boyacense de {c0} aromático con {p0}{hogao_txt}",
+                    [
+                        f"Cocinar {c0} tradicional en olla institucional.",
+                        f"Preparar {p0} al estilo boyacense bien cocidos{hogao_txt}.",
+                        "Servir caliente con agua potable.",
+                    ],
+                ),
+                (
+                    f"Sugerencia IA: Salteado costeño escolar de {c0} con {p0} revueltos{hogao_txt}",
+                    [
+                        f"Saltear {c0} con sazón casera baja en sodio{hogao_txt}.",
+                        f"Incorporar {p0} cocidos y porcionar de manera homogénea.",
+                        "Entregar caliente a los estudiantes.",
+                    ],
+                ),
+            ]
+        return [
+            (
+                f"Sugerencia IA: Almuerzo tradicional colombiano de {p0}{hogao_txt} con {c0}",
+                [
+                    f"Cocinar completamente {p0} en guiso criollo suave{hogao_txt}.",
+                    f"Preparar {c0} al estilo tradicional colombiano.",
+                    "Servir caliente según gramajes PAE.",
+                ],
+            ),
+            (
+                f"Sugerencia IA: Cazuela campesina de {p0}{hogao_txt} acompañada de {c0}",
+                [
+                    f"Preparar {p0} en cazuela casera baja en sodio{hogao_txt}.",
+                    f"Acompañar con {c0} recién cocido.",
+                    "Entregar en raciones escolares uniformes.",
+                ],
+            ),
+            (
+                f"Sugerencia IA: Seco escolar santafereño de {p0}{hogao_txt} con {c0}",
+                [
+                    f"Guisar suavemente {p0}{hogao_txt} hasta quedar tierno.",
+                    f"Servir junto con {c0} caliente y bebida escolar.",
+                    "Verificar temperatura de inocuidad.",
+                ],
+            ),
+            (
+                f"Sugerencia IA: Almuerzo cafetero de {p0} al sartén{hogao_txt} con {c0}",
+                [
+                    f"Saltear {p0} con sazón casera colombiana{hogao_txt}.",
+                    f"Acompañar con porción de {c0} y agua potable.",
+                    "Servir caliente.",
+                ],
+            ),
+            (
+                f"Sugerencia IA: Guiso valluno escolar de {p0}{hogao_txt} y {c0}",
+                [
+                    f"Cocinar {p0} en guiso jugoso tradicional{hogao_txt}.",
+                    f"Integrar en el plato junto con {c0} caliente.",
+                    "Porcionar según PAE.",
+                ],
+            ),
         ]
-    elif proteinas:
-        titulo = f"Sugerencia IA: Guiso criollo colombiano de {proteinas[0]}{hogao_txt}"
-        pasos = [
-            f"Cocinar completamente {proteinas[0]} en guiso criollo suave{hogao_txt} con poca sal.",
-            "Servir caliente respetando las porciones PAE.",
+    if proteinas:
+        p0 = proteinas[0]
+        return [
+            (
+                f"Sugerencia IA: Guiso criollo colombiano de {p0}{hogao_txt}",
+                [
+                    f"Cocinar completamente {p0} en guiso criollo suave{hogao_txt} con poca sal.",
+                    "Servir caliente respetando las porciones PAE.",
+                ],
+            ),
+            (
+                f"Sugerencia IA: Cazuela campesina de {p0}{hogao_txt}",
+                [
+                    f"Preparar {p0} en cazuela aromática baja en sodio{hogao_txt}.",
+                    "Entregar caliente a los estudiantes.",
+                ],
+            ),
+            (
+                f"Sugerencia IA: Salteado escolar colombiano de {p0}{hogao_txt}",
+                [
+                    f"Saltear {p0} en plancha o sartén limpia hasta cocción total{hogao_txt}.",
+                    "Porcionar uniformemente.",
+                ],
+            ),
         ]
-    else:
-        principales = cereales + verduras
-        titulo = f"Sugerencia IA: Almuerzo campesino colombiano de {' y '.join(principales[:2])}"
-        pasos = [
-            f"Cocinar {' y '.join(principales[:2])} con sazón casera colombiana suave y baja en sodio.",
-            "Porcionar de forma homogénea y servir caliente.",
-        ]
-    return titulo, pasos
+    principales = cereales + verduras
+    duo_y = " y ".join(principales[:2])
+    return [
+        (
+            f"Sugerencia IA: Almuerzo campesino colombiano de {duo_y}",
+            [
+                f"Cocinar {duo_y} con sazón casera colombiana suave y baja en sodio.",
+                "Porcionar de forma homogénea y servir caliente.",
+            ],
+        ),
+        (
+            f"Sugerencia IA: Cazuela hortelana boyacense de {duo_y}",
+            [
+                f"Preparar {duo_y} en guiso campesino suave.",
+                "Servir caliente con agua potable.",
+            ],
+        ),
+        (
+            f"Sugerencia IA: Salteado criollo escolar de {duo_y}",
+            [
+                f"Saltear suavemente {duo_y} conservando textura y nutrientes.",
+                "Entregar en raciones PAE.",
+            ],
+        ),
+    ]
+
+
+def _formatear_nombre_colombiano_adaptado(
+    seccion_nombre: str,
+    prot_des: list[str],
+    prot_alm: list[str],
+    cereales: list[str],
+    lacteos: list[str],
+    frutas: list[str],
+    verduras: list[str],
+) -> tuple[str, list[str]]:
+    """Retorna una variante auténtica de gastronomía colombiana (compatibilidad)."""
+    variantes = _generar_variantes_colombianas_adaptadas(
+        seccion_nombre=seccion_nombre,
+        prot_des=prot_des,
+        prot_alm=prot_alm,
+        cereales=cereales,
+        lacteos=lacteos,
+        frutas=frutas,
+        verduras=verduras,
+    )
+    return random.choice(variantes)
 
 
 def construir_sugerencias_adaptadas_al_inventario(
@@ -989,20 +1669,23 @@ def construir_sugerencias_adaptadas_al_inventario(
     ingredientes_suficientes: list[dict],
     ninos_presentes: int,
     mapa_inventario: dict | None = None,
+    excluir_nombres: set[str] | None = None,
 ) -> list[dict]:
     """
     Construye propuestas de gastronomía colombiana 100% viables usando ÚNICAMENTE los ingredientes
-    que sí alcanzan en el inventario real para los `ninos_presentes`.
+    que sí alcanzan en el inventario real para los `ninos_presentes`, rotando y variando recetas
+    para evitar repetir las sugeridas recientemente.
     """
     if not tiene_alimentos_principales_para_seccion(
         ingredientes_suficientes, seccion_nombre, mapa_inventario=mapa_inventario
     ):
         return []
 
+    excluir_norm = {_clave_receta_normalizada(x) for x in (excluir_nombres or set()) if x}
     mapa_suf = {normalizar_texto(it["nombre"]): it for it in ingredientes_suficientes}
-    sugerencias: list[dict] = []
+    sugerencias_plantillas: list[dict] = []
 
-    # 1. Intentar primero plantillas colombianas cuyos ingredientes estén 100% disponibles
+    # 1. Buscar todas las plantillas colombianas cuyos ingredientes estén 100% disponibles
     plantillas = PLANTILLAS_INNOVADORAS_PAE.get(seccion_nombre, PLANTILLAS_INNOVADORAS_PAE["Desayuno"])
     for p in plantillas:
         ingredientes_match = []
@@ -1015,17 +1698,14 @@ def construir_sugerencias_adaptadas_al_inventario(
             if match["nombre"] not in ingredientes_match:
                 ingredientes_match.append(match["nombre"])
         if completa and ingredientes_match:
-            sugerencias.append({
+            sugerencias_plantillas.append({
                 "nombre_plato": f"Sugerencia IA: {p['nombre']}",
                 "componentes_detalle": p["componentes_detalle"],
                 "ingredientes_usados": ingredientes_match,
                 "pasos": p["pasos"],
             })
 
-    if sugerencias:
-        return sugerencias[:2]
-
-    # 2. Adaptación dinámica colombiana con los alimentos realmente disponibles en bodega
+    # 2. Preparar variantes dinámicas adaptadas a los ingredientes reales disponibles
     por_grupo: dict[str, list[dict]] = {
         "proteina_desayuno": [],
         "proteina_almuerzo": [],
@@ -1038,6 +1718,10 @@ def construir_sugerencias_adaptadas_al_inventario(
     }
     for it in ingredientes_suficientes:
         por_grupo.setdefault(it["grupo"], []).append(it)
+
+    # Mezclar el orden dentro de cada grupo para rotar combinaciones cuando hay varios alimentos
+    for lista_g in por_grupo.values():
+        random.shuffle(lista_g)
 
     condimentos_nombres = [it["nombre"] for it in por_grupo["condimento"][:3]]
     verduras_nombres = [it["nombre"] for it in por_grupo["verdura"][:3]]
@@ -1057,65 +1741,95 @@ def construir_sugerencias_adaptadas_al_inventario(
                 res.append(x)
         return res
 
-    titulo, pasos_base = _formatear_nombre_colombiano_adaptado(
-        seccion_nombre=seccion_nombre,
-        prot_des=prot_des,
-        prot_alm=prot_alm,
-        cereales=cereales_nombres,
-        lacteos=lacteos_nombres,
-        frutas=frutas_nombres,
-        verduras=verduras_nombres,
-    )
+    def _construir_candidatos_dinamicos() -> list[dict]:
+        if seccion_nombre == "Desayuno":
+            principales = _dedup(prot_des + cereales_nombres + lacteos_nombres + frutas_nombres)
+            if not principales:
+                return []
+            usados = _dedup(principales + verduras_nombres[:2] + condimentos_nombres)
+            componentes = {
+                "Bebida con leche": ", ".join(lacteos_nombres) if lacteos_nombres else "Agua potable",
+                "Alimento proteico": ", ".join(prot_des) if prot_des else "—",
+                "Cereal acompañante": ", ".join(cereales_nombres) if cereales_nombres else "—",
+                "Fruta": ", ".join(frutas_nombres) if frutas_nombres else "—",
+                "Agua": "Agua potable tratada",
+            }
+        elif seccion_nombre == "Merienda":
+            principales = _dedup(lacteos_nombres + cereales_nombres + frutas_nombres + prot_des)
+            if not principales:
+                return []
+            usados = _dedup(principales + condimentos_nombres[:2])
+            componentes = {
+                "Bebida con leche": ", ".join(lacteos_nombres) if lacteos_nombres else "Agua potable",
+                "Alimento proteico": ", ".join(prot_des) if prot_des else "—",
+                "Cereal acompañante": ", ".join(cereales_nombres) if cereales_nombres else "—",
+                "Fruta": ", ".join(frutas_nombres) if frutas_nombres else "—",
+                "Agua": "Agua potable tratada",
+            }
+        else:
+            proteinas = _dedup(prot_alm + prot_des)
+            principales = _dedup(proteinas + cereales_nombres + verduras_nombres)
+            if not principales:
+                return []
+            usados = _dedup(principales + frutas_nombres[:1] + lacteos_nombres[:1] + condimentos_nombres)
+            componentes = {
+                "Bebida con leche": ", ".join(lacteos_nombres) if lacteos_nombres else "Agua potable",
+                "Alimento proteico": ", ".join(proteinas) if proteinas else "—",
+                "Cereal acompañante": ", ".join(cereales_nombres) if cereales_nombres else "—",
+                "Verdura / Fruta": ", ".join(verduras_nombres + frutas_nombres) if (verduras_nombres or frutas_nombres) else "—",
+                "Agua": "Agua potable tratada",
+            }
 
-    if seccion_nombre == "Desayuno":
-        principales = _dedup(prot_des + cereales_nombres + lacteos_nombres + frutas_nombres)
-        if not principales:
-            return []
-        usados = _dedup(principales + verduras_nombres[:2] + condimentos_nombres)
-        componentes = {
-            "Bebida con leche": ", ".join(lacteos_nombres) if lacteos_nombres else "Agua potable",
-            "Alimento proteico": ", ".join(prot_des) if prot_des else "—",
-            "Cereal acompañante": ", ".join(cereales_nombres) if cereales_nombres else "—",
-            "Fruta": ", ".join(frutas_nombres) if frutas_nombres else "—",
-            "Agua": "Agua potable tratada",
-        }
-    elif seccion_nombre == "Merienda":
-        principales = _dedup(lacteos_nombres + cereales_nombres + frutas_nombres + prot_des)
-        if not principales:
-            return []
-        usados = _dedup(principales + condimentos_nombres[:2])
-        componentes = {
-            "Bebida con leche": ", ".join(lacteos_nombres) if lacteos_nombres else "Agua potable",
-            "Alimento proteico": ", ".join(prot_des) if prot_des else "—",
-            "Cereal acompañante": ", ".join(cereales_nombres) if cereales_nombres else "—",
-            "Fruta": ", ".join(frutas_nombres) if frutas_nombres else "—",
-            "Agua": "Agua potable tratada",
-        }
-    else:
-        proteinas = _dedup(prot_alm + prot_des)
-        principales = _dedup(proteinas + cereales_nombres + verduras_nombres)
-        if not principales:
-            return []
-        usados = _dedup(principales + frutas_nombres[:1] + lacteos_nombres[:1] + condimentos_nombres)
-        componentes = {
-            "Bebida con leche": ", ".join(lacteos_nombres) if lacteos_nombres else "Agua potable",
-            "Alimento proteico": ", ".join(proteinas) if proteinas else "—",
-            "Cereal acompañante": ", ".join(cereales_nombres) if cereales_nombres else "—",
-            "Verdura / Fruta": ", ".join(verduras_nombres + frutas_nombres) if (verduras_nombres or frutas_nombres) else "—",
-            "Agua": "Agua potable tratada",
-        }
+        variantes = _generar_variantes_colombianas_adaptadas(
+            seccion_nombre=seccion_nombre,
+            prot_des=prot_des,
+            prot_alm=prot_alm,
+            cereales=cereales_nombres,
+            lacteos=lacteos_nombres,
+            frutas=frutas_nombres,
+            verduras=verduras_nombres,
+        )
+        candidatos = []
+        for titulo, pasos_base in variantes:
+            pasos = [
+                f"Alistar y pesar las cantidades exactas para {ninos_presentes} raciones escolares con: {', '.join(usados)}.",
+                *pasos_base,
+            ]
+            candidatos.append({
+                "nombre_plato": titulo,
+                "componentes_detalle": componentes,
+                "ingredientes_usados": usados,
+                "pasos": pasos,
+            })
+        return candidatos
 
-    pasos = [
-        f"Alistar y pesar las cantidades exactas para {ninos_presentes} raciones escolares con: {', '.join(usados)}.",
-        *pasos_base,
-    ]
-    sugerencias.append({
-        "nombre_plato": titulo,
-        "componentes_detalle": componentes,
-        "ingredientes_usados": usados,
-        "pasos": pasos,
-    })
-    return sugerencias
+    def _seleccionar_sin_repetir(pool: list[dict], limite: int) -> list[dict]:
+        no_vistas = [s for s in pool if _clave_receta_normalizada(s["nombre_plato"]) not in excluir_norm]
+        vistas = [s for s in pool if _clave_receta_normalizada(s["nombre_plato"]) in excluir_norm]
+        random.shuffle(no_vistas)
+        random.shuffle(vistas)
+        elegidas = no_vistas[:limite]
+        if len(elegidas) < limite:
+            elegidas.extend(vistas[: limite - len(elegidas)])
+        return elegidas
+
+    if sugerencias_plantillas:
+        no_vistas_plant = [
+            s for s in sugerencias_plantillas
+            if _clave_receta_normalizada(s["nombre_plato"]) not in excluir_norm
+        ]
+        if len(no_vistas_plant) >= 2:
+            random.shuffle(no_vistas_plant)
+            return no_vistas_plant[:2]
+        # Combinar plantillas no vistas con variantes dinámicas no vistas para máxima variedad
+        dinamicos = _construir_candidatos_dinamicos()
+        pool_combinado = sugerencias_plantillas + dinamicos
+        return _seleccionar_sin_repetir(pool_combinado, limite=2)
+
+    dinamicos = _construir_candidatos_dinamicos()
+    if not dinamicos:
+        return []
+    return _seleccionar_sin_repetir(dinamicos, limite=1)
 
 
 def construir_sugerencias_referencia_colombianas(
@@ -1236,6 +1950,118 @@ PLANTILLAS_INNOVADORAS_PAE = {
                 "Acompañar con arepa de maíz asada, vaso de leche tibia y mandarina limpia.",
             ],
         },
+        {
+            "nombre": "Changua escolar bogotana en leche con huevo cocido, cilantro, cebolla larga y pan campesino",
+            "componentes_detalle": {
+                "Bebida con leche": "Caldo lácteo tradicional de changua",
+                "Alimento proteico": "Huevo cocido en changua",
+                "Cereal acompañante": "Pan escolar campesino",
+                "Fruta": "Fruta fresca según temporada",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Leche líquida", "Huevos", "Cebolla", "Cilantro", "Pan", "Sal"],
+            "pasos": [
+                "Calentar agua con leche líquida, cebolla larga finamente picada y sal moderada sin dejar rebosar.",
+                "Agregar los huevos cuidadosamente y cocinar hasta que estén completamente firmes.",
+                "Servir caliente con cilantro fresco picado y porción de pan escolar.",
+            ],
+        },
+        {
+            "nombre": "Tortilla campesina de huevos con hogao criollo, arepa de maíz asada y chocolate en leche",
+            "componentes_detalle": {
+                "Bebida con leche": "Chocolate caliente en leche",
+                "Alimento proteico": "Tortilla de huevos con hogao de tomate y cebolla",
+                "Cereal acompañante": "Arepa de maíz asada en plancha",
+                "Fruta": "—",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Huevos", "Tomate", "Cebolla", "Harina de maíz", "Chocolate", "Leche líquida", "Aceite vegetal", "Sal"],
+            "pasos": [
+                "Preparar el chocolate en leche líquida caliente y batir hasta espumar.",
+                "Sofreír tomate y cebolla para el hogao, mezclar con los huevos batidos y cuajar en tortilla dorada.",
+                "Asar las arepas de maíz y servir todo caliente en raciones PAE.",
+            ],
+        },
+        {
+            "nombre": "Huevos cacerola boyacenses con papa criolla, tomate, cebolla y avena tibia en leche",
+            "componentes_detalle": {
+                "Bebida con leche": "Avena tibia en leche líquida",
+                "Alimento proteico": "Huevos en cacerola con papa y hogao",
+                "Cereal acompañante": "Papa en cubos guisada",
+                "Fruta": "—",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Huevos", "Papa", "Tomate", "Cebolla", "Avena", "Leche líquida", "Aceite vegetal", "Sal"],
+            "pasos": [
+                "Cocinar la avena en leche líquida a fuego bajo hasta textura suave.",
+                "Cocinar la papa en cubos pequeños con hogao de tomate y cebolla, agregar los huevos y tapar hasta cocción total.",
+                "Servir caliente en porciones estandarizadas.",
+            ],
+        },
+        {
+            "nombre": "Arepa santandereana rellena de queso campesino con chocolate espumoso y banano",
+            "componentes_detalle": {
+                "Bebida con leche": "Chocolate espumoso en leche",
+                "Alimento proteico": "Queso campesino fresco",
+                "Cereal acompañante": "Arepa de maíz asada",
+                "Fruta": "Banano criollo",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Harina de maíz", "Queso", "Chocolate", "Leche líquida", "Banano", "Sal"],
+            "pasos": [
+                "Asar arepas de maíz en plancha limpia y abrir para rellenar con queso campesino.",
+                "Preparar chocolate tradicional en leche líquida caliente.",
+                "Servir con banano fresco lavado y desinfectado.",
+            ],
+        },
+        {
+            "nombre": "Arroz cremoso matutino con huevos revueltos en guiso de tomate, cebolla y leche tibia",
+            "componentes_detalle": {
+                "Bebida con leche": "Leche líquida tibia",
+                "Alimento proteico": "Huevos revueltos en guiso criollo",
+                "Cereal acompañante": "Arroz blanco cremoso",
+                "Fruta": "—",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Arroz", "Huevos", "Tomate", "Cebolla", "Leche líquida", "Aceite vegetal", "Sal"],
+            "pasos": [
+                "Cocinar el arroz blanco tradicional hasta quedar suave y tibio.",
+                "Preparar los huevos revueltos con tomate y cebolla bien cocidos.",
+                "Servir acompañado de vaso de leche líquida tibia.",
+            ],
+        },
+        {
+            "nombre": "Calentado cafetero escolar de arroz con huevos en hogao, queso campesino y avena tibia",
+            "componentes_detalle": {
+                "Bebida con leche": "Avena tibia en leche",
+                "Alimento proteico": "Huevos en hogao y queso campesino",
+                "Cereal acompañante": "Arroz blanco en calentado suave",
+                "Fruta": "—",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Arroz", "Huevos", "Queso", "Tomate", "Cebolla", "Avena", "Leche líquida", "Sal"],
+            "pasos": [
+                "Preparar la avena tibia en leche líquida con poca azúcar.",
+                "Saltear el arroz con hogao suave y servir con huevos revueltos y cubos de queso campesino.",
+                "Porcionar uniformemente para los estudiantes.",
+            ],
+        },
+        {
+            "nombre": "Desayuno valluno escolar de huevos campesinos, arroz blanco, banano y avena con canela",
+            "componentes_detalle": {
+                "Bebida con leche": "Avena valluna tibia con canela",
+                "Alimento proteico": "Huevos campesinos bien cocidos",
+                "Cereal acompañante": "Arroz blanco suelto",
+                "Fruta": "Banano fresco",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Huevos", "Arroz", "Avena", "Leche líquida", "Canela", "Banano", "Sal"],
+            "pasos": [
+                "Cocinar la avena en leche líquida con astilla de canela.",
+                "Preparar el arroz blanco tradicional y los huevos campesinos bien cocidos.",
+                "Entregar caliente con banano fresco limpio.",
+            ],
+        },
     ],
     "Almuerzo": [
         {
@@ -1302,6 +2128,134 @@ PLANTILLAS_INNOVADORAS_PAE = {
                 "Incorporar el pollo desmechado y servir caliente acompañado de arroz blanco y agua potable.",
             ],
         },
+        {
+            "nombre": "Estofado criollo de carne de res con papa, zanahoria y hogao, acompañado de arroz blanco",
+            "componentes_detalle": {
+                "Bebida con leche": "Bebida escolar o agua potable",
+                "Alimento proteico": "Carne de res en estofado criollo",
+                "Cereal acompañante": "Arroz blanco y papa guisada",
+                "Verdura / Fruta": "Zanahoria en rodajas y tomate",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Carne de res", "Papa", "Zanahoria", "Tomate", "Cebolla", "Arroz", "Aceite vegetal", "Sal"],
+            "pasos": [
+                "Sellar los cubos de carne de res con hogao de tomate y cebolla, luego cocinar a fuego lento hasta ablandar.",
+                "Incorporar papa y zanahoria en trozos hasta que el caldo espese suavemente.",
+                "Servir caliente con porción de arroz blanco suelto.",
+            ],
+        },
+        {
+            "nombre": "Pasta escolar a la criolla con carne molida en hogao de tomate y cebolla, y refresco de avena",
+            "componentes_detalle": {
+                "Bebida con leche": "Refresco de avena en leche",
+                "Alimento proteico": "Carne molida guisada en hogao criollo",
+                "Cereal acompañante": "Pasta cocida al dente",
+                "Verdura / Fruta": "Tomate y cebolla en salsa natural",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Pasta", "Carne molida", "Tomate", "Cebolla", "Avena", "Leche líquida", "Aceite vegetal", "Sal"],
+            "pasos": [
+                "Preparar la salsa criolla natural con tomate chonto maduro y cebolla, incorporando la carne molida hasta cocción total.",
+                "Cocinar la pasta en abundante agua limpia con poca sal hasta punto al dente.",
+                "Mezclar la pasta con la salsa criolla y servir con refresco de avena en leche.",
+            ],
+        },
+        {
+            "nombre": "Lentejas campesinas en hogao criollo con papa en cubos, arroz blanco y tajadas de plátano",
+            "componentes_detalle": {
+                "Bebida con leche": "Agua potable o bebida escolar",
+                "Alimento proteico": "Lentejas guisadas con hogao",
+                "Cereal acompañante": "Arroz blanco, papa y plátano cocido",
+                "Verdura / Fruta": "Tomate y cebolla en guiso",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Lentejas", "Papa", "Plátano", "Arroz", "Tomate", "Cebolla", "Aceite vegetal", "Sal"],
+            "pasos": [
+                "Cocinar las lentejas limpias con papa en cubos y hogao suave de tomate y cebolla hasta espesar.",
+                "Preparar el arroz blanco tradicional y cocinar el plátano en rodajas al vapor o asado.",
+                "Servir el almuerzo caliente siguiendo los gramajes PAE.",
+            ],
+        },
+        {
+            "nombre": "Pollo desmechado en salsa criolla costeña con pasta, zanahoria y bebida en leche",
+            "componentes_detalle": {
+                "Bebida con leche": "Bebida láctea o jugo en leche",
+                "Alimento proteico": "Pollo desmechado en guiso costeño",
+                "Cereal acompañante": "Pasta escolar",
+                "Verdura / Fruta": "Zanahoria, pimentón y tomate",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Pollo", "Pasta", "Zanahoria", "Pimentón", "Tomate", "Cebolla", "Leche líquida", "Sal"],
+            "pasos": [
+                "Cocinar el pollo, desmechar y guisar con tomate, cebolla, pimentón y zanahoria rallada.",
+                "Cocinar la pasta al dente y mezclar con el pollo guisado.",
+                "Servir caliente acompañado de bebida en leche.",
+            ],
+        },
+        {
+            "nombre": "Carne de res desmechada en hogao santandereano con yuca cocida y arroz blanco",
+            "componentes_detalle": {
+                "Bebida con leche": "Agua potable tratada",
+                "Alimento proteico": "Carne de res desmechada en hogao",
+                "Cereal acompañante": "Yuca cocida y arroz blanco",
+                "Verdura / Fruta": "Tomate y cebolla en guiso",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Carne de res", "Yuca", "Arroz", "Tomate", "Cebolla", "Aceite vegetal", "Sal"],
+            "pasos": [
+                "Cocinar la carne de res hasta ablandar, desmechar y guisar con hogao criollo.",
+                "Hervir la yuca pelada hasta quedar tierna y preparar el arroz blanco suelto.",
+                "Servir caliente en porciones escolares.",
+            ],
+        },
+        {
+            "nombre": "Arroz con pollo campesino, arvejas, pimentón, zanahoria y ensalada fresca",
+            "componentes_detalle": {
+                "Bebida con leche": "Agua potable o bebida natural",
+                "Alimento proteico": "Pollo en cubos o desmechado",
+                "Cereal acompañante": "Arroz campesino con verduras",
+                "Verdura / Fruta": "Arvejas, zanahoria y pimentón",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Pollo", "Arroz", "Arvejas", "Zanahoria", "Pimentón", "Cebolla", "Aceite vegetal", "Sal"],
+            "pasos": [
+                "Cocinar el pollo en caldo aromático y reservar tanto la carne como el caldo.",
+                "Sofreír cebolla, pimentón, zanahoria y arvejas; añadir el arroz y cocinar con el caldo del pollo.",
+                "Integrar el pollo y servir caliente.",
+            ],
+        },
+        {
+            "nombre": "Cazuela escolar de frijoles guisados con pollo en cubos, arroz blanco y zanahoria",
+            "componentes_detalle": {
+                "Bebida con leche": "Agua potable tratada",
+                "Alimento proteico": "Frijoles guisados con pollo",
+                "Cereal acompañante": "Arroz blanco tradicional",
+                "Verdura / Fruta": "Zanahoria y tomate",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Frijoles", "Pollo", "Arroz", "Zanahoria", "Tomate", "Cebolla", "Sal"],
+            "pasos": [
+                "Cocinar los frijoles con zanahoria rallada hasta quedar cremosos.",
+                "Incorporar cubos de pollo previamente guisados con tomate y cebolla.",
+                "Servir caliente acompañado de arroz blanco.",
+            ],
+        },
+        {
+            "nombre": "Guiso criollo de atún con tomate y cebolla, arroz con zanahoria y papa cocida",
+            "componentes_detalle": {
+                "Bebida con leche": "Agua potable tratada",
+                "Alimento proteico": "Atún en guiso criollo",
+                "Cereal acompañante": "Arroz con zanahoria y papa cocida",
+                "Verdura / Fruta": "Tomate, cebolla y zanahoria",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Atún", "Arroz", "Papa", "Zanahoria", "Tomate", "Cebolla", "Aceite vegetal", "Sal"],
+            "pasos": [
+                "Preparar arroz blanco con zanahoria rallada y cocinar papas en rodajas.",
+                "Sofreír tomate y cebolla, añadir el atún escurrido y calentar suavemente.",
+                "Servir caliente siguiendo los gramajes PAE.",
+            ],
+        },
     ],
     "Merienda": [
         {
@@ -1352,6 +2306,118 @@ PLANTILLAS_INNOVADORAS_PAE = {
                 "Entregar acompañado de galletas escolares individuales.",
             ],
         },
+        {
+            "nombre": "Sorbete colombiano de guayaba en leche con galletas escolares",
+            "componentes_detalle": {
+                "Bebida con leche": "Sorbete natural de guayaba en leche",
+                "Alimento proteico": "—",
+                "Cereal acompañante": "Galletas escolares",
+                "Fruta": "Guayaba fresca colombiana",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Guayaba", "Leche líquida", "Azúcar", "Galleta"],
+            "pasos": [
+                "Licuar la guayaba fresca lavada con leche líquida fría y poca azúcar, colar finamente.",
+                "Servir el sorbete frío en vasos higiénicos.",
+                "Acompañar con porción individual de galletas escolares.",
+            ],
+        },
+        {
+            "nombre": "Batido energético de banano en leche con pan de queso horneado",
+            "componentes_detalle": {
+                "Bebida con leche": "Batido cremoso de banano en leche",
+                "Alimento proteico": "—",
+                "Cereal acompañante": "Pan de queso escolar",
+                "Fruta": "Banano criollo",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Banano", "Leche líquida", "Pan de queso"],
+            "pasos": [
+                "Licuar el banano maduro con leche líquida fría hasta obtener un batido cremoso natural.",
+                "Servir inmediatamente conservando la frescura.",
+                "Entregar acompañado de pan de queso escolar.",
+            ],
+        },
+        {
+            "nombre": "Colada cremosa de avena en leche con canela, pan escolar y manzana fresca",
+            "componentes_detalle": {
+                "Bebida con leche": "Colada tibia de avena en leche y canela",
+                "Alimento proteico": "—",
+                "Cereal acompañante": "Pan escolar",
+                "Fruta": "Manzana fresca lavada",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Avena", "Leche líquida", "Canela", "Pan", "Manzana"],
+            "pasos": [
+                "Cocinar la avena en leche líquida con canela hasta lograr textura cremosa.",
+                "Servir tibia con porción de pan escolar.",
+                "Entregar con manzana fresca lavada y desinfectada.",
+            ],
+        },
+        {
+            "nombre": "Chocolate tibio santafereño en leche con pan de queso y mandarina fresca",
+            "componentes_detalle": {
+                "Bebida con leche": "Chocolate tradicional en leche",
+                "Alimento proteico": "—",
+                "Cereal acompañante": "Pan de queso",
+                "Fruta": "Mandarina fresca",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Chocolate", "Leche líquida", "Pan de queso", "Mandarina"],
+            "pasos": [
+                "Preparar el chocolate en leche líquida tibia y batir suavemente.",
+                "Acompañar con pan de queso recién horneado.",
+                "Entregar con mandarina fresca individual.",
+            ],
+        },
+        {
+            "nombre": "Arroz con leche cremoso escolar aromatizado con canela y dados de papaya",
+            "componentes_detalle": {
+                "Bebida con leche": "Arroz con leche y canela",
+                "Alimento proteico": "—",
+                "Cereal acompañante": "Arroz en preparación láctea",
+                "Fruta": "Papaya fresca en dados",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Arroz", "Leche líquida", "Canela", "Azúcar", "Papaya"],
+            "pasos": [
+                "Cocinar el arroz en agua con canela y terminar la cocción en leche líquida con poca azúcar hasta cremosidad.",
+                "Porcionar tibio o frío en recipientes individuales.",
+                "Acompañar con dados de papaya fresca desinfectada.",
+            ],
+        },
+        {
+            "nombre": "Yogurt frío con papaya en cubos y arepitas suaves de maíz",
+            "componentes_detalle": {
+                "Bebida con leche": "Yogurt frío pasteurizado",
+                "Alimento proteico": "—",
+                "Cereal acompañante": "Arepitas suaves de maíz",
+                "Fruta": "Papaya fresca",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Yogurt", "Papaya", "Harina de maíz"],
+            "pasos": [
+                "Asar arepitas delgadas de maíz en plancha limpia.",
+                "Porcionar la papaya fresca en cubos higiénicos.",
+                "Servir con yogurt frío respetando la cadena de frío.",
+            ],
+        },
+        {
+            "nombre": "Licuado tropical de mango en leche con galletas y banano criollo",
+            "componentes_detalle": {
+                "Bebida con leche": "Licuado natural de mango en leche",
+                "Alimento proteico": "—",
+                "Cereal acompañante": "Galletas escolares",
+                "Fruta": "Mango y banano criollo",
+                "Agua": "Agua potable tratada",
+            },
+            "ingredientes_clave": ["Mango", "Leche líquida", "Galleta", "Banano"],
+            "pasos": [
+                "Licuar pulpa fresca de mango con leche líquida fría hasta obtener bebida homogénea.",
+                "Servir acompañado de galletas escolares y banano fresco lavado.",
+                "Entregar inmediatamente para conservar sus nutrientes.",
+            ],
+        },
     ],
 }
 
@@ -1383,6 +2449,7 @@ def _construir_prompts_recetas_colombianas(
     ninos_presentes: int,
     inventario_nombres: list[str],
     preferencia: str,
+    recetas_recientes: list[str] | None = None,
 ) -> tuple[str, str]:
     ejemplos_base = [
         f"- Menú #{m['numeroMenu']} ({m['seccion']}): {m['nombre_plato']}"
@@ -1391,20 +2458,36 @@ def _construir_prompts_recetas_colombianas(
     ]
     ejemplos_str = "\n".join(ejemplos_base[:8])
 
+    # Mezclar el orden de los ingredientes y rotar estilo regional colombiano en cada solicitud
+    ingredientes_mezclados = list(inventario_nombres)
+    random.shuffle(ingredientes_mezclados)
+    region_nombre, region_enfoque = random.choice(ESTILOS_REGIONALES_COLOMBIA)
+    semilla_variacion = uuid.uuid4().hex[:8]
+
+    bloque_evitar = ""
+    if recetas_recientes:
+        evitar_str = "\n".join(f"- {r}" for r in recetas_recientes[-15:])
+        bloque_evitar = f"""
+RECETAS GENERADAS RECIENTEMENTE (ESTRICTAMENTE PROHIBIDO REPETIR O PARAFRASEAR):
+{evitar_str}
+Debes proponer preparaciones COMPLETAMENTE DIFERENTES a las anteriores en nombre, técnica de cocción y combinación de ingredientes.
+"""
+
     prompt_sistema = (
         "Eres un nutricionista experto y chef de gastronomía tradicional colombiana del Programa de Alimentación "
-        "Escolar (PAE) en Colombia. Tu misión es proponer menús escolares auténticamente colombianos (como calentado "
-        "escolar, huevos en hogao criollo, arepas de maíz, caldo santafereño, sudado criollo, arroz campesino "
-        "atollado, frijolada antioqueña, ajiaco santafereño, avena vallecaucana con canela, mazamorra o colada en "
-        "leche), saludables, nutritivos, viables en cocinas escolares y estrictamente coherentes con el momento del día."
+        "Escolar (PAE) en Colombia. Tu misión es proponer menús escolares auténticamente colombianos y VARIADOS "
+        "(calentado escolar, huevos en hogao criollo, changua, tortillas campesinas, arepas de maíz, caldo santafereño, "
+        "sudado criollo, arroz campesino atollado, estofado costeño, pasta a la criolla, frijolada antioqueña, "
+        "ajiaco santafereño, avena vallecaucana con canela, sorbetes en leche, mazamorra o colada en leche), "
+        "saludables, nutritivos, viables en cocinas escolares y estrictamente coherentes con el momento del día."
     )
 
     if seccion_nombre == "Desayuno":
         reglas_momento = (
             "REGLA OBLIGATORIA PARA DESAYUNO COLOMBIANO: Debe ser una comida matutina tradicional colombiana, "
-            "ligera y nutritiva basada en: Huevos (en hogao criollo, campesinos, revueltos, en caldo de papa), "
-            "queso campesino, arepas de maíz, calentado escolar ligero, avena tibia con canela, chocolate "
-            "santafereño en leche o leche tibia, y fruta tropical colombiana. "
+            "ligera y nutritiva basada en: Huevos (en hogao criollo, campesinos, revueltos, en caldo de papa, "
+            "tortilla campesina, cacerola boyacense, changua), queso campesino, arepas de maíz, calentado escolar "
+            "ligero, avena tibia con canela, chocolate santafereño en leche o leche tibia, y fruta tropical colombiana. "
             "ESTÁ ESTRICTAMENTE PROHIBIDO generar platos pesados de almuerzo como carnes sudadas, carne asada, "
             "pollo asado/entero, frijoladas o sancochos pesados."
         )
@@ -1412,37 +2495,39 @@ def _construir_prompts_recetas_colombianas(
         reglas_momento = (
             "REGLA OBLIGATORIA PARA MERIENDA COLOMBIANA (MEDIA MAÑANA / ONCES): Debe ser un refrigerio típico "
             "colombiano ligero: Bebida láctea (avena fría con canela, mazamorra/colada de maíz en leche, yogurt, "
-            "leche) + Cereal tradicional (pan de queso, almojábana, arepitas dulces, galleta) + Fruta fresca "
-            "colombiana (banano, mango, papaya, guayaba, mandarina)."
+            "sorbete de fruta en leche, batido natural, chocolate tibio, arroz con leche) + Cereal tradicional "
+            "(pan de queso, almojábana, arepitas dulces, pan escolar, galleta) + Fruta fresca colombiana "
+            "(banano, mango, papaya, guayaba, mandarina, manzana)."
         )
     else:
         reglas_momento = (
             "REGLA OBLIGATORIA PARA ALMUERZO COLOMBIANO: Debe ser un almuerzo casero colombiano balanceado: "
-            "Alimento proteico en preparación criolla (sudado de pollo, carne en hogao, frijolada, lentejas "
-            "guisadas, ajiaco escolar) + Cereal/tubérculo (arroz blanco o campesino, papa, yuca, plátano) + "
-            "Verdura/ensalada + Bebida natural o en leche y agua potable."
+            "Alimento proteico en preparación criolla (sudado de pollo, estofado de res, carne en hogao, frijolada, "
+            "lentejas guisadas, ajiaco escolar, pollo desmechado, pasta a la criolla, atún en guiso) + Cereal/tubérculo "
+            "(arroz blanco o campesino, papa, yuca, plátano, pasta) + Verdura/ensalada + Bebida natural o en leche y agua potable."
         )
 
     prompt_usuario = f"""
-Genera 1 o 2 propuestas de recetas auténticamente de **gastronomía colombiana** para el momento: **{seccion_nombre}**.
+Genera 1 o 2 propuestas NUEVAS, VARIADAS y auténticamente de **gastronomía colombiana** para el momento: **{seccion_nombre}**.
+Enfoque regional sugerido para esta generación (id de variación {semilla_variacion}): **{region_nombre}** ({region_enfoque}).
 Número de niños beneficiarios: {ninos_presentes} niños de Primaria.
 Ingredientes REALES con stock suficiente en el inventario de la sede escolar:
-{", ".join(inventario_nombres)}
+{", ".join(ingredientes_mezclados)}
 
 Preferencia adicional: {preferencia if preferencia else "Cocina casera tradicional colombiana PAE"}
 
 {reglas_momento}
-
+{bloque_evitar}
 REGLA CRÍTICA DE INVENTARIO REAL:
 - Debes usar **ÚNICAMENTE** ingredientes que aparezcan en la lista anterior.
 - **ESTÁ PROHIBIDO** agregar ingredientes que no estén en esa lista (ni siquiera leche, fruta, queso, tomate, sal o aceite si no aparecen listados).
 - Si con los ingredientes listados no es posible preparar una comida coherente para {seccion_nombre}, devuelve `"sugerencias": []`.
 
-REGLA DE ORIGINALIDAD Y RAÍZ COLOMBIANA:
+REGLA DE ORIGINALIDAD, VARIEDAD Y RAÍZ COLOMBIANA:
 Los siguientes menús ya están formalmente registrados en el ciclo oficial del PAE para este momento:
 {ejemplos_str}
-Tus propuestas deben inspirarse en la cocina tradicional colombiana y en el balance del PAE, pero **NO deben repetir ninguno de los anteriores**.
-Usa nombres y técnicas propias de la cocina colombiana (hogao criollo, sudado, calentado, ajiaco, avena con canela, arepa asada, etc.).
+Tus propuestas deben inspirarse en la cocina tradicional colombiana y en el balance del PAE, pero **NO deben repetir ninguno de los anteriores ni ninguna receta generada recientemente**.
+Varía técnicas de cocción (al horno, a la plancha, en cazuela, sudado, salteado, tortilla, caldo, atollado, colada, sorbete) y usa nombres auténticos colombianos.
 
 Responde ÚNICAMENTE un objeto JSON válido con la siguiente estructura:
 {{
@@ -1474,6 +2559,7 @@ def generar_con_gemini(
     ninos_presentes: int,
     inventario_nombres: list[str],
     preferencia: str,
+    recetas_recientes: list[str] | None = None,
 ) -> list[dict] | None:
     """Invoca la API de Google Gemini para generar recetas de gastronomía colombiana coherentes con el PAE."""
     global _GEMINI_CHAT_SIN_CUOTA
@@ -1489,9 +2575,10 @@ def generar_con_gemini(
         ninos_presentes=ninos_presentes,
         inventario_nombres=inventario_nombres,
         preferencia=preferencia,
+        recetas_recientes=recetas_recientes,
     )
 
-    for modelo in ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.6-flash"):
+    for modelo in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-flash-lite", "gemini-3.1-flash-lite"):
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={api_key}"
             payload = {
@@ -1505,7 +2592,8 @@ def generar_con_gemini(
                     }
                 ],
                 "generationConfig": {
-                    "temperature": 0.6,
+                    "temperature": 0.95,
+                    "topP": 0.95,
                     "responseMimeType": "application/json",
                 },
             }
@@ -1537,6 +2625,7 @@ def generar_con_openai(
     ninos_presentes: int,
     inventario_nombres: list[str],
     preferencia: str,
+    recetas_recientes: list[str] | None = None,
 ) -> list[dict] | None:
     """
     Genera recetas de gastronomía colombiana coherentes con el PAE priorizando Google Gemini
@@ -1547,6 +2636,7 @@ def generar_con_openai(
         ninos_presentes=ninos_presentes,
         inventario_nombres=inventario_nombres,
         preferencia=preferencia,
+        recetas_recientes=recetas_recientes,
     )
     if sugerencias_gemini:
         return sugerencias_gemini
@@ -1568,6 +2658,7 @@ def generar_con_openai(
             ninos_presentes=ninos_presentes,
             inventario_nombres=inventario_nombres,
             preferencia=preferencia,
+            recetas_recientes=recetas_recientes,
         )
 
         respuesta = client.chat.completions.create(
@@ -1577,7 +2668,7 @@ def generar_con_openai(
                 {"role": "user", "content": prompt_usuario},
             ],
             response_format={"type": "json_object"},
-            temperature=0.7,
+            temperature=0.9,
             timeout=25,
         )
 
@@ -1619,6 +2710,19 @@ def sugerencias_recetas_ia(request):
     )
     raw_seccion = data.get("id_seccion") or data.get("seccion") or 1
     preferencia = str(data.get("preferencia") or "").strip()
+
+    raw_excluir = (
+        data.get("excluir_recetas")
+        or data.get("recetas_previas")
+        or data.get("evitar_recetas")
+        or []
+    )
+    if isinstance(raw_excluir, str):
+        excluir_extras = [x.strip() for x in raw_excluir.split(",") if x.strip()]
+    elif isinstance(raw_excluir, (list, tuple)):
+        excluir_extras = [str(x).strip() for x in raw_excluir if str(x).strip()]
+    else:
+        excluir_extras = []
 
     raw_gen_img = data.get("generar_imagen", True)
     if isinstance(raw_gen_img, bool):
@@ -1905,6 +3009,10 @@ def sugerencias_recetas_ia(request):
 
     sugerencias_estructuradas = []
     uso_openai = False
+    recetas_recientes = _obtener_recetas_recientes(
+        id_sede_final, seccion_nombre, extras=excluir_extras
+    )
+    excluir_set = {_clave_receta_normalizada(r) for r in recetas_recientes if r}
 
     if hay_base_suficiente:
         sugerencias_openai = generar_con_openai(
@@ -1912,10 +3020,18 @@ def sugerencias_recetas_ia(request):
             ninos_presentes=ninos_presentes,
             inventario_nombres=nombres_suficientes_prompt,
             preferencia=preferencia,
+            recetas_recientes=recetas_recientes,
         )
         if sugerencias_openai:
-            sugerencias_estructuradas = _estructurar_y_validar(sugerencias_openai, solo_viables=True)
-            uso_openai = bool(sugerencias_estructuradas)
+            validadas_llm = _estructurar_y_validar(sugerencias_openai, solo_viables=True)
+            # Evitar devolver recetas que la IA repitió respecto a recargas recientes
+            nuevas_llm = [
+                s for s in validadas_llm
+                if _clave_receta_normalizada(s["nombre_plato"]) not in excluir_set
+            ]
+            if nuevas_llm:
+                sugerencias_estructuradas = nuevas_llm
+                uso_openai = True
 
         if not sugerencias_estructuradas:
             sugerencias_adaptadas = construir_sugerencias_adaptadas_al_inventario(
@@ -1923,6 +3039,7 @@ def sugerencias_recetas_ia(request):
                 ingredientes_suficientes=ingredientes_suficientes,
                 ninos_presentes=ninos_presentes,
                 mapa_inventario=mapa_inventario,
+                excluir_nombres=excluir_set,
             )
             sugerencias_estructuradas = _estructurar_y_validar(sugerencias_adaptadas, solo_viables=True)
 
@@ -1932,6 +3049,12 @@ def sugerencias_recetas_ia(request):
     # NO se debe generar ni devolver ninguna receta: se retornan las listas vacías y el mensaje claro.
     if not inventario_suficiente:
         sugerencias_estructuradas = []
+    else:
+        _registrar_recetas_recientes(
+            id_sede_final,
+            seccion_nombre,
+            [s["nombre_plato"] for s in sugerencias_estructuradas],
+        )
 
     # 3. Generar imagen de la receta colombiana y guardarla en Cloudinary (solo si hay recetas viables)
     if generar_imagen and sugerencias_estructuradas:
@@ -2073,7 +3196,7 @@ def sugerencias_recetas_ia(request):
     except Exception as e:
         logger.warning("No se pudo registrar la sugerencia en MongoDB Atlas: %s", e)
 
-    return Response(
+    response = Response(
         {
             "status": "success",
             "mensaje": texto_resumen,
@@ -2114,6 +3237,8 @@ def sugerencias_recetas_ia(request):
         },
         status=status.HTTP_200_OK,
     )
+    response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 
 # ==============================================================================
