@@ -509,13 +509,12 @@ def asegurar_columnas_criticas():
         "ALTER TABLE instituciones ADD COLUMN IF NOT EXISTS telefono VARCHAR(30);",
         "ALTER TABLE instituciones ADD COLUMN IF NOT EXISTS correo_contacto VARCHAR(150);",
         "ALTER TABLE instituciones ADD COLUMN IF NOT EXISTS estado VARCHAR(20) DEFAULT 'ACTIVO';",
-        "ALTER TABLE usuarios_usuario ADD COLUMN IF NOT EXISTS bloqueado_hasta TIMESTAMP WITH TIME ZONE;",
-        "ALTER TABLE usuarios_usuario ADD COLUMN IF NOT EXISTS intentos_fallidos_login SMALLINT DEFAULT 0;",
-        "ALTER TABLE usuarios_usuario ADD COLUMN IF NOT EXISTS ultimo_intento_fallido TIMESTAMP WITH TIME ZONE;",
-        "ALTER TABLE usuarios_usuario ADD COLUMN IF NOT EXISTS id_jornada_id INTEGER;",
-        "ALTER TABLE usuarios_usuario ADD COLUMN IF NOT EXISTS debe_cambiar_password BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS bloqueado_hasta TIMESTAMP WITH TIME ZONE;",
+        "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS intentos_fallidos_login SMALLINT DEFAULT 0;",
+        "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS ultimo_intento_fallido TIMESTAMP WITH TIME ZONE;",
+        "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS id_jornada_id INTEGER;",
+        "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS debe_cambiar_password BOOLEAN DEFAULT FALSE;",
         "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS foto_perfil TEXT;",
-        "ALTER TABLE usuarios_usuario ADD COLUMN IF NOT EXISTS foto_perfil TEXT;",
         """
         CREATE TABLE IF NOT EXISTS usuarios_intento_autenticacion (
             id BIGSERIAL PRIMARY KEY,
