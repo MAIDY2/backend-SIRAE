@@ -1,7 +1,7 @@
 import pickle
 from django.contrib.auth import get_user_model
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -13,20 +13,39 @@ User = get_user_model()
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@authentication_classes([])
+@permission_classes([AllowAny])
 def register_face(request):
     """
-    Registra o actualiza la biometría facial de un usuario autenticado (desde Mi Perfil).
-    Por seguridad, solo un usuario con sesión iniciada puede vincular o renovar su rostro.
+    Registra o actualiza la biometría facial de un usuario (desde Mi Perfil o App Móvil).
+    Soporta autenticación por token JWT activo o por correo del usuario activo en la app.
     """
-    usuario = request.user
-    
-    # Si un superadministrador desea registrar el rostro de otro usuario:
+    usuario = None
+    auth_header = request.headers.get('Authorization') or request.META.get('HTTP_AUTHORIZATION')
+    if auth_header and auth_header.startswith('Bearer '):
+        token_str = auth_header.split(' ')[1].strip()
+        try:
+            from rest_framework_simplejwt.tokens import AccessToken
+            token = AccessToken(token_str)
+            user_id = token.get('user_id')
+            if user_id:
+                usuario = User.objects.filter(pk=user_id, is_active=True).first()
+        except Exception:
+            pass
+
+    # Si viene correo del usuario (enviado por la app móvil o superadmin)
     correo_objetivo = request.data.get('correo')
-    if correo_objetivo and (usuario.is_superuser or getattr(getattr(usuario, 'rol', None), 'nombre', '') == 'Superadministrador'):
-        target = User.objects.filter(correo__iexact=str(correo_objetivo).strip()).first()
+    if correo_objetivo:
+        target = User.objects.filter(correo__iexact=str(correo_objetivo).strip(), is_active=True).first()
         if target:
-            usuario = target
+            if usuario is None or usuario.is_superuser or getattr(getattr(usuario, 'rol', None), 'nombre', '') == 'Superadministrador' or usuario.correo.lower() == target.correo.lower():
+                usuario = target
+
+    if not usuario:
+        return Response(
+            {"detail": "No se pudo identificar la cuenta de usuario. Inicia sesión nuevamente."},
+            status=status.HTTP_401_UNAUTHORIZED
+        )
 
     image = request.data.get('image')
     if not image:
