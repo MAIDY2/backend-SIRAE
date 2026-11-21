@@ -72,5 +72,5 @@ class UsuariosConfig(AppConfig):
     name = "apps_sirae.usuarios"
 
     def ready(self):
-        if any(cmd in sys.argv for cmd in ("migrate", "makemigrations", "check")):
+        if "migrate" in sys.argv:
             _reconciliar_historial_migraciones_usuarios()
