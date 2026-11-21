@@ -27,14 +27,42 @@ def _cupos_no_negativos(valor, campo):
 
 
 def _contratos_sede(sede, jornada_id=None):
-    contratos = Contrato.objects.filter(id_sede_id=sede.id_sede)
+    from apps_sirae.contratos_pae.models import DistribucionSede
+    contrato_ids = list(DistribucionSede.objects.filter(id_sede=sede).values_list('id_contrato_id', flat=True))
+    contratos = Contrato.objects.filter(
+        Q(id_sede_id=sede.id_sede) |
+        Q(id_contrato__in=contrato_ids) |
+        Q(id_institucion_id=sede.id_institucion_id)
+    ).distinct()
     if jornada_id is not None:
-        contratos = contratos.filter(id_jornada_id=jornada_id)
+        contratos = contratos.filter(Q(id_jornada_id=jornada_id) | Q(id_jornada__isnull=True))
     return contratos
 
 
 def _cupos_autorizados_sede(sede):
-    return _contratos_sede(sede).aggregate(total=Sum('cupos'))['total'] or 0
+    # 1. Consultar cupos distribuidos a esta sede en contratos vigentes
+    from apps_sirae.contratos_pae.models import DistribucionSede
+    dist_total = DistribucionSede.objects.filter(
+        id_sede=sede
+    ).aggregate(total=Sum('cupos_asignados'))['total'] or 0
+    if dist_total > 0:
+        return dist_total
+
+    # 2. Consultar si la sede tiene cupos asignados directamente
+    if getattr(sede, 'cupos', 0) and sede.cupos > 0:
+        return sede.cupos
+
+    # 3. Consultar contratos directos de la sede
+    directos = Contrato.objects.filter(id_sede_id=sede.id_sede).aggregate(total=Sum('cupos'))['total'] or 0
+    if directos > 0:
+        return directos
+
+    # 4. Consultar cupos autorizados del contrato de su institución
+    contrato_inst = Contrato.objects.filter(
+        id_institucion_id=sede.id_institucion_id,
+        estado__in=['Activo', 'ACTIVO', 'Vigente', 'VIGENTE']
+    ).aggregate(total=Sum('cupos'))['total'] or 0
+    return contrato_inst
 
 
 def _asistencia_maxima(sede, grado_id):
