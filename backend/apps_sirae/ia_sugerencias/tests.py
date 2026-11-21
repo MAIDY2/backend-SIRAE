@@ -506,5 +506,81 @@ class IASugerenciasRecetasTests(TestCase):
             self.assertTrue(str(data["imagen_url"]).startswith("https://image.pollinations.ai/prompt/"))
             self.assertEqual(data["imagen"], data["imagen_url"])
 
+    def test_recargar_10_veces_da_recetas_variadas_sin_repetir(self):
+        """Al recargar 10 veces seguidas debe entregar recetas distintas y nunca repetir la misma."""
+        from apps_sirae.ia_sugerencias.views import _limpiar_historial_reciente
+
+        _limpiar_historial_reciente()
+        nombres_desayuno = []
+        with patch("apps_sirae.ia_sugerencias.views.generar_con_openai", return_value=None):
+            payload = {
+                "id_sede": self.sede.id_sede,
+                "ninos_presentes": 100,
+                "id_seccion": 1,  # Desayuno
+                "generar_imagen": False,
+            }
+            for _ in range(10):
+                resp = self.client.post("/api/ia/sugerencias-recetas/", payload, format="json")
+                self.assertEqual(resp.status_code, status.HTTP_200_OK)
+                self.assertIn("no-store", resp.headers.get("Cache-Control", ""))
+                sugs = resp.json()["sugerencias_ia_estructuradas"]
+                self.assertTrue(len(sugs) >= 1)
+                nombres_desayuno.append(sugs[0]["nombre_plato"])
+
+        # Con 10 recargas debe haber 10 recetas distintas (variedad real)
+        self.assertEqual(len(set(nombres_desayuno)), 10)
+
+    def test_llm_repetitivo_es_reemplazado_por_receta_nueva(self):
+        """Si la IA externa devuelve la misma receta dos veces seguidas, se reemplaza por una distinta."""
+        from apps_sirae.ia_sugerencias.views import _limpiar_historial_reciente
+
+        _limpiar_historial_reciente()
+        receta_repetida = [
+            {
+                "nombre_plato": "Calentado criollo escolar de arroz y huevos",
+                "componentes_detalle": {"Alimento proteico": "Huevos", "Cereal acompañante": "Arroz"},
+                "ingredientes_usados": ["Huevos", "Arroz Blanco"],
+                "pasos": ["Preparar arroz.", "Cocinar huevos.", "Servir caliente."],
+            }
+        ]
+        with patch("apps_sirae.ia_sugerencias.views.generar_con_openai", return_value=receta_repetida):
+            payload = {
+                "id_sede": self.sede.id_sede,
+                "ninos_presentes": 100,
+                "id_seccion": 1,
+                "generar_imagen": False,
+            }
+            r1 = self.client.post("/api/ia/sugerencias-recetas/", payload, format="json")
+            r2 = self.client.post("/api/ia/sugerencias-recetas/", payload, format="json")
+            self.assertEqual(r1.status_code, status.HTTP_200_OK)
+            self.assertEqual(r2.status_code, status.HTTP_200_OK)
+            n1 = r1.json()["sugerencias_ia_estructuradas"][0]["nombre_plato"]
+            n2 = r2.json()["sugerencias_ia_estructuradas"][0]["nombre_plato"]
+            self.assertNotEqual(n1, n2)
+
+    def test_parametro_excluir_recetas_evita_repeticiones(self):
+        """El parámetro opcional excluir_recetas evita devolver las recetas enviadas por el frontend."""
+        from apps_sirae.ia_sugerencias.views import _limpiar_historial_reciente
+
+        _limpiar_historial_reciente()
+        with patch("apps_sirae.ia_sugerencias.views.generar_con_openai", return_value=None):
+            payload = {
+                "id_sede": self.sede.id_sede,
+                "ninos_presentes": 100,
+                "id_seccion": 2,  # Almuerzo
+                "generar_imagen": False,
+            }
+            r1 = self.client.post("/api/ia/sugerencias-recetas/", payload, format="json")
+            self.assertEqual(r1.status_code, status.HTTP_200_OK)
+            primera = r1.json()["sugerencias_ia_estructuradas"][0]["nombre_plato"]
+
+            _limpiar_historial_reciente()
+            payload["excluir_recetas"] = [primera]
+            r2 = self.client.post("/api/ia/sugerencias-recetas/", payload, format="json")
+            self.assertEqual(r2.status_code, status.HTTP_200_OK)
+            segunda = r2.json()["sugerencias_ia_estructuradas"][0]["nombre_plato"]
+            self.assertNotEqual(primera, segunda)
+
+
 
 
