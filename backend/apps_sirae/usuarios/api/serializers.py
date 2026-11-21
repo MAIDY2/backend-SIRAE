@@ -652,7 +652,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
                 if 'id_institucion' in attrs:
                     inst_solicitada = attrs.get('id_institucion')
                     inst_solicitada_id = getattr(inst_solicitada, 'id_institucion', inst_solicitada)
-                    if inst_solicitada_id != current_user.id_institucion_id:
+                    if current_user.id_institucion_id and inst_solicitada_id != current_user.id_institucion_id:
                         raise serializers.ValidationError({
                             'id_institucion': (
                                 'No tienes autorización para asignar o transferir usuarios a otra institución fuera de tu ámbito.'
@@ -661,14 +661,14 @@ class UsuarioSerializer(serializers.ModelSerializer):
 
                 if 'id_sede' in attrs and attrs.get('id_sede') is not None:
                     sede_solicitada = attrs.get('id_sede')
-                    if sede_solicitada.id_institucion_id != current_user.id_institucion_id:
+                    if current_user.id_institucion_id and sede_solicitada.id_institucion_id != current_user.id_institucion_id:
                         raise serializers.ValidationError({
                             'id_sede': (
                                 'No tienes autorización para asignar una sede que no pertenece a tu institución.'
                             )
                         })
 
-                if self.instance and self.instance.id_institucion_id != current_user.id_institucion_id:
+                if self.instance and current_user.id_institucion_id and self.instance.id_institucion_id != current_user.id_institucion_id:
                     raise serializers.ValidationError({
                         'id_institucion': (
                             'No tienes autorización para modificar usuarios pertenecientes a otra institución.'
@@ -697,12 +697,13 @@ class UsuarioSerializer(serializers.ModelSerializer):
                         es_rol_permitido = (
                             _es_rol_admin_institucional(rol_nombre)
                             or _es_rol_supervisor(rol_nombre)
+                            or _es_rol_cocina(rol_nombre)
                         )
                         if not es_rol_permitido:
                             raise serializers.ValidationError({
                                 'rol': (
                                     'El Super Administrador solo puede gestionar '
-                                    'usuarios con rol de Administrador institucional o Supervisor.'
+                                    'usuarios con rol de Administrador institucional, Supervisor, Jefa de Manipuladoras o Manipuladora.'
                                 )
                             })
                     else:
