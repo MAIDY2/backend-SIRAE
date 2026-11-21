@@ -4,6 +4,7 @@ from django.db import transaction
 from django.db.models import Q
 from rest_framework import status
 from rest_framework.decorators import action
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
@@ -36,8 +37,20 @@ def _etiqueta_unidad(unidad):
     return f"{unidad.nombre} ({unidad.abreviatura})"
 
 
+class GramagePagination(PageNumberPagination):
+    page_size = 2000
+    page_size_query_param = 'page_size'
+    max_page_size = 10000
+
+    def paginate_queryset(self, queryset, request, view=None):
+        if request.query_params.get('todos', '').lower() in ('1', 'true', 'yes') or request.query_params.get('page_size') == '0':
+            return None
+        return super().paginate_queryset(queryset, request, view=view)
+
+
 class GramageApiViewSet(ModelViewSet):
     serializer_class = GramageSerializer
+    pagination_class = GramagePagination
     permission_classes = [IsSuperAdminOrReadOnly]
     queryset = Gramage.objects.select_related(
         'id_ingrediente',
