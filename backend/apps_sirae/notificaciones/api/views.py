@@ -85,16 +85,17 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+        es_superadmin = remitente.es_super_administrador()
         es_admin = remitente.es_administrador()
         es_supervisor = remitente.es_supervisor()
         es_jefa = remitente.es_jefa_manipuladoras()
         es_manipuladora = remitente.es_manipuladora()
 
-        if not (es_admin or es_supervisor or es_jefa or es_manipuladora):
+        if not (es_superadmin or es_admin or es_supervisor or es_jefa or es_manipuladora):
             return Response(
                 {
                     'error': (
-                        'Solo el administrador, el supervisor '
+                        'Solo el superadministrador, el administrador, el supervisor, '
                         'la Jefa de Manipuladoras y la Manipuladora '
                         'pueden enviar '
                         'notificaciones.'
@@ -107,15 +108,50 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
             is_active=True
         ).select_related('rol')
 
-        if es_admin:
-            destinatarios = [
-                usuario
-                for usuario in usuarios_activos
-                if (
-                    usuario.es_supervisor()
-                    and usuario.id_usuario != remitente_id
-                )
-            ]
+        rol_destino = str(request.data.get('rol_destino', '')).lower().strip()
+        destinatario_id = request.data.get('id_destinatario')
+
+        if es_superadmin:
+            if destinatario_id:
+                try:
+                    dest_id_int = int(destinatario_id)
+                    destinatarios = [u for u in usuarios_activos if u.id_usuario == dest_id_int]
+                except (TypeError, ValueError):
+                    destinatarios = []
+            elif rol_destino == 'administrador':
+                destinatarios = [
+                    u for u in usuarios_activos
+                    if u.es_administrador() and u.id_usuario != remitente_id
+                ]
+            elif rol_destino == 'supervisor':
+                destinatarios = [
+                    u for u in usuarios_activos
+                    if u.es_supervisor() and u.id_usuario != remitente_id
+                ]
+            else:
+                destinatarios = [
+                    u for u in usuarios_activos
+                    if (u.es_administrador() or u.es_supervisor()) and u.id_usuario != remitente_id
+                ]
+        elif es_admin:
+            if destinatario_id:
+                try:
+                    dest_id_int = int(destinatario_id)
+                    destinatarios = [
+                        u for u in usuarios_activos
+                        if u.id_usuario == dest_id_int and (u.es_supervisor() or u.es_jefa_manipuladoras())
+                    ]
+                except (TypeError, ValueError):
+                    destinatarios = []
+            else:
+                destinatarios = [
+                    usuario
+                    for usuario in usuarios_activos
+                    if (
+                        usuario.es_supervisor()
+                        and usuario.id_usuario != remitente_id
+                    )
+                ]
         elif es_jefa:
             destinatarios = [
                 usuario
@@ -310,24 +346,17 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
         remitente = request.user
         remitente_id = getattr(remitente, 'id_usuario', None)
 
-        if remitente.es_administrador():
-            permitido = lambda u: u.es_supervisor()
+        if remitente.es_super_administrador():
+            permitido = lambda u: u.es_administrador() or u.es_supervisor()
+        elif remitente.es_administrador():
+            permitido = lambda u: u.es_supervisor() or u.es_jefa_manipuladoras()
         elif remitente.es_jefa_manipuladoras():
             permitido = lambda u: u.es_supervisor() or u.es_administrador()
         elif remitente.es_supervisor():
-            manipuladoras_que_escribieron = set(
-                Notificacion.objects.filter(
-                    id_usuario=remitente_id,
-                    id_remitente__isnull=False,
-                ).values_list('id_remitente', flat=True)
-            )
             permitido = lambda u: (
                 u.es_administrador()
                 or u.es_jefa_manipuladoras()
-                or (
-                    u.es_manipuladora()
-                    and u.id_usuario in manipuladoras_que_escribieron
-                )
+                or u.es_manipuladora()
             )
         elif remitente.es_manipuladora():
             permitido = lambda u: u.es_supervisor()
@@ -412,7 +441,8 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
         """
         usuario = request.user
         if not (
-            usuario.es_administrador()
+            usuario.es_super_administrador()
+            or usuario.es_administrador()
             or usuario.es_supervisor()
             or usuario.es_jefa_manipuladoras()
         ):

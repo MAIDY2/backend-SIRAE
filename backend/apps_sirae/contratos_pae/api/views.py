@@ -20,6 +20,33 @@ class ContratoViewSet(ModelViewSet):
     queryset = Contrato.objects.all()
     permission_classes = [IsSuperAdminOrReadOnly]
 
+    def perform_create(self, serializer):
+        contrato = serializer.save()
+        try:
+            from django.db.models import Q
+            from apps_sirae.notificaciones.models import Notificacion
+            from apps_sirae.usuarios.models import Usuario
+
+            remitente_id = self.request.user.id_usuario if (self.request.user and self.request.user.is_authenticated) else None
+            num_contrato = contrato.numero_contrato or f"CTO-{contrato.id_contrato}"
+            valor_fmt = f"${contrato.valor_total:,.2f}" if contrato.valor_total else "$0.00"
+
+            destinatarios = Usuario.objects.filter(
+                is_active=True
+            ).filter(
+                Q(rol__nombre__icontains='admin') | Q(is_superuser=True)
+            )
+
+            for u in destinatarios:
+                Notificacion.objects.create(
+                    id_usuario=u.id_usuario,
+                    id_remitente=remitente_id,
+                    titulo=f"📋 Contrato PAE registrado: {num_contrato}",
+                    mensaje=f"Se ha registrado el contrato PAE '{num_contrato}'. Presupuesto: {valor_fmt}. Vigencia hasta {contrato.fecha_fin}.",
+                )
+        except Exception:
+            pass
+
     # ──────────────────────────────────────────
     # GET  /api/contratos/{id}/distribucion/
     # PUT  /api/contratos/{id}/distribucion/

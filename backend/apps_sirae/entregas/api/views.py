@@ -230,6 +230,23 @@ class entregasApiViewset(viewsets.ModelViewSet):
                             titulo=f"📦 Nueva entrega despachada: {doc}",
                             mensaje=f"El Supervisor {nom_sup} ha despachado la remisión {doc} para la sede {sede.nombre_sede}. Ingresa para verificar cantidades, reportar novedades y firmar el acta.",
                         )
+
+                    # Notificar al Administrador de la institución
+                    if sede.id_institucion:
+                        from django.db.models import Q
+                        admins_inst = Usuario.objects.filter(
+                            id_institucion=sede.id_institucion,
+                            is_active=True
+                        ).filter(
+                            Q(rol__nombre__icontains='admin') | Q(is_superuser=True)
+                        ).exclude(id_usuario=remitente_id)
+                        for a in admins_inst:
+                            Notificacion.objects.create(
+                                id_usuario=a.id_usuario,
+                                id_remitente=remitente_id,
+                                titulo=f"📦 Despacho en camino para {sede.nombre_sede}",
+                                mensaje=f"Se ha despachado la remisión {doc} hacia la sede {sede.nombre_sede}. En tránsito para verificación en cocina.",
+                            )
                 elif inst_id:
                     # Despacho institucional general: notificar a todas las manipuladoras de las sedes de la institución
                     manipuladoras_inst = Usuario.objects.filter(
@@ -583,6 +600,7 @@ class entregasApiViewset(viewsets.ModelViewSet):
             from apps_sirae.notificaciones.models import Notificacion
             from apps_sirae.usuarios.models import Usuario
 
+            from django.db.models import Q
             supervisor_id = getattr(entrega, 'id_usuario_supervisor_id', None)
             destinatarios = set()
             if supervisor_id:
@@ -593,6 +611,23 @@ class entregasApiViewset(viewsets.ModelViewSet):
                     is_active=True
                 ).values_list('id_usuario', flat=True)[:5]
                 destinatarios.update(sups)
+
+            # Notificar también al Administrador de la institución
+            if entrega.id_sede and entrega.id_sede.id_institucion:
+                admins_inst = Usuario.objects.filter(
+                    id_institucion=entrega.id_sede.id_institucion,
+                    is_active=True
+                ).filter(
+                    Q(rol__nombre__icontains='admin') | Q(is_superuser=True)
+                ).values_list('id_usuario', flat=True)
+                destinatarios.update(admins_inst)
+
+            if not any(Usuario.objects.filter(id_usuario__in=destinatarios, rol__nombre__icontains='admin').exists()):
+                admins_gral = Usuario.objects.filter(
+                    rol__nombre__icontains='admin',
+                    is_active=True
+                ).exclude(rol__nombre__icontains='super').values_list('id_usuario', flat=True)[:2]
+                destinatarios.update(admins_gral)
 
             nombre_sede = entrega.id_sede.nombre_sede if entrega.id_sede else "Sede Escolar"
             doc = entrega.documento_entrega or f"#{entrega.id_entrega}"

@@ -162,6 +162,39 @@ class FacturaCompraViewSet(viewsets.ModelViewSet):
         factura.valor_total = Decimal(str(data.get('valor_total', total_acumulado)))
         factura.save()
 
+        # Notificar automáticamente: SuperAdministrador (confirmación) y Administradores (disponibilidad)
+        try:
+            from django.db.models import Q
+            from apps_sirae.notificaciones.models import Notificacion
+            from apps_sirae.usuarios.models import Usuario
+
+            remitente_id = usuario_registro.id_usuario if usuario_registro else None
+            num_items = len(detalles_data)
+            total_fmt = f"${total_acumulado:,.2f}"
+
+            if usuario_registro:
+                Notificacion.objects.create(
+                    id_usuario=usuario_registro.id_usuario,
+                    id_remitente=remitente_id,
+                    titulo=f"🧾 Factura registrada: {factura.numero_factura}",
+                    mensaje=f"Se acreditaron {num_items} insumos en Bodega Central (Proveedor: {factura.proveedor}). Total: {total_fmt}.",
+                )
+
+            admins = Usuario.objects.filter(is_active=True).filter(
+                Q(rol__nombre__icontains='admin') & ~Q(rol__nombre__icontains='super')
+            )
+            for adm in admins:
+                if usuario_registro and adm.id_usuario == usuario_registro.id_usuario:
+                    continue
+                Notificacion.objects.create(
+                    id_usuario=adm.id_usuario,
+                    id_remitente=remitente_id,
+                    titulo=f"📦 Bodega Central abastecida: {factura.numero_factura}",
+                    mensaje=f"Se ingresaron {num_items} insumos a Bodega Central ({factura.proveedor}). Ya están disponibles para programación de remisiones.",
+                )
+        except Exception as ex_notif:
+            pass
+
         serializer = self.get_serializer(factura)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
