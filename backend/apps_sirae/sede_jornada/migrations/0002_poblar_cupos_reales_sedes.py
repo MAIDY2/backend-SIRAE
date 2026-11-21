@@ -15,9 +15,9 @@ def poblar_cupos_reales(apps, schema_editor):
         return
 
     # 1. Obtener o asegurar jornada activa (por defecto Mañana)
-    jornada = Jornada.objects.filter(estado='ACTIVO').first() or Jornada.objects.first()
+    jornada = Jornada.objects.first()
     if not jornada:
-        jornada = Jornada.objects.create(nombre_jornada='Mañana', estado='ACTIVO')
+        jornada = Jornada.objects.create(nombre_jornada='Mañana')
 
     # 2. Supervisor asignado
     supervisor = Usuario.objects.filter(rol__nombre__icontains='supervisor', is_active=True).first()
