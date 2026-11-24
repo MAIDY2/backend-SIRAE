@@ -1,0 +1,136 @@
+{
+  "name": "SIRAE 1 - Carga Automática de Imágenes a Cloudinary",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "sirae-ingrediente",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-webhook-ingrediente",
+      "name": "Webhook Ingrediente Creado",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalizar nombre y generar consulta de imagen de alta calidad\nconst item = $input.first().json.body || $input.first().json;\nconst nombre = item.nombre_ingrediente || 'alimento';\nconst queryLimpia = encodeURIComponent(nombre + ' fresh food');\n\n// Generar URL de imagen sugerida (vía Unsplash Source / Pexels)\nconst urlImagen = `https://images.unsplash.com/photo-1540420773420-3366772f4999?w=600&auto=format&fit=crop&q=80`;\n\nreturn [{\n  json: {\n    id_ingrediente: item.id_ingrediente,\n    nombre_ingrediente: nombre,\n    url_origen: item.imagen_url || urlImagen,\n    public_id: `ingrediente_${item.id_ingrediente}_${nombre.toLowerCase().replace(/\\s+/g, '_')}`\n  }\n}];"
+      },
+      "id": "node-procesar-ingrediente",
+      "name": "Preparar Datos y Búsqueda",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.cloudinary.com/v1_1/kpsr4z20/image/upload",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "file",
+              "value": "={{ $json.url_origen }}"
+            },
+            {
+              "name": "folder",
+              "value": "sirae_ingredientes"
+            },
+            {
+              "name": "public_id",
+              "value": "={{ $json.public_id }}"
+            },
+            {
+              "name": "upload_preset",
+              "value": "ml_default"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-upload-cloudinary",
+      "name": "Subir a Cloudinary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://127.0.0.1:8000/api/ingredientes/{{ $('Preparar Datos y Búsqueda').item.json.id_ingrediente }}/",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"imagen_ingrediente\": \"{{ $json.secure_url }}\"\n}",
+        "options": {}
+      },
+      "id": "node-actualizar-django",
+      "name": "Actualizar BD SIRAE Django",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"id_ingrediente\": {{ $('Preparar Datos y Búsqueda').item.json.id_ingrediente }},\n  \"imagen_url\": \"{{ $('Subir a Cloudinary').item.json.secure_url }}\"\n}",
+        "options": {}
+      },
+      "id": "node-responder-webhook",
+      "name": "Respuesta Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1100, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Ingrediente Creado": {
+      "main": [
+        [
+          {
+            "node": "Preparar Datos y Búsqueda",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Datos y Búsqueda": {
+      "main": [
+        [
+          {
+            "node": "Subir a Cloudinary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subir a Cloudinary": {
+      "main": [
+        [
+          {
+            "node": "Actualizar BD SIRAE Django",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Actualizar BD SIRAE Django": {
+      "main": [
+        [
+          {
+            "node": "Respuesta Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}

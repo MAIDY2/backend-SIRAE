@@ -1,0 +1,129 @@
+{
+  "name": "SIRAE 3 - Consolidado Semanal y Reportes PAE Automáticos",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "node-cron-lunes",
+      "name": "Cada Lunes 7:00 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/api/token/",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"correo\": \"superadmin@sirae.com\",\n  \"clave\": \"SuperAdmin2026*!\"\n}",
+        "options": {}
+      },
+      "id": "node-login-token",
+      "name": "Autenticación JWT en SIRAE",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://127.0.0.1:8000/api/entregas/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.access }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-obtener-entregas",
+      "name": "Obtener Entregas de la Semana",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const entregas = $input.first().json;\nconst items = Array.isArray(entregas) ? entregas : (entregas.results || []);\n\nlet totalDespachos = items.length;\nlet recibidasConforme = 0;\nlet conNovedad = 0;\nlet enTransito = 0;\n\nitems.forEach(e => {\n  if (e.estado === 'RECIBIDA') recibidasConforme++;\n  else if (e.estado === 'CON_NOVEDAD' || e.estado === 'RECHAZADA') conNovedad++;\n  else enTransito++;\n});\n\nconst efectividad = totalDespachos > 0 ? ((recibidasConforme / totalDespachos) * 100).toFixed(1) : 100;\n\nconst resumen = `📊 *INFORME EJECUTIVO SEMANAL PAE - SIRAE*\\n\\n` +\n  `📦 *Total despachos registrados:* ${totalDespachos}\\n` +\n  `✅ *Recibidas a satisfacción:* ${recibidasConforme}\\n` +\n  `⚠️ *Entregas con Novedad/Rechazo:* ${conNovedad}\\n` +\n  `🚚 *En tránsito actualmente:* ${enTransito}\\n` +\n  `🎯 *Índice de cumplimiento:* ${efectividad}%\\n\\n` +\n  `_Generado automáticamente por SIRAE n8n Workflow._`;\n\nreturn [{\n  json: {\n    asunto: 'Resumen Semanal de Operación PAE',\n    resumen: resumen,\n    totalDespachos,\n    recibidasConforme,\n    conNovedad,\n    efectividad\n  }\n}];"
+      },
+      "id": "node-generar-resumen",
+      "name": "Calcular Métricas y Resumen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "notificaciones@sirae.edu.co",
+        "toEmail": "coordinacion.pae@sirae.edu.co",
+        "subject": "={{ $json.asunto }}",
+        "html": "=<div style=\"font-family: Arial, sans-serif; padding: 20px;\"><h2>Consolidado Operativo PAE</h2><p>{{ $json.resumen.replace(/\\n/g, '<br>') }}</p></div>",
+        "options": {}
+      },
+      "id": "node-enviar-email-reporte",
+      "name": "Enviar Reporte por Correo",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1100, 300]
+    }
+  ],
+  "connections": {
+    "Cada Lunes 7:00 AM": {
+      "main": [
+        [
+          {
+            "node": "Autenticación JWT en SIRAE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Autenticación JWT en SIRAE": {
+      "main": [
+        [
+          {
+            "node": "Obtener Entregas de la Semana",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener Entregas de la Semana": {
+      "main": [
+        [
+          {
+            "node": "Calcular Métricas y Resumen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calcular Métricas y Resumen": {
+      "main": [
+        [
+          {
+            "node": "Enviar Reporte por Correo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}

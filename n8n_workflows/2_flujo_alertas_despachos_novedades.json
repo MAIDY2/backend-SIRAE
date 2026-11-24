@@ -1,0 +1,174 @@
+{
+  "name": "SIRAE 2 - Notificaciones y Alertas PAE (Despachos y Novedades)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "sirae-despacho",
+        "options": {}
+      },
+      "id": "node-webhook-eventos",
+      "name": "Webhook Evento PAE",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 320]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.evento || $json.evento }}",
+                    "rightValue": "despacho_alimentos_en_transito",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.evento || $json.evento }}",
+                    "rightValue": "alerta_novedad_pae",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        }
+      },
+      "id": "node-switch-evento",
+      "name": "Evaluar Tipo de Evento",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [440, 320]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json.body || $input.first().json;\n\nconst mensaje = `🚚 *NUEVO DESPACHO PAE EN CAMINO*\\n` +\n  `🏛 *Institución:* ${data.institucion_nombre || 'IE Asignada'}\\n` +\n  `🏫 *Sede:* ${data.sede_nombre || 'Principal'}\\n` +\n  `📄 *Remisión:* ${data.documento_entrega}\\n` +\n  `📦 *Cantidad:* ${data.cantidad} ${data.unidad}\\n` +\n  `📅 *Fecha de Arribo:* ${data.fecha_entrega}\\n\\n` +\n  `_Favor preparar el equipo de cocina para inspección y control de calidad._`;\n\nreturn [{\n  json: {\n    tipo: 'DESPACHO_EN_CAMINO',\n    destinatario: 'Administrador Institucional',\n    mensaje: mensaje\n  }\n}];"
+      },
+      "id": "node-formatear-despacho",
+      "name": "Formatear Mensaje Despacho",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 220]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json.body || $input.first().json;\n\nconst alerta = `🚨 *ALERTA URGENTE: NOVEDAD O RECHAZO PAE*\\n` +\n  `🏛 *Institución:* ${data.institucion_nombre}\\n` +\n  `📄 *Factura/Remisión:* ${data.documento_entrega}\\n` +\n  `⚠️ *Estado:* ${data.estado}\\n` +\n  `❌ *Cantidad Rechazada:* ${data.cantidad_rechazada}\\n` +\n  `📝 *Motivo Reportado:* ${data.motivo_rechazo}\\n\\n` +\n  `_Acción requerida: Coordinación PAE debe gestionar reposición de alimentos inmediata._`;\n\nreturn [{\n  json: {\n    tipo: 'NOVEDAD_TECNICA',\n    prioridad: 'ALTA',\n    mensaje: alerta\n  }\n}];"
+      },
+      "id": "node-formatear-alerta",
+      "name": "Formatear Alerta Novedad",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 420]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot<TU_TELEGRAM_BOT_TOKEN>/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"<TU_CHAT_ID>\",\n  \"text\": \"{{ $json.mensaje }}\",\n  \"parse_mode\": \"Markdown\"\n}",
+        "options": {}
+      },
+      "id": "node-enviar-telegram-despacho",
+      "name": "Aviso Telegram / WhatsApp (Despacho)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 220]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot<TU_TELEGRAM_BOT_TOKEN>/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"<TU_CHAT_ID_COORDINADORES>\",\n  \"text\": \"{{ $json.mensaje }}\",\n  \"parse_mode\": \"Markdown\"\n}",
+        "options": {}
+      },
+      "id": "node-enviar-telegram-alerta",
+      "name": "Alerta Urgente Coordinadores",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 420]
+    }
+  ],
+  "connections": {
+    "Webhook Evento PAE": {
+      "main": [
+        [
+          {
+            "node": "Evaluar Tipo de Evento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluar Tipo de Evento": {
+      "main": [
+        [
+          {
+            "node": "Formatear Mensaje Despacho",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Formatear Alerta Novedad",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatear Mensaje Despacho": {
+      "main": [
+        [
+          {
+            "node": "Aviso Telegram / WhatsApp (Despacho)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatear Alerta Novedad": {
+      "main": [
+        [
+          {
+            "node": "Alerta Urgente Coordinadores",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}
