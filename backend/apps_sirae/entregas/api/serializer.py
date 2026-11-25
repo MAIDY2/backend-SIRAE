@@ -54,6 +54,25 @@ class CalculoEntregaSerializer(serializers.ModelSerializer):
         ]
 
 
+class EntregaListSerializer(serializers.ListSerializer):
+    """Precarga nombres de ingredientes y tipos de mercado en lote para eliminar N+1."""
+
+    def to_representation(self, data):
+        iterable = list(data.all() if hasattr(data, 'all') else data)
+        ing_ids = {obj.id_ingrediente for obj in iterable if getattr(obj, 'id_ingrediente', None)}
+        tm_ids = {obj.id_tipo_mercado for obj in iterable if getattr(obj, 'id_tipo_mercado', None)}
+        ing_map = dict(
+            Ingrediente.objects.filter(pk__in=ing_ids).values_list('id_ingrediente', 'nombre_ingrediente')
+        ) if ing_ids else {}
+        tm_map = dict(
+            TipoMercado.objects.filter(pk__in=tm_ids).values_list('id_tipo_mercado', 'nombre_tipo')
+        ) if tm_ids else {}
+        for obj in iterable:
+            obj._cached_ing_nombre = ing_map.get(obj.id_ingrediente, '')
+            obj._cached_tm_nombre = tm_map.get(obj.id_tipo_mercado, '')
+        return [self.child.to_representation(item) for item in iterable]
+
+
 class EntregaSerializer(serializers.ModelSerializer):
     ingrediente_nombre = serializers.SerializerMethodField()
     tipo_mercado_nombre = serializers.SerializerMethodField()
@@ -64,6 +83,7 @@ class EntregaSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Entrega
+        list_serializer_class = EntregaListSerializer
         fields = [
             'id_entrega',
             'id_institucion',
@@ -139,6 +159,8 @@ class EntregaSerializer(serializers.ModelSerializer):
         return super().validate(attrs)
 
     def get_ingrediente_nombre(self, entrega):
+        if hasattr(entrega, '_cached_ing_nombre'):
+            return entrega._cached_ing_nombre
         if not entrega.id_ingrediente:
             return ''
         return Ingrediente.objects.filter(
@@ -146,6 +168,8 @@ class EntregaSerializer(serializers.ModelSerializer):
         ).values_list('nombre_ingrediente', flat=True).first() or ''
 
     def get_tipo_mercado_nombre(self, entrega):
+        if hasattr(entrega, '_cached_tm_nombre'):
+            return entrega._cached_tm_nombre
         if not entrega.id_tipo_mercado:
             return ''
         return TipoMercado.objects.filter(

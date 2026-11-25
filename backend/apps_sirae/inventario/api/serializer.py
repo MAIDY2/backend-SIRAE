@@ -3,6 +3,24 @@ from ..models import AsignacionInventario, Inventario
 from apps_sirae.ingredientes.models import Ingrediente
 
 
+class InventarioListSerializer(serializers.ListSerializer):
+    """Precarga en 1 sola consulta todos los ingredientes, categorías y unidades para evitar N+1."""
+
+    def to_representation(self, data):
+        iterable = list(data.all() if hasattr(data, 'all') else data)
+        ing_ids = {obj.id_ingrediente for obj in iterable if getattr(obj, 'id_ingrediente', None) is not None}
+        if ing_ids:
+            mapa = {
+                ing.id_ingrediente: ing
+                for ing in Ingrediente.objects.filter(pk__in=ing_ids).select_related(
+                    'id_categoria_inventario', 'id_unidad_medida'
+                )
+            }
+            for obj in iterable:
+                obj._cached_ingrediente = mapa.get(obj.id_ingrediente)
+        return [self.child.to_representation(item) for item in iterable]
+
+
 class InventarioSerializer(serializers.ModelSerializer):
     ingrediente_nombre = serializers.SerializerMethodField(read_only=True)
     categoria_nombre = serializers.SerializerMethodField(read_only=True)
@@ -14,6 +32,7 @@ class InventarioSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Inventario
+        list_serializer_class = InventarioListSerializer
         fields = [
             'id_inventario',
             'id_sede',
@@ -33,7 +52,11 @@ class InventarioSerializer(serializers.ModelSerializer):
 
     def _get_ingrediente(self, obj):
         if not hasattr(obj, '_cached_ingrediente'):
-            obj._cached_ingrediente = Ingrediente.objects.filter(pk=obj.id_ingrediente).first()
+            obj._cached_ingrediente = (
+                Ingrediente.objects.select_related('id_categoria_inventario', 'id_unidad_medida')
+                .filter(pk=obj.id_ingrediente)
+                .first()
+            )
         return obj._cached_ingrediente
 
     def get_ingrediente_nombre(self, obj):

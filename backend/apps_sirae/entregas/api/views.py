@@ -27,7 +27,13 @@ from apps_sirae.inventario.services import consumir_asignacion_institucion_fifo
 
 
 class entregasApiViewset(viewsets.ModelViewSet):
-    queryset = Entrega.objects.all().order_by('-fecha_entrega', '-id_entrega')
+    queryset = Entrega.objects.select_related(
+        'id_institucion',
+        'id_sede',
+        'id_sede__id_institucion',
+        'id_usuario_receptor',
+        'id_contrato',
+    ).order_by('-fecha_entrega', '-id_entrega')
     serializer_class = EntregaSerializer
     permission_classes = [IsSupervisorOrAdminRole]
 

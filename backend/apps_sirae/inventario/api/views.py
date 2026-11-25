@@ -85,6 +85,9 @@ class InventarioApiViewSet(ModelViewSet):
 
     def _consolidar_duplicados_existentes(self):
         try:
+            from django.core.cache import cache
+            if cache.get('inventario_duplicados_verificados'):
+                return
             duplicados = (
                 Inventario.objects.values(
                     'id_ingrediente', 'id_institucion_id', 'id_sede'
@@ -115,6 +118,7 @@ class InventarioApiViewSet(ModelViewSet):
                         principal.save()
                         for item in items[1:]:
                             item.delete()
+            cache.set('inventario_duplicados_verificados', True, timeout=300)
         except Exception:
             # Prevenir que un fallo puntual de consolidación bloquee la consulta
             pass
