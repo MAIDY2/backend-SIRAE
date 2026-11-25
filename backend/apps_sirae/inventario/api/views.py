@@ -41,7 +41,7 @@ class InventarioApiViewSet(ModelViewSet):
                 sedes_ids = list(obtener_sedes_autorizadas(user).values_list('id_sede', flat=True))
                 queryset = queryset.filter(
                     Q(id_sede_id__in=sedes_ids)
-                    | Q(id_institucion_id__in=insts_ids, id_sede__isnull=True)
+                    | Q(id_institucion_id__in=insts_ids)
                 )
 
         solo_sedes = str(self.request.query_params.get('solo_sedes', '')).lower() in ('1', 'true', 'si')
@@ -77,7 +77,10 @@ class InventarioApiViewSet(ModelViewSet):
                 if getattr(user, 'id_sede_id', None):
                     queryset = queryset.filter(id_sede_id=user.id_sede_id)
                 elif getattr(user, 'id_institucion_id', None) and not (hasattr(user, 'es_super_administrador') and user.es_super_administrador()):
-                    queryset = queryset.filter(id_institucion_id=user.id_institucion_id)
+                    queryset = queryset.filter(
+                        Q(id_institucion_id=user.id_institucion_id)
+                        | Q(id_sede__id_institucion_id=user.id_institucion_id)
+                    )
         return queryset
 
     def _consolidar_duplicados_existentes(self):
@@ -124,6 +127,16 @@ class InventarioApiViewSet(ModelViewSet):
         id_ingrediente = serializer.validated_data.get('id_ingrediente')
         id_institucion = serializer.validated_data.get('id_institucion')
         id_sede = serializer.validated_data.get('id_sede')
+        user = getattr(request, 'user', None)
+        if user and getattr(user, 'is_authenticated', False) and not getattr(user, 'es_super_administrador', lambda: False)():
+            if id_sede is None and getattr(user, 'id_sede_id', None):
+                id_sede = user.id_sede
+            if id_institucion is None:
+                if getattr(user, 'id_institucion_id', None):
+                    id_institucion = user.id_institucion
+                elif id_sede is not None and getattr(id_sede, 'id_institucion_id', None):
+                    id_institucion = id_sede.id_institucion
+
         cantidad = Decimal(str(serializer.validated_data.get('cantidad_actual') or 0))
         stock_minimo = serializer.validated_data.get('stock_minimo')
         id_unidad_medida = serializer.validated_data.get('id_unidad_medida')
@@ -161,9 +174,18 @@ class InventarioApiViewSet(ModelViewSet):
             response_serializer = self.get_serializer(inventario_existente)
             return Response(response_serializer.data, status=status.HTTP_200_OK)
 
-        self.perform_create(serializer)
+        serializer.save(id_institucion=id_institucion, id_sede=id_sede)
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        extra = {}
+        if 'id_institucion' not in self.request.data and instance.id_institucion_id:
+            extra['id_institucion_id'] = instance.id_institucion_id
+        if 'id_sede' not in self.request.data and instance.id_sede_id:
+            extra['id_sede_id'] = instance.id_sede_id
+        serializer.save(**extra)
 
     @action(detail=False, methods=['post'], url_path='inicializar-canasta-sede')
     def inicializar_canasta_sede(self, request):

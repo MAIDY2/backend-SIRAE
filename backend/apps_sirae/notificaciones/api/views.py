@@ -134,12 +134,46 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
                     if (u.es_administrador() or u.es_supervisor()) and u.id_usuario != remitente_id
                 ]
         elif es_admin:
+            admin_inst_id = getattr(remitente, 'id_institucion_id', None)
+            supervisores_inst_ids = set()
+            if admin_inst_id:
+                try:
+                    from apps_sirae.supervisor_instituciones.models import SupervisorInstitucion
+                    supervisores_inst_ids.update(
+                        SupervisorInstitucion.objects.filter(
+                            id_institucion_id=admin_inst_id
+                        ).values_list('id_supervisor_id', flat=True)
+                    )
+                except Exception:
+                    pass
+                try:
+                    from apps_sirae.contratos_pae.models import Contrato
+                    supervisores_inst_ids.update(
+                        Contrato.objects.filter(
+                            id_institucion_id=admin_inst_id,
+                            id_usuario_supervisor__isnull=False,
+                        ).values_list('id_usuario_supervisor_id', flat=True)
+                    )
+                except Exception:
+                    pass
+
+            def _en_alcance_admin(u):
+                if not admin_inst_id:
+                    return True
+                if u.es_supervisor():
+                    return (not supervisores_inst_ids) or (u.id_usuario in supervisores_inst_ids) or (u.id_institucion_id == admin_inst_id)
+                return u.id_institucion_id == admin_inst_id or (
+                    getattr(u, 'id_sede', None) is not None and getattr(u.id_sede, 'id_institucion_id', None) == admin_inst_id
+                )
+
             if destinatario_id:
                 try:
                     dest_id_int = int(destinatario_id)
                     destinatarios = [
                         u for u in usuarios_activos
-                        if u.id_usuario == dest_id_int and (u.es_supervisor() or u.es_jefa_manipuladoras())
+                        if u.id_usuario == dest_id_int
+                        and (u.es_supervisor() or u.es_jefa_manipuladoras() or u.es_manipuladora())
+                        and _en_alcance_admin(u)
                     ]
                 except (TypeError, ValueError):
                     destinatarios = []
@@ -149,6 +183,7 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
                     for usuario in usuarios_activos
                     if (
                         usuario.es_supervisor()
+                        and _en_alcance_admin(usuario)
                         and usuario.id_usuario != remitente_id
                     )
                 ]
@@ -349,7 +384,39 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
         if remitente.es_super_administrador():
             permitido = lambda u: u.es_administrador() or u.es_supervisor()
         elif remitente.es_administrador():
-            permitido = lambda u: u.es_supervisor() or u.es_jefa_manipuladoras()
+            admin_inst_id = getattr(remitente, 'id_institucion_id', None)
+            supervisores_inst_ids = set()
+            if admin_inst_id:
+                try:
+                    from apps_sirae.supervisor_instituciones.models import SupervisorInstitucion
+                    supervisores_inst_ids.update(
+                        SupervisorInstitucion.objects.filter(
+                            id_institucion_id=admin_inst_id
+                        ).values_list('id_supervisor_id', flat=True)
+                    )
+                except Exception:
+                    pass
+                try:
+                    from apps_sirae.contratos_pae.models import Contrato
+                    supervisores_inst_ids.update(
+                        Contrato.objects.filter(
+                            id_institucion_id=admin_inst_id,
+                            id_usuario_supervisor__isnull=False,
+                        ).values_list('id_usuario_supervisor_id', flat=True)
+                    )
+                except Exception:
+                    pass
+
+            def permitido(u):
+                if not (u.es_supervisor() or u.es_jefa_manipuladoras() or (admin_inst_id and u.es_manipuladora())):
+                    return False
+                if not admin_inst_id:
+                    return u.es_supervisor() or u.es_jefa_manipuladoras()
+                if u.es_supervisor():
+                    return (not supervisores_inst_ids) or (u.id_usuario in supervisores_inst_ids) or (u.id_institucion_id == admin_inst_id)
+                return u.id_institucion_id == admin_inst_id or (
+                    getattr(u, 'id_sede', None) is not None and getattr(u.id_sede, 'id_institucion_id', None) == admin_inst_id
+                )
         elif remitente.es_jefa_manipuladoras():
             permitido = lambda u: u.es_supervisor() or u.es_administrador()
         elif remitente.es_supervisor():
