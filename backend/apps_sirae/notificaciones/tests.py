@@ -37,6 +37,29 @@ class NotificacionApiTestCase(APITestCase):
             mensaje='Mensaje de prueba',
         )
 
+    def test_historial_leidas_no_leidas(self):
+        pk = self.notificacion.id_notificacion
+        base = '/api/notificaciones/'
+
+        r = self.solicitar('get', base + 'historial/', self.manipuladora)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data['cantidad_no_leidas'], 1)
+        self.assertEqual(r.data['cantidad_leidas'], 0)
+
+        r = self.solicitar('post', f'{base}{pk}/marcar-leida/', self.manipuladora)
+        self.assertTrue(r.data['leida'])
+        r = self.solicitar('get', base + 'leidas/', self.manipuladora)
+        self.assertEqual(r.data['cantidad'], 1)
+
+        r = self.solicitar('post', f'{base}{pk}/marcar-no-leida/', self.manipuladora)
+        self.assertFalse(r.data['leida'])
+        r = self.solicitar('get', base + 'historial/', self.manipuladora)
+        self.assertEqual(r.data['total'], 1)
+        self.assertEqual(r.data['cantidad_no_leidas'], 1)
+
+        r = self.solicitar('post', f'{base}{pk}/marcar-no-leida/', self.otra_manipuladora)
+        self.assertEqual(r.status_code, 404)
+
     def crear_usuario(self, correo, nombre_rol):
         rol, _ = Rol.objects.get_or_create(nombre=nombre_rol)
         documento = correo.split('@')[0]

@@ -353,10 +353,20 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
         elif remitente.es_jefa_manipuladoras():
             permitido = lambda u: u.es_supervisor() or u.es_administrador()
         elif remitente.es_supervisor():
+            # Solo manipuladoras que le escribieron (igual que en enviar)
+            ids_que_escribieron = set(
+                Notificacion.objects.filter(
+                    id_usuario=remitente_id,
+                    id_remitente__isnull=False,
+                ).values_list('id_remitente', flat=True)
+            )
             permitido = lambda u: (
                 u.es_administrador()
                 or u.es_jefa_manipuladoras()
-                or u.es_manipuladora()
+                or (
+                    u.es_manipuladora()
+                    and u.id_usuario in ids_que_escribieron
+                )
             )
         elif remitente.es_manipuladora():
             permitido = lambda u: u.es_supervisor()
@@ -393,6 +403,55 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
             'cantidad': queryset.count(),
             'resultados': serializer.data,
         })
+
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path='leidas',
+    )
+    def leidas(self, request):
+        queryset = self.get_queryset().filter(leida=True)
+        serializer = self.get_serializer(queryset, many=True)
+
+        return Response({
+            'cantidad': queryset.count(),
+            'resultados': serializer.data,
+        })
+
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path='historial',
+    )
+    def historial(self, request):
+        """Devuelve todas, leidas y no leidas en una sola respuesta."""
+        queryset = self.get_queryset()
+        todas = self.get_serializer(queryset, many=True).data
+        leidas = [n for n in todas if n['leida']]
+        no_leidas = [n for n in todas if not n['leida']]
+
+        return Response({
+            'total': len(todas),
+            'cantidad_leidas': len(leidas),
+            'cantidad_no_leidas': len(no_leidas),
+            'todas': todas,
+            'leidas': leidas,
+            'no_leidas': no_leidas,
+        })
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='marcar-no-leida',
+    )
+    def marcar_no_leida(self, request, pk=None):
+        notificacion = self.get_object()
+
+        if notificacion.leida:
+            notificacion.leida = False
+            notificacion.save(update_fields=['leida'])
+
+        return Response(self.get_serializer(notificacion).data)
 
     @action(
         detail=True,
