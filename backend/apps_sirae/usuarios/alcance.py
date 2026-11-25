@@ -98,6 +98,7 @@ def obtener_sedes_autorizadas(usuario, queryset=None):
             Q(id_institucion__supervisores_asignados__id_supervisor=usuario)
             | Q(id_institucion__contratos__id_usuario_supervisor=usuario)
             | Q(contratos__id_usuario_supervisor=usuario)
+            | Q(distribuciones_contrato__id_contrato__id_usuario_supervisor=usuario)
         )
         if usuario.id_institucion_id:
             filtro |= Q(id_institucion_id=usuario.id_institucion_id)

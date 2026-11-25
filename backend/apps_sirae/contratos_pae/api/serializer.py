@@ -35,6 +35,17 @@ class ContratoSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs):
+        if not attrs.get('id_institucion') and attrs.get('institucion'):
+            from apps_sirae.instituciones.models import Institucion
+            nombre_inst = str(attrs.get('institucion') or '').strip()
+            if nombre_inst:
+                inst_obj = (
+                    Institucion.objects.filter(nombre_institucion__iexact=nombre_inst).first()
+                    or Institucion.objects.filter(nombre_institucion__icontains=nombre_inst).first()
+                )
+                if inst_obj:
+                    attrs['id_institucion'] = inst_obj
+
         dias_defecto = Contrato.DIAS_POR_PERIODICIDAD
         for per_field, dias_field in (
             ('periodicidad_perecederos', 'dias_cobertura_perecederos'),

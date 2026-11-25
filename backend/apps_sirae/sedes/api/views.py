@@ -19,9 +19,10 @@ class SedeViewSet(viewsets.ModelViewSet):
     queryset = Sede.objects.all()
     serializer_class = SedeSerializer
     permission_classes = [IsSuperAdminOrReadOnly]
+    pagination_class = None
 
     def get_queryset(self):
-        queryset = obtener_sedes_autorizadas(self.request.user, super().get_queryset())
+        queryset = obtener_sedes_autorizadas(self.request.user, super().get_queryset().order_by('id_sede'))
 
         # Filtro opcional por institución.
         institucion_id = self.request.query_params.get('id_institucion')

@@ -17,8 +17,9 @@ from apps_sirae.usuarios.permissions import IsSuperAdminOrReadOnly
 
 class ContratoViewSet(ModelViewSet):
     serializer_class = ContratoSerializer
-    queryset = Contrato.objects.all()
+    queryset = Contrato.objects.all().order_by('-id_contrato')
     permission_classes = [IsSuperAdminOrReadOnly]
+    pagination_class = None
 
     def perform_create(self, serializer):
         contrato = serializer.save()
@@ -103,6 +104,33 @@ class ContratoViewSet(ModelViewSet):
                 'jornadas': jornadas_nombres,
                 'grados': grados_data,
             })
+
+        # Si existen sedes vinculadas a la institución del contrato que aún no están en DistribucionSede, incluirlas
+        ids_incluidas = {s['id_sede'] for s in sedes_data}
+        inst_id = contrato.id_institucion_id
+        if not inst_id and contrato.institucion:
+            from apps_sirae.instituciones.models import Institucion
+            inst_obj = Institucion.objects.filter(
+                nombre_institucion__iexact=contrato.institucion.strip()
+            ).first()
+            if inst_obj:
+                inst_id = inst_obj.id_institucion
+        if inst_id:
+            for sede_extra in Sede.objects.filter(id_institucion_id=inst_id).order_by('id_sede'):
+                if sede_extra.id_sede not in ids_incluidas:
+                    sj_list = SedeJornada.objects.filter(id_sede=sede_extra).select_related('id_jornada')
+                    jornadas_nombres = [sj.id_jornada.nombre_jornada for sj in sj_list if sj.id_jornada]
+                    sedes_data.append({
+                        'id_sede': sede_extra.id_sede,
+                        'nombre_sede': sede_extra.nombre_sede,
+                        'cupos': 0,
+                        'cupos_asignados': 0,
+                        'cuposAsignados': 0,
+                        'jornada_manana': any('mañan' in j.lower() for j in jornadas_nombres),
+                        'jornada_tarde': any('tard' in j.lower() for j in jornadas_nombres),
+                        'jornadas': jornadas_nombres,
+                        'grados': [],
+                    })
 
         return Response({
             'contratoId': contrato.id_contrato,
@@ -205,6 +233,16 @@ class ContratoViewSet(ModelViewSet):
                     sede_obj.cupos = cupos_sede_int
                     sede_obj.save(update_fields=['cupos'])
 
+                for grado in sede.get('grados', []):
+                    grado_obj = get_object_or_404(Grados, pk=grado['id_grado'])
+                    c_grado = grado.get('cuposAsignados') if 'cuposAsignados' in grado else grado.get('cupos_asignados', grado.get('cupos', 0))
+                    cupos_grado_int = int(c_grado or 0)
+                    DistribucionGrado.objects.update_or_create(
+                        id_distribucion_sede=dist_sede,
+                        id_grado=grado_obj,
+                        defaults={'cupos_asignados': cupos_grado_int},
+                    )
+
                 # Sincronizar SedeJornada con las jornadas reales seleccionadas para la sede
                 jornadas_a_sincronizar = []
                 es_manana = bool(sede.get('jornada_manana'))
@@ -234,11 +272,6 @@ class ContratoViewSet(ModelViewSet):
                         grado_obj = get_object_or_404(Grados, pk=grado['id_grado'])
                         c_grado = grado.get('cuposAsignados') if 'cuposAsignados' in grado else grado.get('cupos_asignados', grado.get('cupos', 0))
                         cupos_grado_int = int(c_grado or 0)
-                        DistribucionGrado.objects.create(
-                            id_distribucion_sede=dist_sede,
-                            id_grado=grado_obj,
-                            cupos_asignados=cupos_grado_int,
-                        )
                         SedeJornadaGrado.objects.update_or_create(
                             id_sede_jornada=sj,
                             id_grado=grado_obj,
