@@ -121,6 +121,11 @@ class DistribucionSede(models.Model):
         related_name='distribuciones_contrato',
     )
     cupos_asignados = models.PositiveIntegerField(default=0)
+    secciones_ids = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="IDs de secciones de menú habilitadas para esta sede en el contrato",
+    )
 
     class Meta:
         db_table = 'distribucion_sede'

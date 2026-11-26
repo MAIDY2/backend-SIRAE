@@ -93,6 +93,13 @@ class ContratoViewSet(ModelViewSet):
             tiene_manana = any('mañan' in j.lower() for j in jornadas_nombres)
             tiene_tarde = any('tard' in j.lower() for j in jornadas_nombres)
 
+            secciones_ids_sede = []
+            for sec_id in (dist_sede.secciones_ids or []):
+                try:
+                    secciones_ids_sede.append(int(sec_id))
+                except (TypeError, ValueError):
+                    pass
+
             sedes_data.append({
                 'id_sede': dist_sede.id_sede.id_sede,
                 'nombre_sede': dist_sede.id_sede.nombre_sede,
@@ -102,6 +109,7 @@ class ContratoViewSet(ModelViewSet):
                 'jornada_manana': tiene_manana,
                 'jornada_tarde': tiene_tarde,
                 'jornadas': jornadas_nombres,
+                'secciones_ids': secciones_ids_sede,
                 'grados': grados_data,
             })
 
@@ -129,6 +137,7 @@ class ContratoViewSet(ModelViewSet):
                         'jornada_manana': any('mañan' in j.lower() for j in jornadas_nombres),
                         'jornada_tarde': any('tard' in j.lower() for j in jornadas_nombres),
                         'jornadas': jornadas_nombres,
+                        'secciones_ids': [],
                         'grados': [],
                     })
 
@@ -223,10 +232,25 @@ class ContratoViewSet(ModelViewSet):
                 sede_obj = get_object_or_404(Sede, pk=sede['id_sede'])
                 c_sede = sede.get('cuposAsignados') if 'cuposAsignados' in sede else sede.get('cupos_asignados', sede.get('cupos', 0))
                 cupos_sede_int = int(c_sede or 0)
+
+                raw_secciones = sede.get('secciones_ids') or []
+                secciones_ids_clean = []
+                if isinstance(raw_secciones, list):
+                    vistos_sec = set()
+                    for sec_id in raw_secciones:
+                        try:
+                            sec_int = int(sec_id)
+                            if sec_int > 0 and sec_int not in vistos_sec:
+                                vistos_sec.add(sec_int)
+                                secciones_ids_clean.append(sec_int)
+                        except (TypeError, ValueError):
+                            pass
+
                 dist_sede = DistribucionSede.objects.create(
                     id_contrato=contrato,
                     id_sede=sede_obj,
                     cupos_asignados=cupos_sede_int,
+                    secciones_ids=secciones_ids_clean,
                 )
 
                 if hasattr(sede_obj, 'cupos') and getattr(sede_obj, 'cupos', None) != cupos_sede_int:

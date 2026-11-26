@@ -4,7 +4,10 @@ from django.core.management import call_command
 from django.test import TestCase
 
 from apps_sirae.instituciones.models import Institucion
+from apps_sirae.roles.models import Rol
 from apps_sirae.sedes.models import Sede
+from apps_sirae.usuarios.models import Usuario
+from rest_framework.test import APIClient
 from .api.serializer import ContratoSerializer
 from .models import Contrato, DistribucionSede
 
@@ -95,3 +98,52 @@ class LimpiarContratosDuplicadosTests(TestCase):
             DistribucionSede.objects.filter(id_contrato=self.principal).count(),
             2,
         )
+
+
+class DistribucionSeccionesPorSedeTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.rol_super, _ = Rol.objects.get_or_create(nombre=Rol.NombreRol.SUPER_ADMINISTRADOR)
+        self.admin = Usuario.objects.create_user(
+            correo='super-dist@example.com',
+            nombre='Super',
+            apellido='Dist',
+            password='test-password',
+            tipo_documento='CC',
+            numero_documento='100000123',
+            rol=self.rol_super,
+            is_superuser=True,
+            is_active=True,
+        )
+        self.client.force_authenticate(user=self.admin)
+        self.inst = Institucion.objects.create(nombre_institucion='I.E. Secciones', nit='900888777-1')
+        self.sede_a = Sede.objects.create(id_institucion=self.inst, nombre_sede='Sede A')
+        self.contrato = Contrato.objects.create(
+            numero_cor='COR-2026-SEC',
+            institucion=self.inst.nombre_institucion,
+            id_institucion=self.inst,
+            estado='Activo',
+            cupos=100,
+        )
+
+    def test_put_y_get_distribucion_persisten_secciones_ids(self):
+        put_res = self.client.put(
+            f'/api/contratos/{self.contrato.id_contrato}/distribucion/',
+            {
+                'sedes': [
+                    {
+                        'id_sede': self.sede_a.id_sede,
+                        'cuposAsignados': 60,
+                        'secciones_ids': [1, 2, '2', -1, 'abc'],
+                        'grados': [],
+                    }
+                ]
+            },
+            format='json',
+        )
+        self.assertEqual(put_res.status_code, 200)
+        self.assertEqual(put_res.data['sedes'][0]['secciones_ids'], [1, 2])
+
+        get_res = self.client.get(f'/api/contratos/{self.contrato.id_contrato}/distribucion/')
+        self.assertEqual(get_res.status_code, 200)
+        self.assertEqual(get_res.data['sedes'][0]['secciones_ids'], [1, 2])

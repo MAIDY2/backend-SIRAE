@@ -1,7 +1,7 @@
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from apps_sirae.contratos_pae.models import Contrato
+from apps_sirae.contratos_pae.models import Contrato, DistribucionSede
 from apps_sirae.contratos_seccion_menu.models import ContratoSeccionMenu
 from apps_sirae.instituciones.models import Institucion
 from apps_sirae.jornadas.models import Jornada
@@ -113,3 +113,30 @@ class ConsultaSedesAdministradorTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 404)
+
+    def test_configuracion_filtra_secciones_por_secciones_ids_de_distribucion_sede(self):
+        jornada = Jornada.objects.create(nombre_jornada='Tarde')
+        SedeJornada.objects.create(id_sede=self.sede, id_jornada=jornada, cupos=50)
+        contrato = Contrato.objects.create(
+            numero_cor='CTR-SEDE-SEC',
+            institucion=self.institucion.nombre_institucion,
+            id_institucion=self.institucion,
+            id_jornada=jornada,
+            cupos=100,
+        )
+        sec_desayuno = SeccionMenu.objects.create(id_jornada=jornada, nombre_seccion='Desayuno')
+        sec_merienda = SeccionMenu.objects.create(id_jornada=jornada, nombre_seccion='Merienda')
+        ContratoSeccionMenu.objects.create(id_contrato=contrato, id_seccion=sec_desayuno, estado='ACTIVA')
+        ContratoSeccionMenu.objects.create(id_contrato=contrato, id_seccion=sec_merienda, estado='ACTIVA')
+
+        DistribucionSede.objects.create(
+            id_contrato=contrato,
+            id_sede=self.sede,
+            cupos_asignados=50,
+            secciones_ids=[sec_desayuno.id_seccion],
+        )
+
+        response = self.client.get(f'/api/sedes/{self.sede.id_sede}/configuracion/')
+        self.assertEqual(response.status_code, 200)
+        secciones = response.data['jornadas'][0]['secciones']
+        self.assertEqual([s['nombre_seccion'] for s in secciones], ['Desayuno'])

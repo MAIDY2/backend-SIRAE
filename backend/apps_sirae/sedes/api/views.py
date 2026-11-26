@@ -100,14 +100,31 @@ class SedeViewSet(viewsets.ModelViewSet):
         # Identificar jornadas autorizadas para esta sede mediante sus contratos o sede_jornadas
         jornadas_autorizadas_ids = set(cupos_por_jornada.keys())
 
+        # Secciones configuradas específicamente para esta sede en DistribucionSede (si existen)
+        from apps_sirae.contratos_pae.models import DistribucionSede
+        secciones_por_sede_ids = set()
+        for dist_sede in DistribucionSede.objects.filter(id_sede=sede, id_contrato__in=contratos):
+            for sec_id in (dist_sede.secciones_ids or []):
+                try:
+                    sec_int = int(sec_id)
+                    if sec_int > 0:
+                        secciones_por_sede_ids.add(sec_int)
+                except (TypeError, ValueError):
+                    pass
+
         # Secciones de menú por jornada
-        secciones = ContratoSeccionMenu.objects.filter(
+        secciones_qs = ContratoSeccionMenu.objects.filter(
             id_contrato__in=contratos
         ).select_related(
             'id_contrato__id_jornada',
             'id_seccion',
             'id_seccion__id_jornada',
         ).order_by('id_seccion__nombre_seccion')
+
+        if secciones_por_sede_ids:
+            secciones_qs = secciones_qs.filter(id_seccion_id__in=secciones_por_sede_ids)
+
+        secciones = list(secciones_qs)
 
         for conf in secciones:
             j_id = (
@@ -208,6 +225,22 @@ class SedeViewSet(viewsets.ModelViewSet):
                 ),
                 'estado': conf.estado,
             })
+
+        if secciones_por_sede_ids:
+            ids_en_csm = {conf.id_seccion_id for conf in secciones}
+            faltantes_ids = secciones_por_sede_ids - ids_en_csm
+            if faltantes_ids:
+                from apps_sirae.secciones_menu.models import SeccionMenu
+                for sec_obj in SeccionMenu.objects.filter(id_seccion__in=faltantes_ids).select_related('id_jornada').order_by('nombre_seccion'):
+                    jornada = jornada_por_id.get(sec_obj.id_jornada_id)
+                    if not jornada and len(jornada_por_id) == 1:
+                        jornada = next(iter(jornada_por_id.values()))
+                    if jornada:
+                        jornada['secciones'].append({
+                            'id_seccion': sec_obj.id_seccion,
+                            'nombre_seccion': sec_obj.nombre_seccion or f"Sección {sec_obj.id_seccion}",
+                            'estado': 'Activo',
+                        })
 
         # Asegurar catálogo de grados activos disponible para cada jornada
         from apps_sirae.grados.models import Grados
