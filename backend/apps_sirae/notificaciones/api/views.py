@@ -188,14 +188,26 @@ class notificacionesApiViewset(viewsets.ModelViewSet):
                     )
                 ]
         elif es_jefa:
-            destinatarios = [
-                usuario
-                for usuario in usuarios_activos
-                if (
-                    (usuario.es_supervisor() or usuario.es_administrador())
-                    and usuario.id_usuario != remitente_id
-                )
-            ]
+            inst_id = getattr(remitente, 'id_institucion_id', None) or getattr(remitente, 'id_institucion', None)
+            from apps_sirae.usuarios.alcance import obtener_ids_instituciones_supervisor
+            destinatarios = []
+            for usuario in usuarios_activos:
+                if usuario.id_usuario == remitente_id:
+                    continue
+                if usuario.es_supervisor():
+                    sups_inst_ids = obtener_ids_instituciones_supervisor(usuario)
+                    if inst_id is not None:
+                        if int(inst_id) in sups_inst_ids or not sups_inst_ids:
+                            destinatarios.append(usuario)
+                    else:
+                        destinatarios.append(usuario)
+                elif usuario.es_administrador():
+                    u_inst = getattr(usuario, 'id_institucion_id', None) or getattr(usuario, 'id_institucion', None)
+                    if inst_id is not None and u_inst is not None:
+                        if int(inst_id) == int(u_inst):
+                            destinatarios.append(usuario)
+                    elif inst_id is None:
+                        destinatarios.append(usuario)
         elif es_manipuladora:
             destinatario_id = request.data.get('id_destinatario')
 

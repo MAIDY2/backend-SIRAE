@@ -611,12 +611,17 @@ class entregasApiViewset(viewsets.ModelViewSet):
             destinatarios = set()
             if supervisor_id:
                 destinatarios.add(supervisor_id)
-            else:
-                sups = Usuario.objects.filter(
+            elif entrega.id_sede and entrega.id_sede.id_institucion:
+                # Notificar únicamente al supervisor que tiene asignada esta institución
+                from apps_sirae.usuarios.alcance import obtener_ids_instituciones_supervisor
+                inst_id = entrega.id_sede.id_institucion_id
+                sups_candidatos = Usuario.objects.filter(
                     rol__nombre__icontains='supervisor',
                     is_active=True
-                ).values_list('id_usuario', flat=True)[:5]
-                destinatarios.update(sups)
+                )
+                for sup in sups_candidatos:
+                    if inst_id in obtener_ids_instituciones_supervisor(sup):
+                        destinatarios.add(sup.id_usuario)
 
             # Notificar también al Administrador de la institución
             if entrega.id_sede and entrega.id_sede.id_institucion:
@@ -627,13 +632,6 @@ class entregasApiViewset(viewsets.ModelViewSet):
                     Q(rol__nombre__icontains='admin') | Q(is_superuser=True)
                 ).values_list('id_usuario', flat=True)
                 destinatarios.update(admins_inst)
-
-            if not any(Usuario.objects.filter(id_usuario__in=destinatarios, rol__nombre__icontains='admin').exists()):
-                admins_gral = Usuario.objects.filter(
-                    rol__nombre__icontains='admin',
-                    is_active=True
-                ).exclude(rol__nombre__icontains='super').values_list('id_usuario', flat=True)[:2]
-                destinatarios.update(admins_gral)
 
             nombre_sede = entrega.id_sede.nombre_sede if entrega.id_sede else "Sede Escolar"
             doc = entrega.documento_entrega or f"#{entrega.id_entrega}"
