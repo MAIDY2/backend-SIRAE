@@ -29,8 +29,8 @@ class ContratoViewSet(ModelViewSet):
             from apps_sirae.usuarios.models import Usuario
 
             remitente_id = self.request.user.id_usuario if (self.request.user and self.request.user.is_authenticated) else None
-            num_contrato = contrato.numero_contrato or f"CTO-{contrato.id_contrato}"
-            valor_fmt = f"${contrato.valor_total:,.2f}" if contrato.valor_total else "$0.00"
+            num_contrato = contrato.numero_cor or f"CTO-{contrato.id_contrato}"
+            nombre_inst = contrato.institucion or (contrato.id_institucion.nombre_institucion if contrato.id_institucion else 'la institución')
 
             destinatarios = Usuario.objects.filter(
                 is_active=True
@@ -43,7 +43,7 @@ class ContratoViewSet(ModelViewSet):
                     id_usuario=u.id_usuario,
                     id_remitente=remitente_id,
                     titulo=f"📋 Contrato PAE registrado: {num_contrato}",
-                    mensaje=f"Se ha registrado el contrato PAE '{num_contrato}'. Presupuesto: {valor_fmt}. Vigencia hasta {contrato.fecha_fin}.",
+                    mensaje=f"Se ha registrado el contrato PAE '{num_contrato}' para {nombre_inst}. Vigencia hasta {contrato.fecha_fin}.",
                 )
         except Exception:
             pass

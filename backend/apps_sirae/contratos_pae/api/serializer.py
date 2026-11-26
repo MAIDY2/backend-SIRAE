@@ -46,6 +46,31 @@ class ContratoSerializer(serializers.ModelSerializer):
                 if inst_obj:
                     attrs['id_institucion'] = inst_obj
 
+        institucion_obj = attrs.get('id_institucion') if 'id_institucion' in attrs else getattr(self.instance, 'id_institucion', None)
+        nombre_inst = str(
+            attrs.get('institucion') if 'institucion' in attrs else (getattr(self.instance, 'institucion', '') or '')
+        ).strip()
+
+        if institucion_obj is not None or nombre_inst:
+            qs_existente = Contrato.objects.all()
+            if self.instance is not None:
+                qs_existente = qs_existente.exclude(pk=self.instance.pk)
+
+            duplicado = None
+            if institucion_obj is not None:
+                duplicado = qs_existente.filter(id_institucion=institucion_obj).first()
+            if duplicado is None and nombre_inst:
+                duplicado = qs_existente.filter(institucion__iexact=nombre_inst).first()
+
+            if duplicado is not None:
+                num = duplicado.numero_cor or f"ID {duplicado.id_contrato}"
+                raise serializers.ValidationError({
+                    'id_institucion': (
+                        f"Esta institución ya tiene un contrato registrado ({num}). "
+                        "Solo se permite un contrato por institución; las sedes se gestionan dentro de ese contrato."
+                    )
+                })
+
         dias_defecto = Contrato.DIAS_POR_PERIODICIDAD
         for per_field, dias_field in (
             ('periodicidad_perecederos', 'dias_cobertura_perecederos'),
