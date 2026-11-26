@@ -269,5 +269,16 @@ class UsuarioConsultationAndScopePermission(BasePermission):
             inst_ids = obtener_insts(user) if callable(obtener_insts) else set()
             return bool(obj.id_institucion_id and obj.id_institucion_id in inst_ids)
 
+        if user.es_jefa_manipuladoras():
+            if obj.id_usuario == user.id_usuario:
+                return True
+            if obj.es_super_administrador() or obj.is_superuser or obj.es_administrador() or obj.es_supervisor():
+                return False
+            if user.id_sede_id:
+                return obj.id_sede_id == user.id_sede_id
+            if user.id_institucion_id:
+                return obj.id_institucion_id == user.id_institucion_id
+            return False
+
         return obj.id_usuario == user.id_usuario
 

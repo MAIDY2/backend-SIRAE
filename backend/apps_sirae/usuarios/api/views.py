@@ -249,6 +249,21 @@ class UsuarioViewSet(viewsets.ModelViewSet):
                 user
             )
 
+        # La Jefa de Manipuladoras puede consultar las manipuladoras activas de su propia sede
+        if user.es_jefa_manipuladoras():
+            filtro_equipo = Q(id_usuario=user.id_usuario)
+            if user.id_sede_id:
+                filtro_equipo |= Q(id_sede_id=user.id_sede_id, is_active=True)
+            elif user.id_institucion_id:
+                filtro_equipo |= Q(id_institucion_id=user.id_institucion_id, is_active=True)
+            qs_jefa = (
+                base_qs.filter(filtro_equipo, is_superuser=False)
+                .exclude(rol__nombre__icontains='super')
+                .exclude(rol__nombre__icontains='admin')
+                .exclude(rol__nombre__icontains='supervisor')
+            )
+            return self._aplicar_filtros_busqueda(qs_jefa, user)
+
         # Los demás roles solo pueden ver su propio perfil
         return self._aplicar_filtros_busqueda(
             base_qs.filter(id_usuario=user.id_usuario),
