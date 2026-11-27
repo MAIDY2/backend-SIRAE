@@ -15,7 +15,7 @@ sin_imagen = total - con_imagen
 print(f"\nTotal ingredientes : {total}")
 print(f"Con imagen         : {con_imagen}")
 print(f"Sin imagen         : {sin_imagen}")
-print("\n--- Detalle (primeros 30) ---")
-for i in Ingrediente.objects.all()[:30]:
+print("\n--- Detalle completo de todos los ingredientes ---")
+for i in Ingrediente.objects.all().order_by('id_ingrediente'):
     estado = i.imagen_ingrediente or "(sin imagen)"
     print(f"  [{i.id_ingrediente}] {i.nombre_ingrediente} → {estado}")
