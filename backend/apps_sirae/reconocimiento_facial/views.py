@@ -131,7 +131,7 @@ def verify_face(request):
     biometrias = UsuarioBiometria.objects.filter(activo=True).select_related('usuario', 'usuario__rol')
     mejor_usuario = None
     mejor_distancia = 999.0
-    UMBRAL_MAXIMO = 0.60
+    UMBRAL_MAXIMO = 0.62
 
     for bio in biometrias:
         try:
