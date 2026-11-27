@@ -2,11 +2,11 @@ from rest_framework.viewsets import ModelViewSet
 
 from apps_sirae.menus.models import Menu
 from apps_sirae.menus.api.serializer import MenuSerializer
-from apps_sirae.usuarios.permissions import IsJefaOrAdminOrSuperAdminRole
+from apps_sirae.usuarios.permissions import IsJefaSupervisorOrAdminRole
 
 
 class MenuApiViewSet(ModelViewSet):
 
     serializer_class = MenuSerializer
     queryset = Menu.objects.all()
-    permission_classes = [IsJefaOrAdminOrSuperAdminRole]
+    permission_classes = [IsJefaSupervisorOrAdminRole]

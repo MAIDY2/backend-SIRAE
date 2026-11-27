@@ -1,12 +1,13 @@
 from django.test import TestCase
 from rest_framework.test import APIClient
 from apps_sirae.jornadas.models import Jornada
+from apps_sirae.menus.models import Menu
 
 
 class MenuApiTestCase(TestCase):
     def setUp(self):
         self.client = APIClient()
-        Jornada.objects.create(id_jornada=1, nombre_jornada='Jornada mañana')
+        Jornada.objects.get_or_create(id_jornada=1, defaults={'nombre_jornada': 'Jornada mañana'})
 
     def autenticar(self, *, jefa=False, administrador=False, supervisor=False):
         self.client.force_authenticate(user=type(
@@ -40,12 +41,42 @@ class MenuApiTestCase(TestCase):
         self.assertEqual(response.data['id_jornada'], 1)
         self.assertEqual(response.data['ninos_presentes'], 24)
 
-    def test_supervisor_cannot_manage_menus(self):
+    def test_supervisor_can_list_and_approve_or_reject_menus(self):
+        menu = Menu.objects.create(
+            id_jornada_id=1,
+            fecha='2026-10-10',
+            ninos_presentes=30,
+            estado='PENDIENTE',
+            informacion_nutricional='Menú inicial',
+            id_contrato=1,
+        )
         self.autenticar(supervisor=True)
 
-        response = self.client.get('/api/menus/')
+        get_res = self.client.get('/api/menus/')
+        self.assertEqual(get_res.status_code, 200)
 
-        self.assertEqual(response.status_code, 403)
+        patch_res = self.client.patch(
+            f'/api/menus/{menu.id_menu}/',
+            {'estado': 'APROBADO'},
+            format='json',
+        )
+        self.assertEqual(patch_res.status_code, 200, patch_res.data)
+        self.assertEqual(patch_res.data['estado'], 'APROBADO')
+
+        put_res = self.client.put(
+            f'/api/menus/{menu.id_menu}/',
+            {
+                'id_jornada': 1,
+                'fecha': '2026-10-10',
+                'ninos_presentes': 30,
+                'estado': 'RECHAZADO',
+                'informacion_nutricional': 'Menú inicial',
+                'id_contrato': 1,
+            },
+            format='json',
+        )
+        self.assertEqual(put_res.status_code, 200, put_res.data)
+        self.assertEqual(put_res.data['estado'], 'RECHAZADO')
 
     def test_unauthenticated_user_cannot_access_menus(self):
         response = self.client.get('/api/menus/')

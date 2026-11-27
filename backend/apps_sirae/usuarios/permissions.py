@@ -62,6 +62,23 @@ class IsJefaOrAdminRole(BasePermission):
 IsJefaOrAdminOrSuperAdminRole = IsJefaOrAdminRole
 
 
+class IsJefaSupervisorOrAdminRole(BasePermission):
+    """
+    Permite a la Jefa, Supervisor, Administrador y Super Administrador consultar y gestionar menús.
+    """
+    message = "Acceso restringido: se requiere el rol de Jefa de manipuladoras, Supervisor, Administrador o Super Administrador."
+
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        return (
+            request.user.es_jefa_manipuladoras()
+            or request.user.es_supervisor()
+            or request.user.es_administrador()
+            or getattr(request.user, 'es_super_administrador', lambda: False)()
+        )
+
+
 # Alias para compatibilidad
 IsCoordinadorRole = IsSupervisorRole
 
