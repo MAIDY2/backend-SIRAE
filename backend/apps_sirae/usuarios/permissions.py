@@ -1,4 +1,4 @@
-from rest_framework.permissions import BasePermission, SAFE_METHODS
+from rest_framework.permissions import BasePermission, SAFE_METHODS, SAFE_METHODS
 
 
 class IsAdminRole(BasePermission):
@@ -71,6 +71,8 @@ class IsJefaSupervisorOrAdminRole(BasePermission):
     def has_permission(self, request, view):
         if not (request.user and request.user.is_authenticated):
             return False
+        if request.method in SAFE_METHODS and getattr(request.user, 'es_manipuladora', lambda: False)():
+            return True
         return (
             request.user.es_jefa_manipuladoras()
             or request.user.es_supervisor()
