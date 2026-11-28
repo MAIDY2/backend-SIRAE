@@ -21,5 +21,8 @@ class PlatoSerializer(serializers.ModelSerializer):
         ]
 
     def get_pasos_preparacion(self, obj):
-        pasos = pasospreparacion.objects.filter(id_plato=obj.id_plato)
-        return PasosPreparacionSerializer(pasos, many=True).data
+        try:
+            pasos = pasospreparacion.objects.filter(id_plato=obj.id_plato)
+            return PasosPreparacionSerializer(pasos, many=True).data
+        except Exception:
+            return []
