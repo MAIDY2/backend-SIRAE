@@ -3,6 +3,67 @@
 from django.db import migrations, models
 
 
+def _migrar_pasospreparacion_forward(apps, schema_editor):
+    if schema_editor.connection.vendor == 'postgresql':
+        with schema_editor.connection.cursor() as cursor:
+            cursor.execute("""
+                DO $$
+                DECLARE
+                    pk_name text;
+                BEGIN
+                    SELECT conname INTO pk_name
+                    FROM pg_constraint
+                    WHERE conrelid = 'pasospreparacion_pasospreparacion'::regclass
+                      AND contype = 'p';
+                    IF pk_name IS NOT NULL THEN
+                        EXECUTE format('ALTER TABLE pasospreparacion_pasospreparacion DROP CONSTRAINT %I', pk_name);
+                    END IF;
+
+                    BEGIN
+                        ALTER TABLE pasospreparacion_pasospreparacion ALTER COLUMN id_plato DROP IDENTITY IF EXISTS;
+                    EXCEPTION WHEN OTHERS THEN
+                        NULL;
+                    END;
+
+                    ALTER TABLE pasospreparacion_pasospreparacion
+                        ALTER COLUMN id_plato DROP DEFAULT,
+                        ALTER COLUMN id_plato TYPE integer USING id_plato::integer;
+
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'pasospreparacion_pasospreparacion'
+                          AND column_name = 'id'
+                    ) THEN
+                        ALTER TABLE pasospreparacion_pasospreparacion ADD COLUMN id SERIAL PRIMARY KEY;
+                    END IF;
+
+                    ALTER TABLE pasospreparacion_pasospreparacion
+                        ALTER COLUMN descripcion TYPE text;
+                END $$;
+            """)
+        return
+
+    # SQLite y otros motores
+    with schema_editor.connection.cursor() as cursor:
+        cursor.execute("""
+            CREATE TABLE pasospreparacion_pasospreparacion_new (
+                id integer NOT NULL PRIMARY KEY AUTOINCREMENT,
+                id_plato integer NOT NULL,
+                numero_paso varchar(100) NOT NULL,
+                descripcion text NOT NULL
+            );
+        """)
+        cursor.execute("""
+            INSERT INTO pasospreparacion_pasospreparacion_new (id_plato, numero_paso, descripcion)
+            SELECT id_plato, numero_paso, descripcion FROM pasospreparacion_pasospreparacion;
+        """)
+        cursor.execute("DROP TABLE pasospreparacion_pasospreparacion;")
+        cursor.execute(
+            "ALTER TABLE pasospreparacion_pasospreparacion_new RENAME TO pasospreparacion_pasospreparacion;"
+        )
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -10,19 +71,29 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AlterField(
-            model_name='pasospreparacion',
-            name='id_plato',
-            field=models.IntegerField(),
-        ),
-        migrations.AddField(
-            model_name='pasospreparacion',
-            name='id',
-            field=models.AutoField(primary_key=True, serialize=False),
-        ),
-        migrations.AlterField(
-            model_name='pasospreparacion',
-            name='descripcion',
-            field=models.TextField(),
+        migrations.SeparateDatabaseAndState(
+            state_operations=[
+                migrations.AlterField(
+                    model_name='pasospreparacion',
+                    name='id_plato',
+                    field=models.IntegerField(),
+                ),
+                migrations.AddField(
+                    model_name='pasospreparacion',
+                    name='id',
+                    field=models.AutoField(primary_key=True, serialize=False),
+                ),
+                migrations.AlterField(
+                    model_name='pasospreparacion',
+                    name='descripcion',
+                    field=models.TextField(),
+                ),
+            ],
+            database_operations=[
+                migrations.RunPython(
+                    _migrar_pasospreparacion_forward,
+                    reverse_code=migrations.RunPython.noop,
+                ),
+            ],
         ),
     ]
