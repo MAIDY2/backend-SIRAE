@@ -748,9 +748,15 @@ def construir_datos_plantillas_operativas(usuario: Usuario, params: dict) -> dic
                 break
 
     # ---------- ENTRADAS Y SALIDAS REALES DE INVENTARIO ----------
+    mov_q = Q(id_usuario_id__in=usuarios_mov_ids)
+    if sede_sel:
+        mov_q |= Q(observaciones__icontains=sede_sel.nombre_sede)
+    elif len(sedes_inst) <= 1:
+        mov_q |= Q(id_usuario__id_institucion_id=institucion.id_institucion)
+
     entradas_qs = EntradaInventario.objects.filter(
+        mov_q,
         fecha__isnull=False,
-        id_usuario_id__in=usuarios_mov_ids,
     ).select_related('id_ingrediente', 'id_ingrediente__id_unidad_medida', 'id_unidad_medida')
     entradas_lista = [
         e for e in entradas_qs
@@ -758,8 +764,8 @@ def construir_datos_plantillas_operativas(usuario: Usuario, params: dict) -> dic
     ]
 
     salidas_qs = SalidaInventario.objects.filter(
+        mov_q,
         fecha__isnull=False,
-        id_usuario_id__in=usuarios_mov_ids,
     ).select_related('id_ingrediente', 'id_ingrediente__id_unidad_medida', 'id_unidad_medida', 'id_usuario')
     salidas_lista = [
         s for s in salidas_qs
