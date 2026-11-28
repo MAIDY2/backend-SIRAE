@@ -11,6 +11,16 @@ def _migrar_pasospreparacion_forward(apps, schema_editor):
                 DECLARE
                     pk_name text;
                 BEGIN
+                    IF to_regclass('pasospreparacion_pasospreparacion') IS NULL THEN
+                        CREATE TABLE pasospreparacion_pasospreparacion (
+                            id SERIAL PRIMARY KEY,
+                            id_plato integer NOT NULL,
+                            numero_paso varchar(100) NOT NULL,
+                            descripcion text NOT NULL
+                        );
+                        RETURN;
+                    END IF;
+
                     SELECT conname INTO pk_name
                     FROM pg_constraint
                     WHERE conrelid = 'pasospreparacion_pasospreparacion'::regclass
