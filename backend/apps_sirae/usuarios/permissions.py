@@ -74,9 +74,9 @@ class IsJefaSupervisorOrAdminRole(BasePermission):
         if request.method in SAFE_METHODS and getattr(request.user, 'es_manipuladora', lambda: False)():
             return True
         return (
-            request.user.es_jefa_manipuladoras()
-            or request.user.es_supervisor()
-            or request.user.es_administrador()
+            getattr(request.user, 'es_jefa_manipuladoras', lambda: False)()
+            or getattr(request.user, 'es_supervisor', lambda: False)()
+            or getattr(request.user, 'es_administrador', lambda: False)()
             or getattr(request.user, 'es_super_administrador', lambda: False)()
         )
 

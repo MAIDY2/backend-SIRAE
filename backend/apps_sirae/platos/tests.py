@@ -263,8 +263,8 @@ class EndpointsSiraeTestCase(TestCase):
             status.HTTP_204_NO_CONTENT
         )
 
-    # 5. El supervisor no puede consultar ni modificar menús y platos
-    def test_supervisor_cannot_read_or_change_menus_and_dishes(self):
+    # 5. El supervisor puede consultar y gestionar platos, receta_componente, pasos_preparacion y detalle-platos
+    def test_supervisor_can_manage_platos_receta_pasos_and_detalle(self):
 
         supervisor = type(
             'Supervisor',
@@ -282,10 +282,21 @@ class EndpointsSiraeTestCase(TestCase):
 
         self.assertEqual(
             self.client.get('/api/platos/').status_code,
-            status.HTTP_403_FORBIDDEN
+            status.HTTP_200_OK
         )
-
+        self.assertEqual(
+            self.client.get('/api/receta_componente/').status_code,
+            status.HTTP_200_OK
+        )
+        self.assertEqual(
+            self.client.get('/api/pasos_preparacion/').status_code,
+            status.HTTP_200_OK
+        )
         self.assertEqual(
             self.client.get('/api/detalle_plato/').status_code,
-            status.HTTP_403_FORBIDDEN
+            status.HTTP_200_OK
+        )
+        self.assertEqual(
+            self.client.get('/api/detalle-platos/').status_code,
+            status.HTTP_200_OK
         )

@@ -10,9 +10,19 @@ from apps_sirae.ia_sugerencias.views import (
 
 from apps_sirae.unidades_medida.api.router import router_unidades_medida
 from apps_sirae.secciones_menu.api.router import router_secciones_menu
+from rest_framework.routers import DefaultRouter
 from apps_sirae.platos.api.router import router_platos
 from apps_sirae.platos.views import SubirImagenPlatoView
 from apps_sirae.detalle_plato.api.router import router_detalle_plato
+from apps_sirae.detalle_plato.api.views import DetallePlatoApiViewSet
+from apps_sirae.receta_componente.api.router import router_receta_componente
+from apps_sirae.receta_componente.api.views import RecetaComponenteViewSet
+from apps_sirae.pasospreparacion.views import PasosPreparacionViewSet
+
+router_compat_menus = DefaultRouter()
+router_compat_menus.register(r'receta_componente', RecetaComponenteViewSet, basename='receta_componente')
+router_compat_menus.register(r'pasos_preparacion', PasosPreparacionViewSet, basename='pasos_preparacion')
+router_compat_menus.register(r'detalle-platos', DetallePlatoApiViewSet, basename='detalle-platos')
 from apps_sirae.preparacion_asignada.api.router import (
     router as router_preparacion_asignada,
 )
@@ -116,6 +126,8 @@ urlpatterns = [
 
     # Detalles y preparación asignada
     path('', include(router_detalle_plato.urls)),
+    path('', include(router_receta_componente.urls)),
+    path('', include(router_compat_menus.urls)),
     path(
         'preparacion-asignada',
         PreparacionAsignadaApiViewSet.as_view({
